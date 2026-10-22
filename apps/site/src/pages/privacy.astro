@@ -1,0 +1,62 @@
+---
+import Base from '../layouts/Base.astro';
+import { SITE } from '../site';
+
+const updated = '2026-10-22';
+---
+
+<Base
+  title="Privacy"
+  description="Cormorant has no accounts, no telemetry, and no analytics. Your browsing data stays on your devices and in your own iCloud."
+>
+  <article class="doc">
+    <h1 class="font-rounded text-display font-semibold">Privacy</h1>
+    <p class="mt-4 text-caption text-muted">
+      Last updated <time datetime={updated}>October 22, 2026</time>
+    </p>
+
+    <p class="mt-10 text-lead">
+      Cormorant collects nothing. I can’t see what you browse, and have no way to.
+    </p>
+
+    <h2>No account</h2>
+    <p>There is nothing to sign up for. Cormorant works the moment you open it.</p>
+
+    <h2>No telemetry, no analytics</h2>
+    <p>
+      The app has no analytics, crash-reporting, advertising, or tracking code, and it doesn’t phone
+      home. If you’ve chosen to share diagnostics with app developers in your device settings, Apple
+      may pass along anonymous crash reports. That is controlled by Apple and by you.
+    </p>
+
+    <h2>Your browsing data stays with you</h2>
+    <p>
+      History, tabs, spaces, bookmarks, and settings are stored on your device. If you turn on sync,
+      they travel through your own iCloud account, end-to-end encrypted, so only your devices can read
+      them.
+    </p>
+
+    <h2>AI features</h2>
+    <p>
+      AI features stay off until you add an API key for a provider you choose. When you use one, the
+      page content and your request go straight from your device to that provider, under your account
+      and their terms. Nothing passes through me or is copied to me. Your keys are kept in your
+      device’s Keychain.
+    </p>
+
+    <h2>The websites you visit</h2>
+    <p>
+      Websites can still collect data the way they would in any browser. Cormorant uses WebKit,
+      including its built-in tracking prevention.
+    </p>
+
+    <h2>This website</h2>
+    <p>This site sets no cookies and runs no analytics or third-party scripts.</p>
+
+    <h2>Questions</h2>
+    <p>
+      Email <a href={`mailto:${SITE.supportEmail}`}>{SITE.supportEmail}</a>. If this policy changes,
+      the date at the top changes with it.
+    </p>
+  </article>
+</Base>

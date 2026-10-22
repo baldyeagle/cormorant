@@ -1,0 +1,7 @@
+packages:
+  - 'apps/*'
+
+# Dependencies allowed to run install scripts (pnpm blocks all others).
+allowBuilds:
+  esbuild: true # used by wrangler
+  workerd: true # Cloudflare's local runtime, used by wrangler

@@ -1,0 +1,40 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../layouts/Base.astro';
+
+const releases = (await getCollection('releases')).sort(
+  (a, b) => b.data.date.getTime() - a.data.date.getTime(),
+);
+
+const rendered = await Promise.all(
+  releases.map(async (entry) => ({ entry, Content: (await render(entry)).Content })),
+);
+
+const fmt = new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: 'UTC' });
+---
+
+<Base title="Releases" description="Release notes for every version of Cormorant.">
+  <div class="doc">
+    <h1 class="font-rounded text-display font-semibold">Releases</h1>
+
+    <ol class="mt-12 space-y-12 border-l border-line pl-6">
+      {
+        rendered.map(({ entry, Content }) => (
+          <li id={`v${entry.data.version}`} class="list-none">
+            <h2 class="mt-0!">
+              <span class="text-accent tabular-nums">{entry.data.version}</span> {entry.data.title}
+            </h2>
+            <p class="text-caption text-muted">
+              <time datetime={entry.data.date.toISOString().slice(0, 10)}>
+                {fmt.format(entry.data.date)}
+              </time>
+            </p>
+            <div class="mt-4">
+              <Content />
+            </div>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</Base>

@@ -1,0 +1,29 @@
+---
+import Base from '../layouts/Base.astro';
+import { SITE } from '../site';
+---
+
+<Base title="Support" description="How to get help with Cormorant.">
+  <article class="doc">
+    <h1 class="font-rounded text-display font-semibold">Support</h1>
+
+    <p class="mt-10 text-lead">
+      Something broken, confusing, or missing? I read every message myself.
+    </p>
+
+    <h2>Email</h2>
+    <p>
+      Write to <a href={`mailto:${SITE.supportEmail}`}>{SITE.supportEmail}</a>. Include your device,
+      OS version, and the Cormorant version from Settings, if you can.
+    </p>
+
+    <h2>Bugs and ideas</h2>
+    <p>Bug reports and feature requests are tracked in the open on <a href={SITE.githubUrl}>GitHub</a>.</p>
+
+    <h2>Before you send logs</h2>
+    <p>
+      Leave out screenshots or logs that show anything private. Cormorant never sends diagnostics on its
+      own; the <a href="/privacy">privacy statement</a> explains what stays on your device.
+    </p>
+  </article>
+</Base>

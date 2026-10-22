@@ -1,0 +1,108 @@
+---
+import '../styles/global.css';
+import { SITE } from '../site';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const { title, description = SITE.description } = Astro.props;
+const pageTitle = title ? `${title}, ${SITE.name}` : `${SITE.name}, a WebKit browser for iPhone and Mac`;
+
+// build.format is 'file', so pathnames arrive as /privacy.html; normalize to /privacy.
+const path = Astro.url.pathname.replace(/(index)?\.html$/, '').replace(/\/$/, '') || '/';
+const canonical = new URL(path, Astro.site);
+const isNotFound = path === '/404';
+
+// The nav is drawn as a browser sidebar: each page is a tab, the open one is lit.
+const tabs = [
+  { href: '/', label: 'Home' },
+  { href: '/releases', label: 'Releases' },
+  { href: '/privacy', label: 'Privacy' },
+  { href: '/support', label: 'Support' },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    {
+      isNotFound ? (
+        <meta name="robots" content="noindex" />
+      ) : (
+        <link rel="canonical" href={canonical} />
+      )
+    }
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#dfe5e6" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#10191c" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={SITE.name} />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  </head>
+  <body>
+    <div class="flex min-h-dvh flex-col md:flex-row">
+      <header
+        class="flex shrink-0 flex-col gap-3 px-4 pt-4 pb-2 md:sticky md:top-0 md:h-dvh md:w-56 md:gap-8 md:px-3 md:pt-6 md:pb-6"
+      >
+        <a
+          href="/"
+          class="px-3 font-rounded text-[1.125rem] font-semibold tracking-tight text-ink no-underline"
+        >
+          Cormorant
+        </a>
+
+        <nav aria-label="Site" class="-mx-1 overflow-x-auto md:mx-0">
+          <ul class="flex gap-1 px-1 md:flex-col md:px-0">
+            {
+              tabs.map((tab) => {
+                const current = path === tab.href;
+                return (
+                  <li>
+                    <a
+                      href={tab.href}
+                      aria-current={current ? 'page' : undefined}
+                      class:list={[
+                        'block rounded-tab px-3 py-1.5 text-[0.9375rem] whitespace-nowrap no-underline',
+                        current
+                          ? 'bg-pane font-medium text-ink'
+                          : 'text-muted hover:bg-pane/50 hover:text-ink',
+                      ]}
+                    >
+                      {tab.label}
+                    </a>
+                  </li>
+                );
+              })
+            }
+          </ul>
+        </nav>
+
+        <p class="mt-auto hidden px-3 text-caption text-muted md:block">
+          A personal project by <a href={SITE.author.url} class="text-muted">{SITE.author.name}</a>.
+        </p>
+      </header>
+
+      <main
+        class="m-2 flex flex-1 flex-col rounded-pane bg-pane px-6 py-12 sm:px-10 md:my-2 md:mr-2 md:ml-0 md:px-16 md:py-20 lg:px-24"
+      >
+        <div class="flex-1">
+          <slot />
+        </div>
+        <p class="mt-20 text-caption text-muted md:hidden">
+          A personal project by <a href={SITE.author.url} class="text-muted">{SITE.author.name}</a>.
+        </p>
+      </main>
+    </div>
+  </body>
+</html>

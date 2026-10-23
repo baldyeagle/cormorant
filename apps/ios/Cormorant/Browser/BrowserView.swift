@@ -17,6 +17,9 @@ struct BrowserView: View {
     /// The search panel's top edge in global coordinates, once it has laid out; the empty state keeps
     /// its mark above it.
     @State private var searchPanelTop: CGFloat?
+    /// A keyboard is on screen. The bar (and download banner) stay put underneath it (see
+    /// `.ignoresSafeArea(.keyboard)`), and VoiceOver mustn't find them in among a page's form fields.
+    @State private var keyboardCoversBar = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -42,6 +45,8 @@ struct BrowserView: View {
             if let session = store.activeSession, let url = session.blockedDownloadURL {
                 DownloadBanner(url: url) { session.blockedDownloadURL = nil }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                    // Under the keyboard with the bar.
+                    .accessibilityHidden(keyboardCoversBar)
             }
         }
         .animation(.snappy, value: store.activeSession?.blockedDownloadURL)
@@ -68,7 +73,7 @@ struct BrowserView: View {
                 // Hidden (but laid out) until tabs load, so it never flashes a 0 count first.
                 .opacity(isSearching || !store.isLoaded ? 0 : 1)
                 .allowsHitTesting(!isSearching && store.isLoaded)
-                .accessibilityHidden(isSearching || !store.isLoaded)
+                .accessibilityHidden(isSearching || !store.isLoaded || keyboardCoversBar)
             }
             // Insets track the EXPANDED bar only. Shrinking them when the bar collapses would move
             // the content, and at the end of a page that offset clamp reads as a scroll-up, which
@@ -80,6 +85,15 @@ struct BrowserView: View {
         // The bar never moves for the keyboard (no mid-screen bar while the keyboard animates at
         // launch, none riding up over page form fields); only the search panel avoids it.
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        // Read from every keyboard frame change rather than paired show/hide events, so the bar
+        // comes back however the keyboard leaves.
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
+            guard let message = UIResponder.KeyboardWillChangeFrameMessage.makeMessage($0) else { return }
+            keyboardCoversBar = !message.endFrame.isEmpty && message.endFrame.minY < message.screen.bounds.maxY
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardCoversBar = false
+        }
         // After the bar inset, so the panel sits directly on the keyboard rather than above the bar.
         .overlay {
             if isSearching {
@@ -143,6 +157,8 @@ struct BrowserView: View {
         .onChange(of: alertIsUp) { searchIfBlank() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { searchIfBlank() }
+            // In case a hide never arrives. A keyboard still up on return reports its frame again.
+            if phase == .background { keyboardCoversBar = false }
         }
         .onChange(of: store.addressFocusRequest) {
             // From the switcher's "+": present once the cover is gone, or focus can't land.

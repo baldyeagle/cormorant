@@ -22,7 +22,6 @@ jobs:
         run: |
           XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
           sudo xcode-select -s "$XCODE"
-          mkdir -p build
           xcodebuild -version
           swift --version
       - name: Build
@@ -45,6 +44,7 @@ jobs:
         run: scripts/check-default-browser-plist.sh
       - name: Build for simulator
         run: |
+          mkdir -p build
           xcodebuild -workspace Cormorant.xcworkspace -scheme Cormorant \
             -destination 'generic/platform=iOS Simulator' -configuration Debug \
             -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO \

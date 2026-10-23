@@ -82,6 +82,8 @@ struct SearchSheet: View {
     }
 
     /// The handle doubles as the swipe-down target, so dragging never fights text selection.
+    /// Measured in global space: the handle rides the offset it drives, so local translations
+    /// would feed back and make the panel stutter between two positions.
     private var grabber: some View {
         Capsule()
             .fill(.secondary.opacity(0.5))
@@ -89,7 +91,7 @@ struct SearchSheet: View {
             .frame(maxWidth: .infinity, minHeight: 22)
             .contentShape(.rect)
             .gesture(
-                DragGesture(minimumDistance: 4)
+                DragGesture(minimumDistance: 4, coordinateSpace: .global)
                     .onChanged { dragOffset = max(0, $0.translation.height) }
                     .onEnded { value in
                         if value.translation.height > Self.dismissDistance

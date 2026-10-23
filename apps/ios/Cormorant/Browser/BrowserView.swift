@@ -14,6 +14,9 @@ struct BrowserView: View {
     @State private var settingsAfterActions = false
     @State private var isSearching = false
     @State private var barHeight: CGFloat = 0
+    /// The search panel's top edge in global coordinates, once it has laid out; the empty state keeps
+    /// its mark above it.
+    @State private var searchPanelTop: CGFloat?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -24,7 +27,8 @@ struct BrowserView: View {
                     .ignoresSafeArea(.container, edges: .bottom)
                     .ignoresSafeArea(.keyboard)
             }
-            if store.isLoaded, store.activeTab?.url == nil {
+            // Also while tabs load, so the launch screen's bird stays put until there's something to show.
+            if !store.isLoaded || store.activeTab?.url == nil {
                 emptyState
             }
             if let session = store.activeSession, let error = session.loadError {
@@ -80,7 +84,10 @@ struct BrowserView: View {
         .overlay {
             if isSearching {
                 SearchSheet(url: store.isComposingNewTab ? nil : store.activeTab?.url,
-                            isFocused: $searchFocused, onDismiss: dismissSearch)
+                            isFocused: $searchFocused, onDismiss: dismissSearch,
+                            dimsPage: store.activeTab?.url != nil,
+                            // Not from a panel still animating out after a dismiss.
+                            onPanelTopChange: { if isSearching { searchPanelTop = $0 } })
                     // Fresh text per tab and per intent (editing this page vs composing a new tab).
                     .id("\(store.state.activeTabID?.uuidString ?? "none")-\(store.isComposingNewTab)")
             }
@@ -178,23 +185,32 @@ struct BrowserView: View {
         store.loadFailure != nil || storageWarningPresented.wrappedValue
     }
 
-    /// No tabs (or a tab that hasn't loaded anything): a quiet wordmark in the upper quarter, clear of
-    /// the search panel and keyboard.
+    /// No tabs (or a tab that hasn't loaded anything): the launch screen's bird, same asset and size.
+    /// At rest it's centered on the whole screen, exactly where the launch screen drew it. With the
+    /// search panel up it centers in the space above the panel instead, shrinking if that's short.
     private var emptyState: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            Text("Cormorant")
-                .font(.title.weight(.semibold))
-                .foregroundStyle(.tertiary)
+        // A reader rather than padding: it takes exactly the space offered, so a panel reaching the top
+        // of the screen (landscape, many rows) shrinks the mark to nothing instead of growing the view.
+        GeometryReader { proxy in
+            let frame = proxy.frame(in: .global)
+            let height = searchPanelTop.map { min(max(0, $0 - frame.minY), frame.height) } ?? frame.height
+            Image(.cormorantMark)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: 128, maxHeight: 128)
+                .padding(8)
                 .accessibilityHidden(true)
-            Spacer()
-            Spacer()
-            Spacer()
+                .accessibilityIgnoresInvertColors()
+                .frame(width: frame.width, height: height)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
-        .ignoresSafeArea()
+        // Screen-centered like the launch screen until the panel has a position to sit above; then
+        // below the status bar.
+        .ignoresSafeArea(.container, edges: searchPanelTop == nil ? .all : .bottom)
+        .background(Color(.launchBackground).ignoresSafeArea())
+        .contentShape(.rect)
         .onTapGesture(perform: dismissSearch)
+        // Keeps pace with the panel (which rides the keyboard) so the mark never trails under it.
+        .animation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.3), value: searchPanelTop)
     }
 
     // MARK: Presentation
@@ -210,6 +226,7 @@ struct BrowserView: View {
         store.cancelComposing()
         searchFocused = false
         isSearching = false
+        searchPanelTop = nil
     }
 
     private func presentActions() {

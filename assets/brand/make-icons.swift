@@ -29,20 +29,39 @@ let w = src.width, h = src.height
 let ctx = rgbaContext(w, h)
 ctx.draw(src, in: CGRect(x: 0, y: 0, width: w, height: h))
 let p = ctx.data!.bindMemory(to: UInt8.self, capacity: w * h * 4)
+let rgb = (0..<(w * h * 3)).map { Double(p[$0 / 3 * 4 + $0 % 3]) / 255 }
+func channel(_ x: Int, _ y: Int, _ c: Int) -> Double { rgb[(y * w + x) * 3 + c] }
+func darkest(_ x: Int, _ y: Int) -> Int { (0..<3).min { channel(x, y, $0) < channel(x, y, $1) }! }
+// pure white -> 0, anything with a channel below ~0.82 -> 1
+var alpha = [Double](repeating: 0, count: w * h)
+for y in 6..<(h - 6) { for x in 6..<(w - 6) {   // the outer 6px are edge artifacts in the source
+    alpha[y * w + x] = max(0, min(1, (1 - channel(x, y, darkest(x, y))) / 0.18))
+}}
 var minX = w, minY = h, maxX = 0, maxY = 0
 for y in 0..<h { for x in 0..<w {
     let i = (y * w + x) * 4
-    let r = Double(p[i]) / 255, g = Double(p[i+1]) / 255, b = Double(p[i+2]) / 255
-    let lo = min(r, g, b)
-    var a = (1 - lo) / 0.18
-    if x < 6 || x >= w - 6 || y < 6 || y >= h - 6 { a = 0 }   // drop edge artifacts in the source          // pure white -> 0, anything with a channel below ~0.82 -> 1
-    a = max(0, min(1, a))
+    var a = alpha[y * w + x]
+    // Pixels on the silhouette's edge are part bird, part white. The 0.18 ramp above calls most of
+    // them opaque, which keeps their white and shows as a light outline on a dark background.
+    // Re-estimate their alpha against the darkest opaque pixel nearby, standing in for the bird's color.
+    // Only pixels near the background (alpha < 0.1) count, so light patches inside the bird (the beak) stay solid.
+    let onEdge = a > 0 && (-2...2).contains { dy in (-2...2).contains { dx in alpha[(y + dy) * w + x + dx] < 0.1 } }
+    if onEdge {
+        var best: (x: Int, y: Int)? = nil
+        for dy in -3...3 { for dx in -3...3 where alpha[(y + dy) * w + x + dx] == 1 {
+            let (nx, ny) = (x + dx, y + dy)
+            if best == nil || channel(nx, ny, darkest(nx, ny)) < channel(best!.x, best!.y, darkest(best!.x, best!.y)) { best = (nx, ny) }
+        }}
+        // Thin feather tips can have no solid pixel nearby; the plumage is near-black, so assume that.
+        let c = darkest(x, y), f = best.map { channel($0.x, $0.y, c) } ?? 0.15
+        a = min(a, max(0, min(1, (1 - channel(x, y, c)) / (1 - f))))
+    }
     if a < 0.02 { p[i] = 0; p[i+1] = 0; p[i+2] = 0; p[i+3] = 0; continue }
     // un-blend from white, then premultiply
     func un(_ c: Double) -> Double { max(0, min(1, (c - (1 - a)) / a)) }
-    p[i]   = UInt8((un(r) * a * 255).rounded())
-    p[i+1] = UInt8((un(g) * a * 255).rounded())
-    p[i+2] = UInt8((un(b) * a * 255).rounded())
+    p[i]   = UInt8((un(channel(x, y, 0)) * a * 255).rounded())
+    p[i+1] = UInt8((un(channel(x, y, 1)) * a * 255).rounded())
+    p[i+2] = UInt8((un(channel(x, y, 2)) * a * 255).rounded())
     p[i+3] = UInt8((a * 255).rounded())
     if a > 0.5 { minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y) }
 }}
@@ -92,14 +111,28 @@ func tile(_ size: Int, bg: (Double, Double, Double)?, scale: Double, grayscale: 
         }
         img = o.makeImage()!
     }
+    if bg != nil {
+        // App Store icons must not have an alpha channel.
+        let opaque = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4,
+                               space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                               bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        opaque.draw(img, in: CGRect(x: 0, y: 0, width: size, height: size))
+        img = opaque.makeImage()!
+    }
     save(img, name)
 }
-let pane = (0xf7/255.0, 0xf9/255.0, 0xf9/255.0)
-let slate = (0x17/255.0, 0x23/255.0, 0x27/255.0)
-tile(1024, bg: pane,  scale: 0.78, name: "AppIcon.png")
-tile(1024, bg: slate, scale: 0.78, name: "AppIcon-dark.png")
+// Vialumi's background tokens (packages/ui theme.css): oklch(1 0 0) and oklch(0.13 0.028 261.692),
+// i.e. white and Tailwind gray-950. The app's LaunchBackground color uses the same pair.
+let light = (1.0, 1.0, 1.0)
+let dark = (0x03/255.0, 0x07/255.0, 0x12/255.0)
+tile(1024, bg: light, scale: 0.78, name: "AppIcon.png")
+tile(1024, bg: dark,  scale: 0.78, name: "AppIcon-dark.png")
 tile(1024, bg: nil,   scale: 0.78, grayscale: true, name: "AppIcon-tinted.png")
-tile(180, bg: pane, scale: 0.82, name: "apple-touch-icon.png")
+tile(180, bg: light, scale: 0.82, name: "apple-touch-icon.png")
 tile(64,  bg: nil,  scale: 0.96, name: "favicon-64.png")
 tile(32,  bg: nil,  scale: 1.0,  name: "favicon-32.png")
 tile(512, bg: nil,  scale: 0.9,  name: "cormorant-mark-512.png")
+// The launch screen and the blank tab: one 128pt mark, so the launch image hands off to the tab in place.
+tile(128, bg: nil, scale: 0.9, name: "CormorantMark.png")
+tile(256, bg: nil, scale: 0.9, name: "CormorantMark@2x.png")
+tile(384, bg: nil, scale: 0.9, name: "CormorantMark@3x.png")

@@ -248,6 +248,10 @@ struct BrowserView: View {
     private func presentSwitcher() {
         dismissSearch()
         showActions = false
+        // Dismissing, the cover restores the first responder it found here: the web view, once the
+        // page has been tapped. That took focus from the panel New Tab had just opened, and losing
+        // focus closes the panel, so New Tab did nothing. Leave nothing to restore.
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         store.snapshotActiveTab()
         showSwitcher = true
     }

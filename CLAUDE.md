@@ -5,7 +5,7 @@ Personal WebKit browser for iPhone (first), macOS (second), iPad (later), replac
 ## Layout
 
 ```
-apps/ios/            Xcode 27 project: Cormorant app + CormorantShare extension
+apps/ios/            Xcode 27 project: Cormorant app + CormorantShare extension + CormorantUITests
 apps/macos/          placeholder until the iOS app is daily-usable
 apps/site/           cormorant.baldyeagle.dev (Astro 7 + Tailwind 4, deployed with Wrangler)
 packages/CormorantKit/   Swift package: CormorantCore, CormorantBlocking, CormorantAI, CormorantSync
@@ -25,6 +25,7 @@ vp run site:dev                      # Astro dev server
 vp run kit:test                      # swift test --package-path packages/CormorantKit
 CORMORANT_LIVE_TESTS=1 vp run kit:test   # also downloads + compiles the real filter lists (~15s)
 vp run ios:build                     # simulator build, signing off
+vp run ios:test                      # UI tests on a simulator (IOS_TEST_DESTINATION overrides the device)
 scripts/check-default-browser-plist.sh [path/to/Cormorant.app]
 ```
 
@@ -35,8 +36,9 @@ Simulator builds need an iOS 26+ runtime. Device builds and TestFlight need Xcod
 - Swift 6.4, strict concurrency. The app target uses `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` and approachable concurrency; the package does not.
 - iOS 26 / macOS 26 deployment targets. No third-party dependencies anywhere in Swift.
 - Tests use Swift Testing (`import Testing`). Package tests run on macOS; WebKit APIs (`WKContentRuleListStore`, `WKWebView`) work there under `swift test`.
+- UI tests (`apps/ios/CormorantUITests`) use XCTest's `XCUIApplication`. They launch with `-uiTesting` (debug builds: no saved tabs, state in a temp file, share inbox untouched) and load pages from `FixtureServer` on 127.0.0.1 (the app still refreshes filter lists over the network). On the iOS 27.1 simulator a synthesized tap didn't activate SwiftUI menu items; pressing the menu's button and dragging onto the item does.
 - Public package API is the contract between the package and the app. Add API freely; change existing signatures only with the app updated in the same change.
-- The Xcode project is `objectVersion = 90` with synchronized folder groups: new Swift files under `apps/ios/Cormorant/` and `apps/ios/CormorantShare/` need no pbxproj edits. Build settings like `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption` live in the pbxproj, not Info.plist, so Xcode edits don't drop them.
+- The Xcode project is `objectVersion = 90` with synchronized folder groups: new Swift files under `apps/ios/Cormorant/`, `apps/ios/CormorantShare/` and `apps/ios/CormorantUITests/` need no pbxproj edits. Build settings like `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption` live in the pbxproj, not Info.plist, so Xcode edits don't drop them.
 - Content blocking is on by default (EasyList, EasyPrivacy, EasyList Cookie). `ContentBlockingEngine.ruleLists(for:)` never blocks a navigation on network or compile; lists arrive via `listsVersion` / `onListsChanged`.
 - Persistence: `BrowserState` is versioned JSON in the app group. An unreadable file is quarantined and the app must never auto-save over it (the "Start Fresh" flow).
 

@@ -7,8 +7,8 @@ import WebKit
 /// Share, page zoom, desktop site, per-site blockers, and Settings.
 ///
 /// The presenter must call `session.runPendingAction()` from the sheet's `onDismiss`: Find on
-/// Page needs first responder, which it can only take once the sheet is gone. `showSearch` is
-/// deferred the same way: the presenter dismisses the sheet and raises the search panel after.
+/// Page needs first responder, which it can only take once the sheet is gone. `showSearch` and
+/// `showSettings` are the presenter's: each dismisses the sheet itself.
 struct ActionsSheet: View {
     @Environment(BrowserStore.self) private var store
     @Environment(\.dismiss) private var dismiss

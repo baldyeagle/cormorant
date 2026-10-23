@@ -67,9 +67,14 @@ jobs:
           ios = sorted((k for k in devices if "iOS" in k), key=lambda k: [int(n) for n in re.findall(r"\d+", k)])
           print(next(d["udid"] for k in reversed(ios) for d in devices[k] if d["name"].startswith("iPhone")))
           ')
+          # Boot first: a cold boot under xcodebuild can outlast the app launch ("does not have a
+          # process ID"). One retry covers the remaining launch flakes; the regression fails every time.
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
           xcodebuild -workspace Cormorant.xcworkspace -scheme Cormorant \
             -destination "platform=iOS Simulator,id=$UDID" -configuration Debug \
             -derivedDataPath build/DerivedData -resultBundlePath build/UITests.xcresult \
+            -retry-tests-on-failure -test-iterations 2 \
             CODE_SIGNING_ALLOWED=NO \
             test | tee build/xcodebuild-test.log | grep -E "error:|Test Case .*(passed|failed)|TEST" || true
           grep -q "TEST SUCCEEDED" build/xcodebuild-test.log

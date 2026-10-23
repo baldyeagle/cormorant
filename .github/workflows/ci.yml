@@ -31,8 +31,9 @@ jobs:
         run: swift test --package-path packages/CormorantKit
 
   ios:
-    name: iOS app (simulator build + default-browser checklist)
+    name: iOS app (simulator build, default-browser checklist, UI tests)
     runs-on: xcode-27
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Select newest Xcode on the runner
@@ -57,6 +58,32 @@ jobs:
           if grep -E "apps/ios/.*warning:" build/xcodebuild.log; then
             echo "Compiler warnings in apps/ios"; exit 1
           fi
+      - name: UI tests
+        run: |
+          # Newest iOS runtime's first iPhone; the runner's simulator names change with each Xcode.
+          UDID=$(xcrun simctl list -j devices available | python3 -c '
+          import json, re, sys
+          devices = json.load(sys.stdin)["devices"]
+          ios = sorted((k for k in devices if "iOS" in k), key=lambda k: [int(n) for n in re.findall(r"\d+", k)])
+          print(next(d["udid"] for k in reversed(ios) for d in devices[k] if d["name"].startswith("iPhone")))
+          ')
+          xcodebuild -workspace Cormorant.xcworkspace -scheme Cormorant \
+            -destination "platform=iOS Simulator,id=$UDID" -configuration Debug \
+            -derivedDataPath build/DerivedData -resultBundlePath build/UITests.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            test | tee build/xcodebuild-test.log | grep -E "error:|Test Case .*(passed|failed)|TEST" || true
+          grep -q "TEST SUCCEEDED" build/xcodebuild-test.log
+          if grep -E "apps/ios/.*warning:" build/xcodebuild-test.log; then
+            echo "Compiler warnings in apps/ios"; exit 1
+          fi
+      - name: Upload UI test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-results
+          path: |
+            build/UITests.xcresult
+            build/xcodebuild-test.log
 
   site:
     name: Site (Astro build, check, lint, format)

@@ -60,7 +60,8 @@ final class BrowserStore {
     init(
         stateStore: (any BrowserStateStore)? = nil,
         blocking: BlockingService = BlockingService(),
-        settings: AppSettings = AppSettings()
+        settings: AppSettings = AppSettings(),
+        receivesSharedLinks: Bool = true
     ) {
         var usesFallbackStorage = false
         if let stateStore {
@@ -76,8 +77,8 @@ final class BrowserStore {
             self.stateStore = JSONBrowserStateStore(fileURL: fallback)
             usesFallbackStorage = true
         }
-        inbox = SharedInbox(appGroup: AppGroup.identifier)
-        if inbox == nil {
+        inbox = receivesSharedLinks ? SharedInbox(appGroup: AppGroup.identifier) : nil
+        if receivesSharedLinks, inbox == nil {
             Logger.app.fault("App group unavailable: shared links can't be received.")
         }
         self.blocking = blocking

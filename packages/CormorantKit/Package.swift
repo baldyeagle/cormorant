@@ -20,7 +20,7 @@ let package = Package(
         .target(name: "CormorantSync", dependencies: ["CormorantCore"]),
 
         .testTarget(name: "CormorantCoreTests", dependencies: ["CormorantCore"]),
-        .testTarget(name: "CormorantBlockingTests", dependencies: ["CormorantBlocking"]),
+        .testTarget(name: "CormorantBlockingTests", dependencies: ["CormorantBlocking"], resources: [.copy("Resources")]),
         .testTarget(name: "CormorantAITests", dependencies: ["CormorantAI"]),
         .testTarget(name: "CormorantSyncTests", dependencies: ["CormorantSync"]),
     ],

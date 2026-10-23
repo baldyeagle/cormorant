@@ -7,16 +7,19 @@ import WebKit
 /// Share, page zoom, desktop site, per-site blockers, and Settings.
 ///
 /// The presenter must call `session.runPendingAction()` from the sheet's `onDismiss`: Find on
-/// Page needs first responder, which it can only take once the sheet is gone. `showSearch` and
-/// `showSettings` are the presenter's: each dismisses the sheet itself.
+/// Page needs first responder, which it can only take once the sheet is gone. `showSearch` is the
+/// presenter's and dismisses the sheet itself.
+///
+/// Settings stacks on top rather than replacing the sheet: `onDismiss` fires a second or more after
+/// a sheet has visibly gone, which left a blank gap before Settings appeared.
 struct ActionsSheet: View {
     @Environment(BrowserStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let session: TabSession?
     let url: URL?
     let showSearch: () -> Void
-    let showSettings: () -> Void
     @State private var contentHeight: CGFloat = 0
+    @State private var showSettings = false
 
     var body: some View {
         ScrollView {
@@ -40,6 +43,9 @@ struct ActionsSheet: View {
         .presentationDragIndicator(.visible)
         // Opaque enough that text contrast doesn't depend on the page behind (dark mode over a light page).
         .presentationBackground(.regularMaterial)
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+        }
     }
 
     /// The tab's page, if it is a web page. New tabs (nil) and `about:blank` popups get only Settings.
@@ -124,8 +130,7 @@ struct ActionsSheet: View {
                 RowDivider()
             }
             Button {
-                dismiss()
-                showSettings()
+                showSettings = true
             } label: {
                 ActionRow(title: "Settings", systemImage: "gearshape")
             }

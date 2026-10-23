@@ -17,8 +17,7 @@ final class FixtureServer {
             "Content-Length: \(body.count)",
             "Connection: close",
         ].joined(separator: "\r\n") + "\r\n\r\n"
-        var response = Data(header.utf8)
-        response.append(body)
+        let response = Data(header.utf8) + body
 
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)

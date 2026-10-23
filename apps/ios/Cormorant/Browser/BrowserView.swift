@@ -1,13 +1,20 @@
 import CormorantCore
 import SwiftUI
 
-/// The main screen: the active tab's web view under a bottom bar.
+/// The main screen: the active tab's web view under a bottom bar, with the search panel and the
+/// page-actions sheet on top.
 struct BrowserView: View {
     @Environment(BrowserStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showSwitcher = false
     @State private var showSettings = false
+    @State private var showActions = false
+    /// Settings was chosen in the actions sheet; presented once that sheet has finished dismissing.
+    @State private var settingsAfterActions = false
+    @State private var isSearching = false
     @State private var barHeight: CGFloat = 0
-    @FocusState private var addressFocused: Bool
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         ZStack {
@@ -18,12 +25,15 @@ struct BrowserView: View {
                     .ignoresSafeArea(.keyboard)
             }
             if store.isLoaded, store.activeTab?.url == nil {
-                blankPage
+                emptyState
             }
             if let session = store.activeSession, let error = session.loadError {
                 LoadErrorView(error: error, onRetry: session.retry)
             }
         }
+        // Full size even before tabs load: an empty ZStack collapses to a point at the center, and
+        // the bar inset attached to it would render mid-screen and then jump down.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottom) {
             if let session = store.activeSession, let url = session.blockedDownloadURL {
                 DownloadBanner(url: url) { session.blockedDownloadURL = nil }
@@ -37,13 +47,25 @@ struct BrowserView: View {
                 .ignoresSafeArea()
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            BottomBar(
-                session: store.activeSession,
-                url: store.activeTab?.url,
-                addressFocused: $addressFocused,
-                showSwitcher: presentSwitcher,
-                showSettings: { showSettings = true }
-            )
+            VStack(spacing: 0) {
+                FindOnPageBar(session: store.activeSession)
+                BottomBar(
+                    session: store.activeSession,
+                    url: store.activeTab?.url,
+                    isSearching: isSearching,
+                    showSwitcher: presentSwitcher,
+                    showSearch: presentSearch,
+                    showActions: presentActions
+                )
+                // Beyond this the three controls stop fitting on one line on a phone. Applied out
+                // here so the bar's @ScaledMetric sizes are capped along with its fonts.
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                // The search panel replaces the bar while it's up; never two address controls at once.
+                // Hidden (but laid out) until tabs load, so it never flashes a 0 count first.
+                .opacity(isSearching || !store.isLoaded ? 0 : 1)
+                .allowsHitTesting(!isSearching && store.isLoaded)
+                .accessibilityHidden(isSearching || !store.isLoaded)
+            }
             // Insets track the EXPANDED bar only. Shrinking them when the bar collapses would move
             // the content, and at the end of a page that offset clamp reads as a scroll-up, which
             // re-expands the bar, which shrinks the content again: a visible flicker.
@@ -51,10 +73,29 @@ struct BrowserView: View {
                 if store.activeSession?.isBarCollapsed != true, height > 0 { barHeight = height }
             }
         }
-        .fullScreenCover(isPresented: $showSwitcher, onDismiss: focusIfBlank) {
+        // The bar never moves for the keyboard (no mid-screen bar while the keyboard animates at
+        // launch, none riding up over page form fields); only the search panel avoids it.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        // After the bar inset, so the panel sits directly on the keyboard rather than above the bar.
+        .overlay {
+            if isSearching {
+                SearchSheet(url: store.isComposingNewTab ? nil : store.activeTab?.url,
+                            isFocused: $searchFocused, onDismiss: dismissSearch)
+                    // Fresh text per tab and per intent (editing this page vs composing a new tab).
+                    .id("\(store.state.activeTabID?.uuidString ?? "none")-\(store.isComposingNewTab)")
+            }
+        }
+        .animation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.3), value: isSearching)
+        .fullScreenCover(isPresented: $showSwitcher, onDismiss: switcherDidDismiss) {
             TabSwitcherView()
         }
-        .sheet(isPresented: $showSettings) {
+        .sheet(isPresented: $showActions, onDismiss: actionsDidDismiss) {
+            ActionsSheet(session: store.activeSession, url: store.activeTab?.url, showSettings: {
+                settingsAfterActions = true
+                showActions = false
+            })
+        }
+        .sheet(isPresented: $showSettings, onDismiss: searchIfBlank) {
             SettingsView()
         }
         .alert("Couldn't read saved tabs.", isPresented: loadFailurePresented) {
@@ -71,12 +112,55 @@ struct BrowserView: View {
         } message: {
             Text("Cormorant's shared container is unavailable, so the share extension can't send links. Reinstall the app to fix this.")
         }
-        .onChange(of: store.isLoaded) { focusIfBlank() }
-        .onChange(of: store.addressFocusRequest) { addressFocused = true }
-        .onChange(of: store.state.activeTabID) { _, _ in
-            // A tab opened from outside (share sheet, URL) must not leave the keyboard over the page.
-            if store.activeTab?.url != nil { addressFocused = false }
+        .onChange(of: store.isLoaded) {
+            // A URL handed in at cold launch is usually the active tab by the time `isLoaded` flips,
+            // but `onOpenURL` can land just after. With no tab yet, give it a moment so the panel and
+            // keyboard never flash over the page (no interstitials for a default browser);
+            // `searchIfBlank` re-checks, so a tab that arrived meanwhile wins.
+            if store.activeTab != nil {
+                searchIfBlank()
+            } else {
+                Task {
+                    try? await Task.sleep(for: .milliseconds(150))
+                    searchIfBlank()
+                }
+            }
         }
+        // The alerts take focus; the panel comes up once they're answered.
+        .onChange(of: alertIsUp) { searchIfBlank() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { searchIfBlank() }
+        }
+        .onChange(of: store.addressFocusRequest) {
+            // From the switcher's "+": present once the cover is gone, or focus can't land.
+            if !showSwitcher { presentSearch() }
+        }
+        .onChange(of: store.state.activeTabID) { _, _ in
+            // A tab opened from outside (share sheet, URL) must not leave the panel or sheet over the page.
+            if store.activeTab?.url != nil {
+                dismissSearch()
+                showActions = false
+            } else if showActions {
+                // The last tab closed under the caret sheet: `actionsDidDismiss` brings the panel up.
+                showActions = false
+            } else if !showSwitcher {
+                // The last tab closed (e.g. by the page's script): back to the empty state.
+                searchIfBlank()
+            }
+        }
+        // The keyboard going away (interactive scroll, hardware dismiss) closes the panel with it.
+        .onChange(of: searchFocused) { wasFocused, focused in
+            if wasFocused, !focused, isSearching { dismissSearch() }
+        }
+        #if DEBUG
+        // `-openActions` launch argument presents the caret sheet once a page is active, for headless
+        // simulator checks where nothing can tap the caret.
+        .task(id: store.activeTab?.url) {
+            guard ProcessInfo.processInfo.arguments.contains("-openActions"), store.activeTab?.url != nil else { return }
+            try? await Task.sleep(for: .seconds(1))
+            if !Task.isCancelled { showActions = true }
+        }
+        #endif
     }
 
     /// Dismissed only by its action, which clears the failure.
@@ -90,23 +174,75 @@ struct BrowserView: View {
                 set: { _ in })
     }
 
-    private var blankPage: some View {
-        Text("Cormorant")
-            .font(.largeTitle.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(.systemBackground))
-            .ignoresSafeArea()
-            .onTapGesture { addressFocused = false }
+    private var alertIsUp: Bool {
+        store.loadFailure != nil || storageWarningPresented.wrappedValue
+    }
+
+    /// No tabs (or a tab that hasn't loaded anything): a quiet wordmark in the upper quarter, clear of
+    /// the search panel and keyboard.
+    private var emptyState: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            Text("Cormorant")
+                .font(.title.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+            Spacer()
+            Spacer()
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
+        .ignoresSafeArea()
+        .onTapGesture(perform: dismissSearch)
+    }
+
+    // MARK: Presentation
+
+    private func presentSearch() {
+        store.activeSession?.isBarCollapsed = false
+        isSearching = true
+        // Set in the same update that inserts the field, so the keyboard comes up with the panel.
+        searchFocused = true
+    }
+
+    private func dismissSearch() {
+        store.cancelComposing()
+        searchFocused = false
+        isSearching = false
+    }
+
+    private func presentActions() {
+        dismissSearch()
+        showActions = true
+    }
+
+    private func actionsDidDismiss() {
+        if settingsAfterActions {
+            settingsAfterActions = false
+            showSettings = true
+        }
+        store.activeSession?.runPendingAction()
+        // The last tab may have closed while the sheet was up. Not while Settings opens (guarded):
+        // its own dismissal brings the panel up.
+        searchIfBlank()
     }
 
     private func presentSwitcher() {
-        addressFocused = false
+        dismissSearch()
+        showActions = false
         store.snapshotActiveTab()
         showSwitcher = true
     }
 
-    private func focusIfBlank() {
-        if store.activeTab?.url == nil { addressFocused = true }
+    /// With no page to show, the search field is always up (default-browser requirement).
+    private func searchIfBlank() {
+        guard store.isLoaded, !alertIsUp, !showSwitcher, !showActions, !showSettings,
+              store.activeTab?.url == nil else { return }
+        presentSearch()
+    }
+
+    private func switcherDidDismiss() {
+        if store.isComposingNewTab { presentSearch() } else { searchIfBlank() }
     }
 }

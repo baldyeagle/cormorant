@@ -11,6 +11,10 @@ struct SearchSheet: View {
     let url: URL?
     var isFocused: FocusState<Bool>.Binding
     let onDismiss: () -> Void
+    /// False over the empty state: there's no page to dim, so the launch screen's background stays put.
+    var dimsPage = true
+    /// The panel's top edge in global coordinates, so the empty state can keep its mark above it.
+    var onPanelTopChange: (CGFloat) -> Void = { _ in }
 
     @State private var text = ""
     @State private var selection: TextSelection?
@@ -28,6 +32,8 @@ struct SearchSheet: View {
             scrim
             panel
                 .offset(y: dragOffset)
+                // Outside the drag offset: where the panel rests, not where a finger holds it.
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { onPanelTopChange($0) }
                 .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
         }
         .onAppear {
@@ -47,7 +53,7 @@ struct SearchSheet: View {
 
     /// Dims the page; a tap anywhere on it closes the panel.
     private var scrim: some View {
-        Color(white: 0, opacity: 0.24)
+        Color(white: 0, opacity: dimsPage ? 0.24 : 0)
             .ignoresSafeArea()
             .contentShape(.rect)
             .onTapGesture(perform: onDismiss)

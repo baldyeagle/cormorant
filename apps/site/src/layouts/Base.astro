@@ -39,8 +39,8 @@ const tabs = [
       )
     }
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#dfe5e6" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#10191c" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f9fafb" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#101828" media="(prefers-color-scheme: dark)" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={SITE.name} />
     <meta property="og:title" content={pageTitle} />
@@ -75,7 +75,7 @@ const tabs = [
                       class:list={[
                         'block rounded-tab px-3 py-1.5 text-[0.9375rem] whitespace-nowrap no-underline',
                         current
-                          ? 'bg-pane font-medium text-ink'
+                          ? 'bg-pane font-medium text-ink ring-1 ring-line'
                           : 'text-muted hover:bg-pane/50 hover:text-ink',
                       ]}
                     >
@@ -94,7 +94,7 @@ const tabs = [
       </header>
 
       <main
-        class="m-2 flex flex-1 flex-col rounded-pane bg-pane px-6 py-12 sm:px-10 md:my-2 md:mr-2 md:ml-0 md:px-16 md:py-20 lg:px-24"
+        class="m-2 flex flex-1 flex-col rounded-pane border border-line bg-pane px-6 py-12 sm:px-10 md:my-2 md:mr-2 md:ml-0 md:px-16 md:py-20 lg:px-24"
       >
         <div class="flex-1">
           <slot />

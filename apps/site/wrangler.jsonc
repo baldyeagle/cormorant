@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Static-assets-only Worker: no `main`, Cloudflare serves ./dist directly.
+  "name": "cormorant-site",
+  "compatibility_date": "2026-10-22",
+  // Opt out of Wrangler's usage telemetry, in keeping with the project.
+  "send_metrics": false,
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash",
+  },
+  "routes": [{ "pattern": "cormorant.baldyeagle.dev", "custom_domain": true }],
+}

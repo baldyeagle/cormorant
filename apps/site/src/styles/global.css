@@ -1,0 +1,95 @@
+@import 'tailwindcss';
+
+/*
+  Cormorant design tokens.
+  Colors come from the bird: blue-black plumage, harbor-fog grey, and the
+  emerald eye as the single accent. The layout borrows the browser's own
+  chrome: a tinted window frame with a sidebar, and the page in an inset pane.
+*/
+@theme {
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-rounded: ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, sans-serif;
+
+  /* Type scale (13 / 17 / 21 / 24 / 36-60), after Bringhurst's classic scale. */
+  --text-caption: 0.8125rem;
+  --text-caption--line-height: 1.45;
+  --text-body: 1.0625rem;
+  --text-body--line-height: 1.6;
+  --text-lead: 1.3125rem;
+  --text-lead--line-height: 1.5;
+  --text-heading: 1.5rem;
+  --text-heading--line-height: 1.25;
+  --text-display: clamp(2.25rem, 1.35rem + 3.6vw, 3.75rem);
+  --text-display--line-height: 1.04;
+  --text-display--letter-spacing: -0.025em;
+
+  /* Light palette; dark overrides below. */
+  --color-frame: #dfe5e6;
+  --color-pane: #f7f9f9;
+  --color-ink: #17262b;
+  --color-muted: #5b6b70;
+  --color-line: #c9d2d4;
+  --color-accent: #08745f;
+
+  /* Radii have a hierarchy: the pane is the window, tabs sit inside it. */
+  --radius-tab: 0.5rem;
+  --radius-pane: 0.875rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-frame: #10191c;
+    --color-pane: #172327;
+    --color-ink: #e3eaea;
+    --color-muted: #8fa1a5;
+    --color-line: #2a3a3f;
+    --color-accent: #58c2a2;
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-frame font-sans text-body text-ink antialiased;
+  }
+
+  a {
+    @apply text-accent underline decoration-1 underline-offset-[0.2em] hover:decoration-2;
+  }
+
+  :focus-visible {
+    @apply rounded-[2px] outline-2 outline-offset-2 outline-accent;
+  }
+}
+
+@layer components {
+  /* Long-form copy: privacy, support, release notes. */
+  .doc {
+    @apply max-w-[36rem];
+  }
+
+  .doc h2 {
+    @apply mt-12 mb-3 font-rounded text-heading font-semibold tracking-tight text-balance;
+  }
+
+  .doc p,
+  .doc ul {
+    @apply mb-4;
+  }
+
+  .doc ul {
+    @apply list-disc pl-5 marker:text-muted;
+  }
+
+  .doc li + li {
+    @apply mt-1.5;
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "cormorant",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vp run site:build && vp run kit:build",
+    "test": "vp run site:test && vp run kit:test",
+    "dev": "vp run site:dev",
+    "lint": "vp lint",
+    "format": "vp fmt"
+  },
+  "devDependencies": {
+    "vite-plus": "1.3.0"
+  },
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "packageManager": "pnpm@12.15.0"
+}

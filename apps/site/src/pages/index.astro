@@ -1,0 +1,56 @@
+---
+import Base from '../layouts/Base.astro';
+import { SITE } from '../site';
+
+const is = [
+  'A native app on Apple’s WebKit.',
+  'A sidebar with spaces and pinned tabs.',
+  'Synced through your own iCloud, end-to-end encrypted.',
+  'AI on your own API key, with the provider you pick.',
+];
+
+const isnt = [
+  'A company, or a service you sign up for.',
+  'Watching you, in the app or on this site.',
+  'Chromium underneath.',
+  'Finished.',
+];
+---
+
+<Base>
+  <h1 class="max-w-[16ch] font-rounded text-display font-semibold text-balance">
+    A WebKit browser for iPhone and Mac.
+  </h1>
+
+  <div class="mt-10 max-w-[34rem] space-y-5">
+    <p class="text-lead">
+      Cormorant is a WebKit browser that I want to exist, now that Arc is winding down.
+    </p>
+    <p>
+      It can ask an AI model about a page using your own key. No account, no telemetry.
+    </p>
+  </div>
+
+  <div class="mt-14 grid max-w-[40rem] gap-x-12 gap-y-8 sm:grid-cols-2">
+    <section aria-labelledby="is">
+      <h2 id="is" class="mb-3 font-semibold">What it is</h2>
+      <ul class="space-y-2 text-muted">
+        {is.map((line) => <li>{line}</li>)}
+      </ul>
+    </section>
+    <section aria-labelledby="isnt">
+      <h2 id="isnt" class="mb-3 font-semibold">What it isn’t</h2>
+      <ul class="space-y-2 text-muted">
+        {isnt.map((line) => <li>{line}</li>)}
+      </ul>
+    </section>
+  </div>
+
+  <p class="mt-14 flex flex-wrap items-baseline gap-x-6 gap-y-2">
+    <span>
+      <a href={SITE.appStoreUrl} class="font-medium">App Store</a>
+      <span class="text-muted">(not yet)</span>
+    </span>
+    <a href="/privacy">How your data is handled</a>
+  </p>
+</Base>

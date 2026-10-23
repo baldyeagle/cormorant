@@ -60,3 +60,33 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Cormorant monorepo
+# Local-only research and product docs (kept out of the repo on purpose)
+docs/
+
+# Xcode / Swift
+DerivedData/
+build/
+*.xcuserstate
+**/xcshareddata/xcschemes/*.xcscheme.bak
+.swiftpm/
+Package.resolved.bak
+
+# JS / Vite+ / Astro
+node_modules/
+.vite/
+.astro/
+apps/site/dist/
+.vite-plus/
+*.log
+
+# mise
+.mise.local.toml
+
+# macOS
+.DS_Store
+
+# Cloudflare
+.wrangler/
+.dev.vars

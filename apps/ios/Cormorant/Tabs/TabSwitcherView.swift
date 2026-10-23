@@ -34,8 +34,17 @@ struct TabSwitcherView: View {
                 .defaultScrollAnchor(.trailing)
                 .animation(.snappy, value: store.tabs.map(\.id))
             }
+            .overlay {
+                if store.tabs.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Open Tabs", systemImage: "square.on.square")
+                    } description: {
+                        Text("Closed pages are in the archive, top left.")
+                    }
+                }
+            }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(store.tabs.count == 1 ? "1 Tab" : "\(store.tabs.count) Tabs")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
         }
@@ -54,10 +63,19 @@ struct TabSwitcherView: View {
             Button("Done") { dismiss() }
         }
         ToolbarItem(placement: .bottomBar) {
+            // Composes in the search panel once the switcher is gone; no tab exists until Go.
             Button("New Tab", systemImage: "plus") {
                 store.newTab()
                 dismiss()
             }
+        }
+    }
+
+    private var title: String {
+        switch store.tabs.count {
+        case 0: "No Tabs"
+        case 1: "1 Tab"
+        case let count: "\(count) Tabs"
         }
     }
 

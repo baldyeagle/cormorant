@@ -7,9 +7,16 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     // MARK: Navigation
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
-        guard let session else { return .allow }
-        return await session.policy(for: navigationAction)
+    /// Also where the tab's desktop/mobile choice is applied: WebKit picks the user agent and
+    /// viewport for a navigation from the preferences returned here.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        preferences: WKWebpagePreferences
+    ) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
+        guard let session else { return (.allow, preferences) }
+        preferences.preferredContentMode = session.requestedContentMode
+        return (await session.policy(for: navigationAction), preferences)
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
@@ -18,6 +25,10 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         session?.navigationDidStart()
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        if let navigation { session?.navigationDidCommit(navigation) }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

@@ -60,6 +60,18 @@ export default defineConfig({
         command: xcodebuild('test', `\${IOS_TEST_DESTINATION:-${IOS_TEST_DESTINATION}}`),
         cache: false,
       },
+      // TestFlight upload: Release archive, then export straight to App Store Connect.
+      // Needs Xcode signed into the Apple ID and a registered device. Outward-facing: run on request.
+      'ios:testflight': {
+        command: [
+          'xcodebuild archive -workspace Cormorant.xcworkspace -scheme Cormorant',
+          "-destination 'generic/platform=iOS' -configuration Release",
+          '-archivePath build/Cormorant.xcarchive -allowProvisioningUpdates',
+          '&& xcodebuild -exportArchive -archivePath build/Cormorant.xcarchive',
+          '-exportOptionsPlist apps/ios/ExportOptions.plist -exportPath build/export -allowProvisioningUpdates',
+        ].join(' '),
+        cache: false,
+      },
     },
   },
 });

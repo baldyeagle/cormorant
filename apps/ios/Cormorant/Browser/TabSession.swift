@@ -1,3 +1,4 @@
+import CormorantBlocking
 import Observation
 import OSLog
 import SwiftUI
@@ -29,6 +30,12 @@ final class TabSession {
     private(set) var loadError: LoadError?
     /// A main-frame response WebKit can't display (a download). Downloads come in build two.
     var blockedDownloadURL: URL?
+    /// Work the actions sheet hands off to run once it has finished dismissing. See `runPendingAction()`.
+    @ObservationIgnored var pendingAction: PendingAction?
+    /// Current page zoom, one of `zoomSteps`. Per tab, not persisted.
+    private(set) var pageZoom: CGFloat = 1
+    /// The content mode the last committed main-frame navigation actually got.
+    private(set) var effectiveContentMode: WKWebpagePreferences.ContentMode = .recommended
 
     @ObservationIgnored var onPageChange: ((URL?, String) -> Void)?
     @ObservationIgnored var onPageLoaded: (() -> Void)?
@@ -52,8 +59,12 @@ final class TabSession {
     @ObservationIgnored private var crashReloads: [Date] = []
     @ObservationIgnored private var lastRequestedURL: URL?
     @ObservationIgnored private var lastScrollY: CGFloat = 0
+    /// Asked of WebKit for every navigation in this tab. Per tab, not persisted.
+    @ObservationIgnored private(set) var requestedContentMode: WKWebpagePreferences.ContentMode = .recommended
     @ObservationIgnored private var scrollTravel: CGFloat = 0
 
+    /// Safari's page zoom steps.
+    static let zoomSteps: [CGFloat] = [0.5, 0.75, 0.85, 1, 1.15, 1.25, 1.5, 1.75, 2, 2.5, 3]
     private static let collapseDistance: CGFloat = 24
     private static let crashReloadLimit = 3
     private static let crashReloadWindow: TimeInterval = 5 * 60
@@ -79,6 +90,7 @@ final class TabSession {
         configuration.userContentController = contentController
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
+        webView.isFindInteractionEnabled = true
         #if DEBUG
         webView.isInspectable = true
         #endif
@@ -125,6 +137,76 @@ final class TabSession {
         if isLoading { webView.stopLoading() } else { reload() }
     }
 
+    // MARK: Page actions
+
+    /// Something the actions sheet asked for that can only happen once the sheet is gone.
+    enum PendingAction {
+        /// The find navigator needs first responder, which the dismissing sheet still holds.
+        case findOnPage
+    }
+
+    /// Call from the actions sheet's `onDismiss`. Runs and clears `pendingAction`.
+    func runPendingAction() {
+        guard let action = pendingAction else { return }
+        pendingAction = nil
+        switch action {
+        case .findOnPage:
+            webView.findInteraction?.presentFindNavigator(showingReplace: false)
+        }
+    }
+
+    var canZoomIn: Bool { pageZoom < Self.zoomSteps[Self.zoomSteps.count - 1] - 0.001 }
+    var canZoomOut: Bool { pageZoom > Self.zoomSteps[0] + 0.001 }
+
+    func zoomIn() {
+        if let next = Self.zoomSteps.first(where: { $0 > pageZoom + 0.001 }) { setPageZoom(next) }
+    }
+
+    func zoomOut() {
+        if let previous = Self.zoomSteps.last(where: { $0 < pageZoom - 0.001 }) { setPageZoom(previous) }
+    }
+
+    func resetZoom() { setPageZoom(1) }
+
+    private func setPageZoom(_ zoom: CGFloat) {
+        pageZoom = zoom
+        webView.pageZoom = zoom
+    }
+
+    /// The page is showing its desktop layout (as committed, not just requested).
+    var isDesktopSite: Bool { effectiveContentMode == .desktop }
+
+    /// Asks for the other layout for the rest of this tab's life and reloads.
+    /// Like Safari, goes back to the URL the page was first requested at, so a user-agent
+    /// redirect (`example.com` to `m.example.com`) is undone rather than reloaded.
+    /// Only a change of site counts: other redirects (http to https, adding `www.`) and `replaceState`
+    /// would load a stale URL or add a duplicate history entry, so those just reload.
+    func toggleDesktopSite() {
+        requestedContentMode = isDesktopSite ? .mobile : .desktop
+        let site = { (url: URL?) in url?.host().map(BlockingPreferences.normalize(host:)) }
+        if let initial = webView.backForwardList.currentItem?.initialURL, site(initial) != site(webView.url) {
+            load(initial)
+        } else {
+            reload()
+        }
+    }
+
+    /// Zoom and requested layout, carried over to a rebuilt web view or a popup from this tab.
+    struct ViewSettings {
+        let pageZoom: CGFloat
+        let contentMode: WKWebpagePreferences.ContentMode
+    }
+
+    var viewSettings: ViewSettings {
+        ViewSettings(pageZoom: pageZoom, contentMode: requestedContentMode)
+    }
+
+    /// Call before the first navigation, so it already gets the requested layout.
+    func apply(_ settings: ViewSettings) {
+        requestedContentMode = settings.contentMode
+        setPageZoom(settings.pageZoom)
+    }
+
     /// Re-applies rules for the current host after a preferences or list change.
     func reapplyBlocking(reload: Bool) {
         let host = webView.url?.host()?.lowercased()
@@ -143,6 +225,8 @@ final class TabSession {
 
     /// Call when this tab becomes the one on screen.
     func didBecomeActiveTab() {
+        // Asked for while another tab's sheet was open; it must not fire on a later dismissal.
+        pendingAction = nil
         if needsReload { recoverFromCrash() }
     }
 
@@ -198,6 +282,10 @@ final class TabSession {
         if error.domain == "WebKitErrorDomain", [102, 204].contains(error.code) { return }
         let url = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL ?? webView.url ?? lastRequestedURL
         loadError = LoadError(message: error.localizedDescription, url: url)
+    }
+
+    func navigationDidCommit(_ navigation: WKNavigation) {
+        effectiveContentMode = navigation.effectiveContentMode
     }
 
     func pageDidFinishLoading() { onPageLoaded?() }

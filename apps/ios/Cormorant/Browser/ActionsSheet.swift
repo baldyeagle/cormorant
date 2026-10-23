@@ -3,16 +3,18 @@ import SwiftUI
 import UIKit
 import WebKit
 
-/// The caret sheet: back/forward, copy and reload, Find on Page and Share, page zoom, desktop
-/// site, per-site blockers, and Settings.
+/// The caret sheet: back/forward, the host (tap to search), copy and reload, Find on Page and
+/// Share, page zoom, desktop site, per-site blockers, and Settings.
 ///
 /// The presenter must call `session.runPendingAction()` from the sheet's `onDismiss`: Find on
-/// Page needs first responder, which it can only take once the sheet is gone.
+/// Page needs first responder, which it can only take once the sheet is gone. `showSearch` is
+/// deferred the same way: the presenter dismisses the sheet and raises the search panel after.
 struct ActionsSheet: View {
     @Environment(BrowserStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let session: TabSession?
     let url: URL?
+    let showSearch: () -> Void
     let showSettings: () -> Void
     @State private var contentHeight: CGFloat = 0
 
@@ -20,7 +22,7 @@ struct ActionsSheet: View {
         ScrollView {
             VStack(spacing: 14) {
                 if let session, let url = pageURL {
-                    NavigationRow(session: session, url: url, dismiss: dismiss)
+                    NavigationRow(session: session, url: url, dismiss: dismiss, showSearch: showSearch)
                     tiles(session: session, url: url)
                     pageGroup(session: session)
                 }
@@ -138,14 +140,18 @@ struct ActionsSheet: View {
 
 // MARK: - Top row
 
-/// Back, Forward, the host, Copy Link, and Reload/Stop in one capsule. At accessibility text
-/// sizes the host moves above the buttons so neither gets crushed.
+/// Back, Forward, the host, Copy Link, and Reload/Stop in one capsule. Tapping the host opens the
+/// search panel, like the bar's pill. At accessibility text sizes the host moves above the buttons
+/// so neither gets crushed.
 private struct NavigationRow: View {
     let session: TabSession
     let url: URL
     let dismiss: DismissAction
+    let showSearch: () -> Void
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Matches IconButtonStyle's size, so the host's pressed highlight fills the row's height.
+    @ScaledMetric(relativeTo: .body) private var hostHeight: CGFloat = 44
     @State private var copied = false
     @State private var resetCopied: Task<Void, Never>?
 
@@ -179,13 +185,23 @@ private struct NavigationRow: View {
         .sensoryFeedback(.success, trigger: copied) { _, new in new }
     }
 
+    /// The whole space between the button pairs is the tap target, not just the text.
     private var host: some View {
-        Text(url.displayHost)
-            .font(.headline)
-            .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
-            .truncationMode(.middle)
-            .multilineTextAlignment(.center)
-            .accessibilityAddTraits(.isHeader)
+        Button(action: showSearch) {
+            Text(url.displayHost)
+                .font(.headline)
+                .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                .truncationMode(.middle)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, minHeight: min(hostHeight, 76))
+                .contentShape(.capsule)
+        }
+        // Overrides the row's IconButtonStyle, which would squeeze the host into a 44pt circle.
+        .buttonStyle(HostButtonStyle())
+        .accessibilityLabel("Address")
+        .accessibilityValue(url.displayHost)
+        .accessibilityHint("Search or enter address")
     }
 
     private var back: some View {
@@ -243,6 +259,14 @@ private struct IconButtonStyle: ButtonStyle {
             .frame(width: min(size, 76), height: min(size, 76))
             .contentShape(.circle)
             .background(.primary.opacity(configuration.isPressed ? 0.1 : 0), in: .circle)
+    }
+}
+
+private struct HostButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.primary)
+            .background(.primary.opacity(configuration.isPressed ? 0.1 : 0), in: .capsule)
     }
 }
 

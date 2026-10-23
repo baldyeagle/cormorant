@@ -10,8 +10,8 @@ struct BrowserView: View {
     @State private var showSwitcher = false
     @State private var showSettings = false
     @State private var showActions = false
-    /// Settings was chosen in the actions sheet; presented once that sheet has finished dismissing.
-    @State private var settingsAfterActions = false
+    /// Chosen in the actions sheet; presented once that sheet has finished dismissing.
+    @State private var afterActions: AfterActions?
     @State private var isSearching = false
     @State private var barHeight: CGFloat = 0
     /// The search panel's top edge in global coordinates, once it has laid out; the empty state keeps
@@ -97,8 +97,12 @@ struct BrowserView: View {
             TabSwitcherView()
         }
         .sheet(isPresented: $showActions, onDismiss: actionsDidDismiss) {
-            ActionsSheet(session: store.activeSession, url: store.activeTab?.url, showSettings: {
-                settingsAfterActions = true
+            ActionsSheet(session: store.activeSession, url: store.activeTab?.url, showSearch: {
+                // The panel's field can only take focus once the sheet is gone.
+                afterActions = .search
+                showActions = false
+            }, showSettings: {
+                afterActions = .settings
                 showActions = false
             })
         }
@@ -146,6 +150,8 @@ struct BrowserView: View {
             // A tab opened from outside (share sheet, URL) must not leave the panel or sheet over the page.
             if store.activeTab?.url != nil {
                 dismissSearch()
+                // Nor bring the panel or Settings up once the sheet finishes dismissing.
+                afterActions = nil
                 showActions = false
             } else if showActions {
                 // The last tab closed under the caret sheet: `actionsDidDismiss` brings the panel up.
@@ -165,7 +171,7 @@ struct BrowserView: View {
         .task(id: store.activeTab?.url) {
             guard ProcessInfo.processInfo.arguments.contains("-openActions"), store.activeTab?.url != nil else { return }
             try? await Task.sleep(for: .seconds(1))
-            if !Task.isCancelled { showActions = true }
+            if !Task.isCancelled { presentActions() }
         }
         #endif
     }
@@ -231,13 +237,21 @@ struct BrowserView: View {
 
     private func presentActions() {
         dismissSearch()
+        // As for the switcher: the dismissing sheet would hand first responder back to the web view
+        // and take focus from the panel the host button opens. Leave nothing to restore.
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         showActions = true
     }
 
+    private enum AfterActions { case search, settings }
+
     private func actionsDidDismiss() {
-        if settingsAfterActions {
-            settingsAfterActions = false
-            showSettings = true
+        let next = afterActions
+        afterActions = nil
+        switch next {
+        case .search: presentSearch()
+        case .settings: showSettings = true
+        case nil: break
         }
         store.activeSession?.runPendingAction()
         // The last tab may have closed while the sheet was up. Not while Settings opens (guarded):

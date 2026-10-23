@@ -8,10 +8,7 @@ struct BrowserView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var showSwitcher = false
-    @State private var showSettings = false
     @State private var showActions = false
-    /// Settings was chosen in the actions sheet; presented once that sheet has finished dismissing.
-    @State private var settingsAfterActions = false
     @State private var isSearching = false
     @State private var barHeight: CGFloat = 0
     /// The search panel's top edge in global coordinates, once it has laid out; the empty state keeps
@@ -98,18 +95,12 @@ struct BrowserView: View {
         }
         .sheet(isPresented: $showActions, onDismiss: actionsDidDismiss) {
             ActionsSheet(session: store.activeSession, url: store.activeTab?.url, showSearch: {
-                // Not deferred to `actionsDidDismiss` like Settings: that runs a second or more after
-                // the sheet has gone. The field takes focus while the sheet slides away, since nothing
+                // Not deferred to `actionsDidDismiss`: that runs a second or more after the sheet
+                // has gone. The field takes focus while the sheet slides away, since nothing
                 // is left for the sheet to restore (see `presentActions`).
                 showActions = false
                 presentSearch()
-            }, showSettings: {
-                settingsAfterActions = true
-                showActions = false
             })
-        }
-        .sheet(isPresented: $showSettings, onDismiss: searchIfBlank) {
-            SettingsView()
         }
         .alert("Couldn't read saved tabs.", isPresented: loadFailurePresented) {
             Button("Start Fresh") { store.startFresh() }
@@ -152,8 +143,7 @@ struct BrowserView: View {
             // A tab opened from outside (share sheet, URL) must not leave the panel or sheet over the page.
             if store.activeTab?.url != nil {
                 dismissSearch()
-                // Nor bring Settings up once the sheet finishes dismissing.
-                settingsAfterActions = false
+                // Settings, if stacked on the sheet, goes with it.
                 showActions = false
             } else if showActions {
                 // The last tab closed under the caret sheet: `actionsDidDismiss` brings the panel up.
@@ -246,13 +236,8 @@ struct BrowserView: View {
     }
 
     private func actionsDidDismiss() {
-        if settingsAfterActions {
-            settingsAfterActions = false
-            showSettings = true
-        }
         store.activeSession?.runPendingAction()
-        // The last tab may have closed while the sheet was up. Not while Settings opens (guarded):
-        // its own dismissal brings the panel up.
+        // The last tab may have closed while the sheet was up.
         searchIfBlank()
     }
 
@@ -269,7 +254,7 @@ struct BrowserView: View {
 
     /// With no page to show, the search field is always up (default-browser requirement).
     private func searchIfBlank() {
-        guard store.isLoaded, !alertIsUp, !showSwitcher, !showActions, !showSettings,
+        guard store.isLoaded, !alertIsUp, !showSwitcher, !showActions,
               store.activeTab?.url == nil else { return }
         presentSearch()
     }

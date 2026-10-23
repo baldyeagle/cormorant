@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  kit:
+    name: CormorantKit (swift test)
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select newest Xcode on the runner
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          swift --version
+      - name: Build
+        run: swift build --package-path packages/CormorantKit
+      - name: Test
+        # Live filter-list download is opt-in (CORMORANT_LIVE_TESTS=1) and stays off in CI.
+        run: swift test --package-path packages/CormorantKit
+
+  ios:
+    name: iOS app (simulator build + default-browser checklist)
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select newest Xcode on the runner
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+      - name: Default-browser plist checklist (source)
+        run: scripts/check-default-browser-plist.sh
+      - name: Build for simulator
+        run: |
+          mkdir -p build
+          xcodebuild -workspace Cormorant.xcworkspace -scheme Cormorant \
+            -destination 'generic/platform=iOS Simulator' -configuration Debug \
+            -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO \
+            build | tee build/xcodebuild.log | grep -E "error:|warning:|BUILD" | grep -v appintentsmetadataprocessor || true
+          grep -q "BUILD SUCCEEDED" build/xcodebuild.log
+      - name: Default-browser plist checklist (built app)
+        run: scripts/check-default-browser-plist.sh build/DerivedData/Build/Products/Debug-iphonesimulator/Cormorant.app
+      - name: Fail on warnings in app code
+        run: |
+          if grep -E "apps/ios/.*warning:" build/xcodebuild.log; then
+            echo "Compiler warnings in apps/ios"; exit 1
+          fi
+
+  site:
+    name: Site (Astro build, check, lint, format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        # Installs node, pnpm and vite-plus from mise.toml.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: vp run site:build
+      - name: Check
+        run: vp run site:test
+      - name: Lint
+        run: vp lint
+      - name: Format
+        run: vp fmt --check

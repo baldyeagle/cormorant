@@ -97,7 +97,13 @@ struct BrowserView: View {
             TabSwitcherView()
         }
         .sheet(isPresented: $showActions, onDismiss: actionsDidDismiss) {
-            ActionsSheet(session: store.activeSession, url: store.activeTab?.url, showSettings: {
+            ActionsSheet(session: store.activeSession, url: store.activeTab?.url, showSearch: {
+                // Not deferred to `actionsDidDismiss` like Settings: that runs a second or more after
+                // the sheet has gone. The field takes focus while the sheet slides away, since nothing
+                // is left for the sheet to restore (see `presentActions`).
+                showActions = false
+                presentSearch()
+            }, showSettings: {
                 settingsAfterActions = true
                 showActions = false
             })
@@ -146,6 +152,8 @@ struct BrowserView: View {
             // A tab opened from outside (share sheet, URL) must not leave the panel or sheet over the page.
             if store.activeTab?.url != nil {
                 dismissSearch()
+                // Nor bring Settings up once the sheet finishes dismissing.
+                settingsAfterActions = false
                 showActions = false
             } else if showActions {
                 // The last tab closed under the caret sheet: `actionsDidDismiss` brings the panel up.
@@ -165,7 +173,7 @@ struct BrowserView: View {
         .task(id: store.activeTab?.url) {
             guard ProcessInfo.processInfo.arguments.contains("-openActions"), store.activeTab?.url != nil else { return }
             try? await Task.sleep(for: .seconds(1))
-            if !Task.isCancelled { showActions = true }
+            if !Task.isCancelled { presentActions() }
         }
         #endif
     }
@@ -231,6 +239,9 @@ struct BrowserView: View {
 
     private func presentActions() {
         dismissSearch()
+        // As for the switcher: the dismissing sheet would hand first responder back to the web view
+        // and take focus from the panel the host button opens. Leave nothing to restore.
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         showActions = true
     }
 

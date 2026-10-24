@@ -7,6 +7,7 @@ struct BrowserView: View {
     @Environment(BrowserStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showSwitcher = false
     @State private var showActions = false
     @State private var isSearching = false
@@ -48,9 +49,8 @@ struct BrowserView: View {
         }
         .animation(.snappy, value: store.activeSession?.blockedDownloadURL)
         .background {
-            // Fills the status-bar strip; site-tinted once tabs report a theme color.
-            (store.activeSession?.themeColor ?? Color(.systemBackground))
-                .ignoresSafeArea()
+            // Fills the status-bar strip.
+            StatusBarStrip(tint: chromeTint, colorScheme: colorScheme)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
@@ -71,6 +71,7 @@ struct BrowserView: View {
                 .opacity(isSearching || !store.isLoaded ? 0 : 1)
                 .allowsHitTesting(!isSearching && store.isLoaded)
                 .accessibilityHidden(isSearching || !store.isLoaded || keyboardCoversBar)
+                .environment(\.chromeTint, chromeTint)
             }
             // Insets track the EXPANDED bar only. Shrinking them when the bar collapses would move
             // the content, and at the end of a page that offset clamp reads as a scroll-up, which
@@ -184,6 +185,14 @@ struct BrowserView: View {
         #endif
     }
 
+    /// The site's color for the chrome, or nil for the default. Only over a page: not the empty
+    /// state or a load error, which draw their own backgrounds.
+    private var chromeTint: ChromeTint? {
+        guard store.settings.tintsChrome, store.activeTab?.url != nil,
+              let session = store.activeSession, session.loadError == nil else { return nil }
+        return session.chromeTint(in: colorScheme)
+    }
+
     /// Dismissed only by its action, which clears the failure.
     private var loadFailurePresented: Binding<Bool> {
         Binding(get: { store.loadFailure != nil }, set: { _ in })
@@ -277,5 +286,29 @@ struct BrowserView: View {
 
     private func switcherDidDismiss() {
         if store.isComposingNewTab { presentSearch() } else { searchIfBlank() }
+    }
+}
+
+/// The strip behind the status bar, in the site's color with a status bar that reads on it.
+private struct StatusBarStrip: View {
+    let tint: ChromeTint?
+    let colorScheme: ColorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        // Before iOS 27 the status bar's style follows the system appearance, so a tint that needs
+        // the other one would hide the clock; those keep the default strip there.
+        let usable = tint.flatMap { tint in
+            if #available(iOS 27, *) { return tint }
+            return tint.colorScheme == colorScheme ? tint : nil
+        }
+        let fill = (usable.map { Color($0.background) } ?? Color(.launchBackground))
+            .ignoresSafeArea()
+            .animation(.easeInOut(duration: reduceMotion ? 0.2 : 0.35), value: usable)
+        if #available(iOS 27, *) {
+            fill.toolbarColorScheme(usable?.colorScheme, for: .statusBar)
+        } else {
+            fill
+        }
     }
 }

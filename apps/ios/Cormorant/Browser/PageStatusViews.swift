@@ -21,7 +21,8 @@ struct LoadErrorView: View {
                 .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
+        // The status-bar strip above it is the default chrome, the launch background.
+        .background(Color(.launchBackground))
     }
 }
 

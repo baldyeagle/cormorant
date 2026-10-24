@@ -24,9 +24,11 @@ final class TabSession {
     private(set) var progress = 0.0
     /// Set while the user scrolls down a page; the bottom bar shrinks to a strip.
     var isBarCollapsed = false
-    /// Chrome tint for the status-bar strip. Always nil in build one; a later build can fill it
-    /// from `<meta name="theme-color">` (it also needs a matching status-bar style).
-    private(set) var themeColor: Color?
+    /// The page's `<meta name="theme-color">`, as WebKit resolved it for the current appearance.
+    private(set) var themeColor: UIColor?
+    /// The color WebKit draws under the page, derived from its background. The chrome's fallback tint.
+    /// Nil until a page has committed: before that it's only the web view's own background.
+    private(set) var underPageColor: UIColor?
     private(set) var loadError: LoadError?
     /// A main-frame response WebKit can't display (a download). Downloads come in build two.
     var blockedDownloadURL: URL?
@@ -65,6 +67,8 @@ final class TabSession {
     @ObservationIgnored private var lastRequestedURL: URL?
     @ObservationIgnored private var lastScrollY: CGFloat = 0
     @ObservationIgnored private var lastInsetTop: CGFloat = 0
+    @ObservationIgnored private var hasCommittedPage = false
+    @ObservationIgnored private var pageColorsTask: Task<Void, Never>?
     /// Asked of WebKit for every navigation in this tab. Per tab, not persisted.
     @ObservationIgnored private(set) var requestedContentMode: WKWebpagePreferences.ContentMode = .recommended
     @ObservationIgnored private var scrollTravel: CGFloat = 0
@@ -299,6 +303,8 @@ final class TabSession {
 
     func navigationDidCommit(_ navigation: WKNavigation) {
         effectiveContentMode = navigation.effectiveContentMode
+        hasCommittedPage = true
+        pageColorsDidChange()
     }
 
     func pageDidFinishLoading() { onPageLoaded?() }
@@ -404,6 +410,12 @@ final class TabSession {
                     self?.onPageChange?(web.url, web.title ?? "")
                 }
             },
+            webView.observe(\.themeColor, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.pageColorsDidChange() }
+            },
+            webView.observe(\.underPageBackgroundColor, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.pageColorsDidChange() }
+            },
             webView.observe(\.title, options: [.new]) { [weak self] web, _ in
                 MainActor.assumeIsolated { self?.onPageChange?(web.url, web.title ?? "") }
             },
@@ -411,6 +423,20 @@ final class TabSession {
                 MainActor.assumeIsolated { self?.scrollViewDidScroll(scrollView) }
             },
         ]
+    }
+
+    /// Takes the page's colors once they've held for a moment. Around a first load or a crash reload
+    /// WebKit passes through placeholders (no theme color, a white under-page color) for ~100 ms
+    /// before the page's own; adopting those would flash the chrome and flip the status bar.
+    private func pageColorsDidChange() {
+        pageColorsTask?.cancel()
+        pageColorsTask = Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            if themeColor != webView.themeColor { themeColor = webView.themeColor }
+            let underPage = hasCommittedPage ? webView.underPageBackgroundColor : nil
+            if underPageColor != underPage { underPageColor = underPage }
+        }
     }
 
     /// Collapses the bar after a short scroll down, expands it after a short scroll up or at the top.

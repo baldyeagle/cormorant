@@ -8,6 +8,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 SearchEngineSettings(settings: store.settings)
+                AppearanceSettings(settings: store.settings)
                 BlockingSettings()
             }
             .navigationTitle("Settings")

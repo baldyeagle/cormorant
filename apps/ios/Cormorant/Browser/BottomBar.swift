@@ -1,3 +1,4 @@
+import CormorantCore
 import SwiftUI
 
 /// Tabs on the left, the search/URL pill in the middle, page actions on the right.
@@ -14,6 +15,11 @@ struct BottomBar: View {
     let showActions: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.chromeTint) private var chromeTint
+    /// The site's theme color, if it set one; the controls are filled with it and their contents keep
+    /// contrast. A tint from the page's background is for the status-bar strip only: filled with
+    /// the page's own color, the controls would vanish into it.
+    private var tint: ChromeTint? { chromeTint?.source == .themeColor ? chromeTint : nil }
     /// Scales the round controls with Dynamic Type; a minimum, never a cap.
     @ScaledMetric(relativeTo: .body) private var controlSize: CGFloat = 46
 
@@ -32,6 +38,13 @@ struct BottomBar: View {
             }
         }
         .animation(.snappy(duration: 0.22), value: isCollapsed)
+        // On a site's tint, text, icons and the progress line take the foreground that contrasts
+        // with it (`.primary` and `.secondary` inside resolve against this style).
+        // Untinted, exactly the default style, so Liquid Glass can still adapt it to the page.
+        .foregroundStyle(tint.map { AnyShapeStyle($0.foregroundColor) } ?? AnyShapeStyle(.primary))
+        .tint(tint?.foregroundColor)
+        // A crossfade between colors, with or without Reduce Motion: nothing moves.
+        .animation(.easeInOut(duration: reduceMotion ? 0.2 : 0.35), value: tint)
         // Collapsed, the capsule sinks toward the home indicator like Safari's, so the whole
         // thing is a sliver rather than a label stacked above the safe area. Not with Reduce Motion:
         // the change of state is then a pure fade.
@@ -50,14 +63,15 @@ struct BottomBar: View {
         } label: {
             Text(url?.displayHost ?? "")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                // Secondary is too faint on a saturated tint.
+                .foregroundStyle(tint == nil ? .secondary : .primary)
                 .lineLimit(1)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 5)
                 // Wide enough for the progress line to read under a short host like "x.com".
                 .frame(minWidth: 140)
                 .overlay(alignment: .bottom) { LoadingLine(progress: progress, isLoading: isLoading) }
-                .glassEffect(.regular.interactive(), in: .capsule)
+                .chromeSurface(tint, in: .capsule)
                 .contentShape(.capsule)
         }
         .buttonStyle(.plain)
@@ -86,6 +100,9 @@ struct BottomBar: View {
         Menu {
             Button("New Tab", systemImage: "plus") { store.newTab() }
                 .labelStyle(.titleAndIcon)
+                // The bar's tinted foreground is for its own controls, not the system menu.
+                .foregroundStyle(Color.primary)
+                .tint(nil)
         } label: {
             TabCountGlyph(count: store.tabs.count)
                 .frame(minWidth: controlSize, minHeight: controlSize)
@@ -95,7 +112,7 @@ struct BottomBar: View {
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .chromeSurface(tint, in: .circle)
         .accessibilityLabel("Tabs, \(store.tabs.count) open")
         .accessibilityHint("Shows open tabs")
         .accessibilityAction(named: "New Tab") { store.newTab() }
@@ -124,7 +141,7 @@ struct BottomBar: View {
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
+        .chromeSurface(tint, in: .capsule)
         .accessibilityLabel("Address")
         .accessibilityValue(url?.displayHost ?? "")
         .accessibilityHint("Search or enter address")
@@ -138,7 +155,7 @@ struct BottomBar: View {
                 .contentShape(.circle)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .chromeSurface(tint, in: .circle)
         .accessibilityLabel("Page actions")
     }
 }
@@ -177,5 +194,15 @@ private struct LoadingLine: View {
             .opacity(isLoading ? 1 : 0)
             .animation(.easeOut(duration: 0.25), value: isLoading)
             .accessibilityHidden(true)
+    }
+}
+
+private extension View {
+    /// The controls' interactive glass; on a site's tint, filled with it. Glass tinted with the color
+    /// isn't enough: it lets the page through, and a mid-tone tint over dark or light content drifts
+    /// far enough to lose the contrast its foreground was chosen for. The fill keeps the color exact.
+    func chromeSurface(_ tint: ChromeTint?, in shape: some Shape) -> some View {
+        background(tint.map { Color($0.background) } ?? .clear, in: shape)
+            .glassEffect(.regular.interactive(), in: shape)
     }
 }

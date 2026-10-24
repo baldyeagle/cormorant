@@ -48,6 +48,7 @@ final class TabSession {
     @ObservationIgnored private let blocking: BlockingService
     @ObservationIgnored private let contentController: WKUserContentController
     @ObservationIgnored private let coordinator = WebViewCoordinator()
+    @ObservationIgnored private let pullToRefresh: PullToRefresh
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     /// Host and lists version the current rules were applied for; nil until the first successful apply.
     @ObservationIgnored private var appliedHost: String?
@@ -59,6 +60,7 @@ final class TabSession {
     @ObservationIgnored private var crashReloads: [Date] = []
     @ObservationIgnored private var lastRequestedURL: URL?
     @ObservationIgnored private var lastScrollY: CGFloat = 0
+    @ObservationIgnored private var lastInsetTop: CGFloat = 0
     /// Asked of WebKit for every navigation in this tab. Per tab, not persisted.
     @ObservationIgnored private(set) var requestedContentMode: WKWebpagePreferences.ContentMode = .recommended
     @ObservationIgnored private var scrollTravel: CGFloat = 0
@@ -89,6 +91,7 @@ final class TabSession {
         contentController = WKUserContentController()
         configuration.userContentController = contentController
         webView = WKWebView(frame: .zero, configuration: configuration)
+        pullToRefresh = PullToRefresh(webView: webView)
         webView.allowsBackForwardNavigationGestures = true
         webView.isFindInteractionEnabled = true
         #if DEBUG
@@ -97,6 +100,7 @@ final class TabSession {
         coordinator.session = self
         webView.navigationDelegate = coordinator
         webView.uiDelegate = coordinator
+        pullToRefresh.onRefresh = { [weak self] in self?.reload() }
         observe()
     }
 
@@ -228,6 +232,11 @@ final class TabSession {
         // Asked for while another tab's sheet was open; it must not fire on a later dismissal.
         pendingAction = nil
         if needsReload { recoverFromCrash() }
+    }
+
+    /// Call when another tab takes the screen.
+    func didResignActiveTab() {
+        pullToRefresh.cancel()
     }
 
     // MARK: Called by the coordinator
@@ -382,6 +391,7 @@ final class TabSession {
             webView.observe(\.url, options: [.new]) { [weak self] web, _ in
                 MainActor.assumeIsolated {
                     self?.setBarCollapsed(false)
+                    self?.pullToRefresh.pageDidChange(web.url)
                     self?.onPageChange?(web.url, web.title ?? "")
                 }
             },
@@ -396,9 +406,13 @@ final class TabSession {
 
     /// Collapses the bar after a short scroll down, expands it after a short scroll up or at the top.
     private func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
-        let delta = y - lastScrollY
+        let insetTop = scrollView.adjustedContentInset.top
+        let y = scrollView.contentOffset.y + insetTop
+        // The pull-to-refresh spinner adds and removes top inset, which shifts `y` with no scrolling;
+        // that shift mustn't count as travel (a spinner ending mid-scroll would expand the bar).
+        let delta = insetTop == lastInsetTop ? y - lastScrollY : 0
         lastScrollY = y
+        lastInsetTop = insetTop
         guard scrollView.isDragging || scrollView.isDecelerating else { return }
         if y <= 0 {
             setBarCollapsed(false)

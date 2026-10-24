@@ -352,10 +352,12 @@ final class BrowserStore {
 
     private func syncActiveSession() {
         guard let tab = activeTab else {
+            activeSession?.didResignActiveTab()
             activeSession = nil
             return
         }
         guard activeSession?.tabID != tab.id else { return }
+        activeSession?.didResignActiveTab()
         if let activeSession { snapshot(activeSession) }
         let session = session(for: tab)
         activeSession = session

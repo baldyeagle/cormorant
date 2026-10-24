@@ -14,6 +14,15 @@ import Testing
         #expect(state.activeTabID == tab.id)
     }
 
+    @Test func openTabInBackgroundKeepsActiveTab() {
+        var state = BrowserState()
+        let active = state.openTab(url: url("https://a.com"), now: t0)
+        let background = state.openTab(url: url("https://b.com"), activate: false, now: t0 + hour)
+        #expect(state.tabs.map(\.id) == [active.id, background.id])
+        #expect(state.activeTabID == active.id)
+        #expect(background.kind == .today && background.lastViewedAt == t0 + hour)
+    }
+
     @Test func archiveMovesTabToArchiveAndActivatesMostRecentInSameSpace() {
         var state = BrowserState()
         let older = state.openTab(url: url("https://a.com"), now: t0)

@@ -177,11 +177,12 @@ extension BrowserState {
     /// Maximum number of archived entries kept; the oldest are dropped beyond this.
     public static let archiveCapacity = 2_000
 
-    /// Adds a Today tab in the active Space and makes it active.
-    public mutating func openTab(url: URL?, title: String = "", now: Date = .now) -> Tab {
+    /// Adds a Today tab in the active Space and makes it active, or leaves the active tab alone when
+    /// `activate` is false (a background tab).
+    public mutating func openTab(url: URL?, title: String = "", activate: Bool = true, now: Date = .now) -> Tab {
         let tab = Tab(spaceID: activeSpaceID, url: url, title: title, kind: .today, createdAt: now)
         tabs.append(tab)
-        activeTabID = tab.id
+        if activate { activeTabID = tab.id }
         return tab
     }
 

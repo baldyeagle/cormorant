@@ -242,6 +242,20 @@ final class BrowserStore {
         }
     }
 
+    /// A link from a page's long-press menu, opened in a new tab: switched to, or left in the
+    /// background with the current page still on screen.
+    func openLinkInNewTab(_ url: URL, inBackground: Bool) {
+        guard isLoaded, Self.isWeb(url) else { return }
+        if !inBackground {
+            isComposingNewTab = false
+            stampActiveTab()
+        }
+        _ = state.openTab(url: url, activate: !inBackground)
+        // Stamped after, so the page being read stays first in the switcher, the new tab next.
+        if inBackground { stampActiveTab() }
+        stateDidChange()
+    }
+
     // MARK: Blocking
 
     /// Flips blocking for the active page's host, re-applies rules in every tab on that site,
@@ -387,6 +401,9 @@ final class BrowserStore {
         }
         session.onCreateWebView = { [weak self, weak session] configuration, action in
             self?.openChild(configuration: configuration, for: action, from: session)
+        }
+        session.onOpenInNewTab = { [weak self] url, inBackground in
+            self?.openLinkInNewTab(url, inBackground: inBackground)
         }
         session.onClose = { [weak self] in self?.close(tabID) }
         session.onProcessTerminated = { [weak self, weak session] in

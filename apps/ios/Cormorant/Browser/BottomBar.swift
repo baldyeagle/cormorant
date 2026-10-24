@@ -153,6 +153,9 @@ private struct TabCountGlyph: View {
         Text(count < 100 ? "\(count)" : "∞")
             .font(.footnote.weight(.bold))
             .monospacedDigit()
+            // A background tab opened from the link menu ticks the count over.
+            .contentTransition(.numericText(value: Double(count)))
+            .animation(.snappy, value: count)
             .padding(.horizontal, 4)
             .frame(minWidth: side, minHeight: side)
             .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(lineWidth: 1.6))

@@ -64,6 +64,27 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         session?.pageDidRequestClose()
     }
 
+    // MARK: Link menu
+    // Implementing these keeps WebKit from falling back to the system's link menu, whose Open Link
+    // and preview tap send the URL to the default browser instead of this tab.
+
+    func webView(_ webView: WKWebView, contextMenuConfigurationFor elementInfo: WKContextMenuElementInfo) async -> UIContextMenuConfiguration? {
+        guard let url = elementInfo.linkURL else { return nil }
+        return session?.linkMenuConfiguration(for: url)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        contextMenuForElement elementInfo: WKContextMenuElementInfo,
+        willCommitWithAnimator animator: any UIContextMenuInteractionCommitAnimating
+    ) {
+        session?.commitLinkPreview(elementInfo.linkURL, animator: animator)
+    }
+
+    func webView(_ webView: WKWebView, contextMenuDidEndForElement elementInfo: WKContextMenuElementInfo) {
+        session?.linkMenuDidEnd(for: elementInfo.linkURL)
+    }
+
     // MARK: JavaScript dialogs
     // Each handler must be called exactly once, so every path that can't show an alert calls it directly.
 

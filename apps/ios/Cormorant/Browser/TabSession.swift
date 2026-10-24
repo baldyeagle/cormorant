@@ -41,11 +41,15 @@ final class TabSession {
     @ObservationIgnored var onPageLoaded: (() -> Void)?
     /// `window.open` / `target=_blank`: return a web view built from the configuration, or nil.
     @ObservationIgnored var onCreateWebView: ((WKWebViewConfiguration, WKNavigationAction) -> WKWebView?)?
+    /// A link from the long-press menu, to open in a new tab (switched to unless `inBackground`).
+    @ObservationIgnored var onOpenInNewTab: ((_ url: URL, _ inBackground: Bool) -> Void)?
     /// The page called `window.close()`.
     @ObservationIgnored var onClose: (() -> Void)?
+    /// The long-press menu's page preview, while one is up. See `LinkContextMenu.swift`.
+    @ObservationIgnored weak var linkPreview: LinkPreviewController?
     @ObservationIgnored var onProcessTerminated: (() -> Void)?
 
-    @ObservationIgnored private let blocking: BlockingService
+    @ObservationIgnored let blocking: BlockingService
     @ObservationIgnored private let contentController: WKUserContentController
     @ObservationIgnored private let coordinator = WebViewCoordinator()
     @ObservationIgnored private let pullToRefresh: PullToRefresh
@@ -71,9 +75,9 @@ final class TabSession {
     private static let crashReloadLimit = 3
     private static let crashReloadWindow: TimeInterval = 5 * 60
     /// Schemes WebKit loads itself. Anything else belongs to another app.
-    private static let webSchemes: Set<String> = ["http", "https", "about", "blob", "data", "javascript"]
+    static let webSchemes: Set<String> = ["http", "https", "about", "blob", "data", "javascript"]
     /// Never acted on from inside a page: our own scheme (pages must not drive the app) and local files.
-    private static let refusedSchemes: Set<String> = ["cormorant", "file"]
+    static let refusedSchemes: Set<String> = ["cormorant", "file"]
 
     /// - Parameter configuration: supplied by WebKit for `window.open`; the new view must be built from it.
     init(tabID: UUID, blocking: BlockingService, configuration supplied: WKWebViewConfiguration? = nil) {
@@ -351,6 +355,11 @@ final class TabSession {
             Logger.app.notice("Cancelled non-user navigation to \(url.scheme ?? "", privacy: .public): URL")
             return
         }
+        confirmOpeningInOtherApp(url)
+    }
+
+    /// Asks before handing `url` to the app that owns its scheme.
+    func confirmOpeningInOtherApp(_ url: URL) {
         guard let presenter = webView.alertPresenter else { return }
         let alert = UIAlertController(title: "Open in \(Self.appName(for: url))?", message: nil, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
@@ -434,7 +443,7 @@ final class TabSession {
         }
     }
 
-    private func setBarCollapsed(_ collapsed: Bool) {
+    func setBarCollapsed(_ collapsed: Bool) {
         guard isBarCollapsed != collapsed else { return }
         withAnimation(.snappy(duration: 0.25)) { isBarCollapsed = collapsed }
     }

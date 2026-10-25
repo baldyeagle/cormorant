@@ -29,7 +29,7 @@ struct TabCard: View {
         .opacity(size.height > 0 ? 1 - min(1, -dragOffset / size.height) * 0.7 : 1)
         .contentShape(.rect)
         .onTapGesture(perform: onOpen)
-        .simultaneousGesture(swipeToClose)
+        .gesture(SwipeUpGesture(onChanged: { dragOffset = min(0, $0) }, onEnded: swipeEnded))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(tab.displayTitle)
         .accessibilityValue(tab.url?.displayString ?? "")
@@ -107,23 +107,60 @@ struct TabCard: View {
         }
     }
 
-    /// Vertical-only so horizontal drags still scroll the stack.
-    private var swipeToClose: some Gesture {
-        DragGesture(minimumDistance: 16)
-            .onChanged { value in
-                guard abs(value.translation.height) > abs(value.translation.width) else { return }
-                dragOffset = min(0, value.translation.height)
-            }
-            .onEnded { value in
-                let flung = value.predictedEndTranslation.height < -Self.closeDistance * 3
-                if dragOffset < -Self.closeDistance || (dragOffset < 0 && flung) {
-                    // Closed as the finger lifts: the removal transition carries the card on from here
-                    // while its neighbors close the gap.
-                    onClose()
-                } else {
-                    withAnimation(.snappy(duration: 0.3)) { dragOffset = 0 }
-                }
-            }
+    private func swipeEnded(translation: CGFloat, velocity: CGFloat) {
+        // Where a flick would carry the card: UIScrollView's normal deceleration, as SwiftUI predicts it.
+        let flung = translation + velocity * 0.2 < -Self.closeDistance * 3
+        if translation < -Self.closeDistance || (translation < 0 && flung) {
+            // Closed as the finger lifts: the removal transition carries the card on from here
+            // while its neighbors close the gap.
+            onClose()
+        } else {
+            withAnimation(.snappy(duration: 0.3)) { dragOffset = 0 }
+        }
+    }
+}
+
+/// Swipe up to close, in UIKit so it can decline horizontal drags before they start. A SwiftUI
+/// `DragGesture` on the card, even a simultaneous one, kept the stack's scroll view from picking up
+/// a quick horizontal flick: only slow drags scrolled.
+private struct SwipeUpGesture: UIGestureRecognizerRepresentable {
+    let onChanged: (CGFloat) -> Void
+    let onEnded: (_ translation: CGFloat, _ velocity: CGFloat) -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func handleUIGestureRecognizerAction(_ pan: UIPanGestureRecognizer, context: Context) {
+        let translation = pan.translation(in: pan.view).y
+        switch pan.state {
+        case .changed: onChanged(translation)
+        case .ended: onEnded(translation, pan.velocity(in: pan.view).y)
+        // Interrupted (a call, the switcher closing): settle back rather than close.
+        case .cancelled, .failed: onEnded(0, 0)
+        default: break
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        /// Starts only for a drag that's mostly upward; anything else fails at once and goes to the
+        /// scroll view.
+        func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = recognizer as? UIPanGestureRecognizer else { return false }
+            let velocity = pan.velocity(in: pan.view)
+            return velocity.y < 0 && abs(velocity.y) > abs(velocity.x)
+        }
+
+        /// The stack holds still while a card is swiped away.
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                               shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+            other is UIPanGestureRecognizer && other.view is UIScrollView
+        }
     }
 }
 

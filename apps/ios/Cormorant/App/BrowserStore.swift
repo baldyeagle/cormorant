@@ -37,6 +37,7 @@ final class BrowserStore {
 
     let blocking: BlockingService
     let settings: AppSettings
+    let favicons: FaviconStore
 
     @ObservationIgnored private let stateStore: any BrowserStateStore
     @ObservationIgnored private let inbox: SharedInbox?
@@ -61,6 +62,7 @@ final class BrowserStore {
         stateStore: (any BrowserStateStore)? = nil,
         blocking: BlockingService = BlockingService(),
         settings: AppSettings = AppSettings(),
+        favicons: FaviconStore = FaviconStore(),
         receivesSharedLinks: Bool = true
     ) {
         var usesFallbackStorage = false
@@ -83,6 +85,7 @@ final class BrowserStore {
         }
         self.blocking = blocking
         self.settings = settings
+        self.favicons = favicons
         showsStorageFallbackWarning = usesFallbackStorage
             && !UserDefaults.standard.bool(forKey: Self.warnedStorageFallbackKey)
         blocking.onListsChanged = { [weak self] in self?.reapplyBlockingEverywhere() }
@@ -220,6 +223,8 @@ final class BrowserStore {
 
     func clearArchive() {
         state.clearArchive()
+        // The icon cache is named by host: keep only what open tabs still show.
+        favicons.forgetSites(except: state.tabs.compactMap(\.url))
         scheduleSave()
     }
 
@@ -399,7 +404,9 @@ final class BrowserStore {
         let tabID = tab.id
         session.onPageChange = { [weak self] url, title in self?.pageDidChange(tabID: tabID, url: url, title: title) }
         session.onPageLoaded = { [weak self, weak session] in
-            if let self, let session, session === self.activeSession { self.snapshot(session) }
+            guard let self, let session else { return }
+            if session === self.activeSession { self.snapshot(session) }
+            self.favicons.pageDidLoad(in: session.webView)
         }
         session.onCreateWebView = { [weak self, weak session] configuration, action in
             self?.openChild(configuration: configuration, for: action, from: session)

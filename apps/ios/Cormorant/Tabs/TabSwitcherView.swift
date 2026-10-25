@@ -12,9 +12,9 @@ struct TabSwitcherView: View {
     /// Per card-step away from the center: the tilt, the drop (times the steps squared, so the row
     /// bends like a hand of cards) and the shrink. Turning about the card's own center keeps the
     /// overlap; a pivot below the screen would swing the outer cards apart.
-    private static let tiltPerStep: Double = 4
-    private static let dropPerStep: CGFloat = 10
-    private static let shrinkPerStep: CGFloat = 0.03
+    nonisolated private static let tiltPerStep: Double = 4
+    nonisolated private static let dropPerStep: CGFloat = 10
+    nonisolated private static let shrinkPerStep: CGFloat = 0.03
     private static let closeAnimation = Animation.snappy(duration: 0.25)
 
     var body: some View {

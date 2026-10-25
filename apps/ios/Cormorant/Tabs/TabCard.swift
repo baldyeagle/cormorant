@@ -108,8 +108,9 @@ struct TabCard: View {
     }
 
     private func swipeEnded(translation: CGFloat, velocity: CGFloat) {
-        // Where a flick would carry the card: UIScrollView's normal deceleration, as SwiftUI predicts it.
-        let flung = translation + velocity * 0.2 < -Self.closeDistance * 3
+        // Where a flick would coast to at UIScrollView's normal deceleration (0.998 per ms), as
+        // DragGesture's predictedEndTranslation projected it.
+        let flung = translation + velocity * 0.5 < -Self.closeDistance * 3
         if translation < -Self.closeDistance || (translation < 0 && flung) {
             // Closed as the finger lifts: the removal transition carries the card on from here
             // while its neighbors close the gap.
@@ -136,11 +137,14 @@ private struct SwipeUpGesture: UIGestureRecognizerRepresentable {
         return pan
     }
 
+    // Measured in the window, not `pan.view`: that may be the scroll view, still coasting under the
+    // finger.
     func handleUIGestureRecognizerAction(_ pan: UIPanGestureRecognizer, context: Context) {
-        let translation = pan.translation(in: pan.view).y
+        let translation = pan.translation(in: nil).y
         switch pan.state {
-        case .changed: onChanged(translation)
-        case .ended: onEnded(translation, pan.velocity(in: pan.view).y)
+        // Began too: by then the finger has already moved past the pan's start threshold.
+        case .began, .changed: onChanged(translation)
+        case .ended: onEnded(translation, pan.velocity(in: nil).y)
         // Interrupted (a call, the switcher closing): settle back rather than close.
         case .cancelled, .failed: onEnded(0, 0)
         default: break
@@ -149,11 +153,12 @@ private struct SwipeUpGesture: UIGestureRecognizerRepresentable {
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         /// Starts only for a drag that's mostly upward; anything else fails at once and goes to the
-        /// scroll view.
+        /// scroll view. Judged by the distance moved so far, which a slow drag's jittery velocity
+        /// isn't.
         func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
             guard let pan = recognizer as? UIPanGestureRecognizer else { return false }
-            let velocity = pan.velocity(in: pan.view)
-            return velocity.y < 0 && abs(velocity.y) > abs(velocity.x)
+            let moved = pan.translation(in: nil)
+            return moved.y < 0 && abs(moved.y) > abs(moved.x)
         }
 
         /// The stack holds still while a card is swiped away.

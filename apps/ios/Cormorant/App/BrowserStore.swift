@@ -206,6 +206,17 @@ final class BrowserStore {
         stateDidChange()
     }
 
+    /// Whether swiping back from this tab's first page closes it (a link opened it).
+    func closesOnBackSwipe(_ tabID: UUID) -> Bool {
+        state.tabs.first { $0.id == tabID }?.openedFromLink == true
+    }
+
+    /// The last snapshot of the tab `close(_:)` would land on, to show under the page while it's
+    /// swiped away.
+    func backSwipeSnapshot(for tabID: UUID) -> UIImage? {
+        state.tabAfterArchiving(tabID).flatMap { snapshots[$0] }
+    }
+
     func restore(_ archivedID: UUID) {
         isComposingNewTab = false
         stampActiveTab()
@@ -250,7 +261,7 @@ final class BrowserStore {
             isComposingNewTab = false
             stampActiveTab()
         }
-        _ = state.openTab(url: url, activate: !inBackground)
+        _ = state.openTab(url: url, activate: !inBackground, fromLink: true)
         // Stamped after, so the page being read stays first in the switcher, the new tab next.
         if inBackground { stampActiveTab() }
         stateDidChange()
@@ -349,7 +360,7 @@ final class BrowserStore {
         // `window.open('')` has no URL yet; the opener navigates or writes into the new view.
         let requested = action.request.url.flatMap { $0.absoluteString.isEmpty ? nil : $0 }
         stampActiveTab()
-        let tab = state.openTab(url: requested ?? URL(string: "about:blank"))
+        let tab = state.openTab(url: requested ?? URL(string: "about:blank"), fromLink: true)
         let session = makeSession(for: tab, configuration: configuration)
         // Before WebKit navigates it, so a popup from a desktop-mode tab opens in desktop mode too.
         if let opener { session.apply(opener.viewSettings) }

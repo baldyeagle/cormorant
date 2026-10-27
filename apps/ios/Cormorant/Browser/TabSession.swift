@@ -36,6 +36,8 @@ final class TabSession {
     private(set) var pageZoom: CGFloat = 1
     /// The content mode the last committed main-frame navigation actually got.
     private(set) var effectiveContentMode: WKWebpagePreferences.ContentMode = .recommended
+    /// History saved at eviction is waiting to go back in; until it does, `canGoBack` reads false.
+    private(set) var isRestoringHistory = false
 
     @ObservationIgnored var onPageChange: ((URL?, String) -> Void)?
     @ObservationIgnored var onPageLoaded: (() -> Void)?
@@ -112,7 +114,9 @@ final class TabSession {
     /// history if there is any, else loading `url`.
     func start(loading url: URL?, restoring interactionState: Any? = nil) {
         let host = url?.host()?.lowercased()
+        isRestoringHistory = interactionState != nil
         Task {
+            defer { isRestoringHistory = false }
             await applyBlocking(host: host)
             guard webView.url == nil, !webView.isLoading else { return }
             if let interactionState {

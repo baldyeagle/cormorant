@@ -23,7 +23,8 @@ struct BrowserView: View {
         ZStack {
             if let session = store.activeSession {
                 // Below the status bar; under the bottom bar so its inset scrolls the page clear of it.
-                WebViewContainer(webView: session.webView, barHeight: barHeight)
+                WebViewContainer(webView: session.webView, barHeight: barHeight,
+                                 backSwipeClose: backSwipeClose(for: session))
                     .ignoresSafeArea(.container, edges: .bottom)
                     .ignoresSafeArea(.keyboard)
             }
@@ -182,6 +183,15 @@ struct BrowserView: View {
             if !Task.isCancelled { presentActions() }
         }
         #endif
+    }
+
+    /// A tab a link opened closes when swiped back from its first page. Not while its history is still
+    /// being restored: it would look like a first page.
+    private func backSwipeClose(for session: TabSession) -> WebViewContainer.BackSwipeClose? {
+        let tabID = session.tabID
+        guard store.closesOnBackSwipe(tabID), !session.isRestoringHistory else { return nil }
+        return .init(destinationSnapshot: { store.backSwipeSnapshot(for: tabID) },
+                     close: { store.close(tabID) })
     }
 
     /// Dismissed only by its action, which clears the failure.

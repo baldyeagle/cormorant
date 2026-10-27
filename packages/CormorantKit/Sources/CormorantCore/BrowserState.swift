@@ -178,30 +178,37 @@ extension BrowserState {
     public static let archiveCapacity = 2_000
 
     /// Adds a Today tab in the active Space and makes it active, or leaves the active tab alone when
-    /// `activate` is false (a background tab).
-    public mutating func openTab(url: URL?, title: String = "", activate: Bool = true, now: Date = .now) -> Tab {
-        let tab = Tab(spaceID: activeSpaceID, url: url, title: title, kind: .today, createdAt: now)
+    /// `activate` is false (a background tab). `fromLink` marks a tab a link opened.
+    public mutating func openTab(url: URL?, title: String = "", activate: Bool = true,
+                                 fromLink: Bool = false, now: Date = .now) -> Tab {
+        let tab = Tab(spaceID: activeSpaceID, url: url, title: title, kind: .today,
+                      openedFromLink: fromLink, createdAt: now)
         tabs.append(tab)
         if activate { activeTabID = tab.id }
         return tab
     }
 
+    /// The tab archiving this one makes active if it's active: the most recently viewed other tab in
+    /// its Space. Nil for an unknown tab or when nothing else is open there.
+    public func tabAfterArchiving(_ tabID: UUID) -> UUID? {
+        guard let tab = tabs.first(where: { $0.id == tabID }) else { return nil }
+        return tabs
+            .filter { $0.spaceID == tab.spaceID && $0.id != tabID }
+            .max { $0.lastViewedAt < $1.lastViewedAt }?
+            .id
+    }
+
     /// Moves the tab to the archive (or drops it if it has no URL) and picks a new active tab.
     ///
-    /// If the archived tab was active, the most recently viewed remaining tab in the same Space
-    /// becomes active (or nil if there is none). Archiving a background tab leaves the active tab alone.
+    /// If the archived tab was active, `tabAfterArchiving(_:)` becomes active (or nil if there is
+    /// none). Archiving a background tab leaves the active tab alone.
     public mutating func archive(tabID: UUID, now: Date = .now) {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        if activeTabID == tabID { activeTabID = tabAfterArchiving(tabID) }
         let tab = tabs.remove(at: index)
         if let entry = ArchivedTab(archiving: tab, at: now) {
             archived.append(entry)
             trimArchive()
-        }
-        if activeTabID == tabID {
-            activeTabID = tabs
-                .filter { $0.spaceID == tab.spaceID }
-                .max { $0.lastViewedAt < $1.lastViewedAt }?
-                .id
         }
     }
 

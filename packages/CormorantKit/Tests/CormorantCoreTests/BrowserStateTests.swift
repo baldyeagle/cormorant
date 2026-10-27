@@ -71,6 +71,39 @@ import Testing
         #expect(state == before)
     }
 
+    @Test func openTabRecordsLinkOpened() {
+        var state = BrowserState()
+        let typed = state.openTab(url: url("https://a.com"), now: t0)
+        let linked = state.openTab(url: url("https://b.com"), fromLink: true, now: t0 + hour)
+        #expect(linked.openedFromLink)
+        #expect(!typed.openedFromLink)
+    }
+
+    @Test func tabAfterArchivingIsWhatArchivingActivates() {
+        let other = Space(name: "Other")
+        var state = BrowserState(spaces: [.default, other])
+        let older = state.openTab(url: url("https://a.com"), now: t0)
+        let recent = state.openTab(url: url("https://r.com"), now: t0 + hour)
+        let current = state.openTab(url: url("https://b.com"), fromLink: true, now: t0 + 2 * hour)
+        // More recent, but in another Space.
+        state.tabs.append(Tab(spaceID: other.id, url: url("https://z.com"), createdAt: t0 + 3 * hour))
+        state.tabs[state.tabs.firstIndex { $0.id == older.id }!].lastViewedAt = t0 + 30 * 60
+        #expect(state.tabAfterArchiving(current.id) == recent.id)
+
+        state.archive(tabID: current.id, now: t0 + 4 * hour)
+        #expect(state.activeTabID == recent.id)
+        #expect(state.tabAfterArchiving(recent.id) == older.id)
+        #expect(state.tabAfterArchiving(UUID()) == nil)
+    }
+
+    @Test func tabAfterArchivingIsNilWhenNothingElseIsOpen() {
+        var state = BrowserState()
+        let only = state.openTab(url: url("https://b.com"), fromLink: true, now: t0)
+        #expect(state.tabAfterArchiving(only.id) == nil)
+        state.archive(tabID: only.id, now: t0 + hour)
+        #expect(state.activeTabID == nil)
+    }
+
     @Test func runArchiveArchivesDueTabsOnly() {
         var state = BrowserState()
         let stale = state.openTab(url: url("https://stale.com"), now: t0)

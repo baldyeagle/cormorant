@@ -38,6 +38,9 @@ public struct Tab: Identifiable, Hashable, Codable, Sendable {
     public var url: URL?
     public var title: String
     public var kind: TabKind
+    /// A link opened this tab (`target=_blank`, `window.open`, Open in New Tab), so swiping back from
+    /// its first page closes it.
+    public var openedFromLink: Bool
     public let createdAt: Date
     public var lastViewedAt: Date
 
@@ -47,6 +50,7 @@ public struct Tab: Identifiable, Hashable, Codable, Sendable {
         url: URL? = nil,
         title: String = "",
         kind: TabKind = .today,
+        openedFromLink: Bool = false,
         createdAt: Date = .now,
         lastViewedAt: Date? = nil
     ) {
@@ -55,6 +59,7 @@ public struct Tab: Identifiable, Hashable, Codable, Sendable {
         self.url = url
         self.title = title
         self.kind = kind
+        self.openedFromLink = openedFromLink
         self.createdAt = createdAt
         self.lastViewedAt = lastViewedAt ?? createdAt
     }
@@ -123,6 +128,7 @@ extension Tab {
             url: try container.decodeIfPresent(URL.self, forKey: .url),
             title: try container.decodeIfPresent(String.self, forKey: .title) ?? "",
             kind: try container.decodeIfPresent(TabKind.self, forKey: .kind) ?? .today,
+            openedFromLink: try container.decodeIfPresent(Bool.self, forKey: .openedFromLink) ?? false,
             createdAt: createdAt,
             lastViewedAt: try container.decodeIfPresent(Date.self, forKey: .lastViewedAt) ?? createdAt
         )

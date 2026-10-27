@@ -29,6 +29,7 @@ import Testing
         var state = BrowserState()
         _ = state.openTab(url: url("https://a.com/path?q=1"), title: "A", now: now)
         let b = state.openTab(url: url("https://b.com"), title: "B", now: now + 0.000_123)
+        _ = state.openTab(url: url("https://c.com"), fromLink: true, now: now)
         _ = state.openTab(url: nil, now: .now)
         state.tabs.append(Tab(url: url("https://pinned.com"), kind: .pinned))
         state.archive(tabID: b.id, now: .now)
@@ -98,6 +99,7 @@ import Testing
         #expect(state.spaces.first?.createdAt == .distantPast)
         let tab = try #require(state.tabs.first)
         #expect(tab.id == tabID && tab.spaceID == Space.defaultID && tab.kind == .today && tab.title == "A")
+        #expect(!tab.openedFromLink)
         let entry = try #require(state.archived.first)
         #expect(entry.id == archivedID && entry.spaceID == Space.defaultID && entry.url == url("https://b.com"))
 

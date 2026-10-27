@@ -17,6 +17,9 @@ struct TabSwitcherView: View {
     nonisolated private static let shrinkPerStep: CGFloat = 0.03
     private static let closeAnimation = Animation.snappy(duration: 0.25)
 
+    /// The card growing into the page, once one is tapped.
+    @State private var opening: Opening?
+
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
@@ -24,20 +27,24 @@ struct TabSwitcherView: View {
                 let step = cardSize.width * (1 - Self.overlap)
                 let viewportMidX = geometry.size.width / 2
                 let fans = !reduceMotion
+                let stack = self.stack
                 ScrollView(.horizontal) {
-                    // Oldest first so the newest is last: frontmost and scrolled into view.
                     HStack(spacing: -cardSize.width * Self.overlap) {
-                        ForEach(store.tabs.reversed()) { tab in
+                        ForEach(stack) { tab in
                             TabCard(
                                 tab: tab,
                                 snapshot: store.snapshots[tab.id],
                                 favicons: store.favicons,
                                 isActive: tab.id == store.state.activeTabID,
                                 size: cardSize,
-                                labelWidth: tab.id == store.tabs.first?.id ? cardSize.width : max(0, step - 10),
-                                onOpen: {
-                                    store.activate(tab.id)
-                                    dismiss()
+                                labelWidth: tab.id == stack.last?.id ? cardSize.width : max(0, step - 10),
+                                onOpen: { frame in
+                                    // The fan's scale and tilt for where the card sits (see visualEffect below).
+                                    let offset = fans ? (frame.midX - geometry.frame(in: .global).midX) / step : 0
+                                    let scale = 1 - Self.shrinkPerStep * min(abs(offset), 3)
+                                    let start = frame.insetBy(dx: frame.width * (1 - scale) / 2,
+                                                              dy: frame.height * (1 - scale) / 2)
+                                    open(tab, from: start, tilt: Self.tiltPerStep * offset)
                                 },
                                 onClose: {
                                     withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Self.closeAnimation) {
@@ -63,6 +70,8 @@ struct TabSwitcherView: View {
                     .padding(.horizontal, (geometry.size.width - cardSize.width) / 2)
                     .frame(minHeight: geometry.size.height)
                 }
+                // Nothing else to tap, swipe or close (VoiceOver included) once a card is opening.
+                .disabled(opening != nil)
                 .scrollIndicators(.hidden)
                 .defaultScrollAnchor(.trailing)
             }
@@ -80,6 +89,51 @@ struct TabSwitcherView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
         }
+        .overlay {
+            if let opening {
+                GeometryReader { geometry in
+                    OpeningCard(
+                        opening: opening,
+                        // Where the browser draws the page: inside the safe area but down to the bottom
+                        // edge, under the bar (see BrowserView's WebViewContainer).
+                        page: CGRect(x: geometry.safeAreaInsets.leading, y: geometry.safeAreaInsets.top,
+                                     width: geometry.size.width,
+                                     height: geometry.size.height + geometry.safeAreaInsets.bottom),
+                        backdrop: store.activeSession?.themeColor ?? Color(.systemBackground),
+                        onFinished: {
+                            // The snapshot now covers the page's place in the browser: swap without a slide.
+                            var transaction = Transaction()
+                            transaction.disablesAnimations = true
+                            withTransaction(transaction) { dismiss() }
+                            // Should the dismiss not take (one already under way, say), the switcher
+                            // comes back usable rather than stuck behind the snapshot.
+                            Task {
+                                try? await Task.sleep(for: .seconds(1))
+                                self.opening = nil
+                            }
+                        }
+                    )
+                    .ignoresSafeArea()
+                }
+            }
+        }
+    }
+
+    /// Oldest first so the newest is last: frontmost and scrolled into view. Held in place while a card
+    /// opens, since activating it makes it the newest.
+    private var stack: [CormorantCore.Tab] {
+        let tabs = Array(store.tabs.reversed())
+        guard let order = opening?.order else { return tabs }
+        return tabs.sorted { (order[$0.id] ?? .max) < (order[$1.id] ?? .max) }
+    }
+
+    /// Switches to the tab under the switcher, then grows its card into the page.
+    private func open(_ tab: CormorantCore.Tab, from frame: CGRect, tilt: Double) {
+        guard opening == nil else { return }
+        let order = Dictionary(uniqueKeysWithValues: stack.enumerated().map { ($1.id, $0) })
+        opening = Opening(snapshot: store.snapshots[tab.id], host: tab.url?.displayHost ?? "",
+                          from: frame, tilt: tilt, order: order)
+        store.activate(tab.id)
     }
 
     @ToolbarContentBuilder
@@ -113,7 +167,58 @@ struct TabSwitcherView: View {
 
     /// The card below its label. Narrow enough that the cards either side of the center one show.
     private static func cardSize(in size: CGSize) -> CGSize {
-        let width = size.width * 0.6
-        return CGSize(width: width, height: min(width * 1.9, size.height * 0.72))
+        let width = size.width * 0.7
+        return CGSize(width: width, height: min(width * 1.9, size.height * 0.78))
+    }
+}
+
+private struct Opening {
+    let snapshot: UIImage?
+    let host: String
+    /// The card's preview on screen, and its tilt in the fan.
+    let from: CGRect
+    let tilt: Double
+    /// The stack's order when the card was tapped.
+    let order: [UUID: Int]
+}
+
+/// The tapped card's preview growing from its place in the stack to where the browser draws the page,
+/// over a backdrop that fades in to hide the rest of the switcher. In global coordinates.
+private struct OpeningCard: View {
+    let opening: Opening
+    let page: CGRect
+    let backdrop: Color
+    let onFinished: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var expanded = false
+
+    var body: some View {
+        // Reduce Motion (or a card never laid out): no growing, just a quick fade to the page.
+        let fades = reduceMotion || opening.from.isEmpty
+        let frame = expanded || fades ? page : opening.from
+        let radius: CGFloat = expanded ? 0 : 22
+        ZStack(alignment: .topLeading) {
+            backdrop.opacity(expanded ? 1 : 0)
+            TabPreview(snapshot: opening.snapshot, host: opening.host, width: frame.width)
+                .frame(width: frame.width, height: frame.height)
+                .background(Color(.secondarySystemGroupedBackground))
+                // The card's header covers the preview's top corners; only the bottom ones are round.
+                .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: radius, bottomTrailingRadius: radius, style: .continuous))
+                .rotationEffect(.degrees(expanded ? 0 : opening.tilt))
+                .opacity(fades && !expanded ? 0 : 1)
+                .position(x: frame.midX, y: frame.midY)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(.rect)
+        .accessibilityHidden(true)
+        .onAppear {
+            // No bounce: the snapshot has to come to rest exactly on the page it hands over to.
+            withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.22)) {
+                expanded = true
+            } completion: {
+                onFinished()
+            }
+        }
     }
 }

@@ -106,6 +106,9 @@ struct BrowserView: View {
         .animation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.3), value: isSearching)
         .fullScreenCover(isPresented: $showSwitcher, onDismiss: switcherDidDismiss) {
             TabSwitcherView()
+                // Keeps the browser in the window under the switcher (it draws its own background), so
+                // a tab opened from a card has drawn its page by the time the card hands over to it.
+                .presentationBackground(.clear)
         }
         .sheet(isPresented: $showActions, onDismiss: actionsDidDismiss) {
             ActionsSheet(session: store.activeSession, url: store.activeTab?.url, showSearch: {

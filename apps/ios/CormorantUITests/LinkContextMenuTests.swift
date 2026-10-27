@@ -65,7 +65,7 @@ final class LinkContextMenuTests: XCTestCase {
 
         // It's a real tab: the switcher lists it.
         tabsButton(count: 2, in: app).tap()
-        XCTAssertTrue(app.buttons["New Tab"].waitForExistence(timeout: 5), "switcher didn't open")
+        XCTAssertTrue(app.toolbars.buttons["New Tab"].waitForExistence(timeout: 5), "switcher didn't open")
         XCTAssertTrue(app.staticTexts["2 Tabs"].waitForExistence(timeout: 5), "switcher doesn't count it")
         XCTAssertEqual(app.buttons.matching(identifier: "xmark.circle.fill").count, 2, "switcher doesn't show it")
         withExtendedLifetime(server) {}
@@ -78,9 +78,9 @@ final class LinkContextMenuTests: XCTestCase {
         openMenu(on: app.webViews.links["Next page"], in: app)
         choose("Copy Link", in: app)
 
-        // Read it back by pasting into the address field (its text is selected on open): the test
-        // runner reading the pasteboard directly would be a cross-app paste.
-        app.buttons["Address"].tap()
+        // Read it back by pasting into a new tab's empty address field: the test runner reading the
+        // pasteboard directly would be a cross-app paste.
+        app.buttons["NewTabPill"].tap()
         let field = app.textFields["Search or enter address"]
         XCTAssertTrue(field.waitForExistence(timeout: 5), "search panel didn't open")
         let focused = expectation(for: NSPredicate(format: "hasKeyboardFocus == true"), evaluatedWith: field)

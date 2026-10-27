@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Tabs on the left, the search/URL pill in the middle, page actions on the right.
-/// Shrinks to a hostname capsule while scrolling down; tapping it expands the bar again.
+/// Tabs on the left, a New Tab pill in the middle, page actions on the right, as in Arc Search.
+/// The host isn't in the bar: it shows in the collapsed capsule, and the caret sheet's host row
+/// edits this tab's address. Shrinks to that capsule while scrolling down; tapping it expands the bar again.
 /// The presenter caps Dynamic Type at `.accessibility1` (the scaled control sizes read it too).
 struct BottomBar: View {
     @Environment(BrowserStore.self) private var store
@@ -10,12 +11,13 @@ struct BottomBar: View {
     /// True while the search panel is open; the bar stays expanded (and hidden) under it.
     let isSearching: Bool
     let showSwitcher: () -> Void
-    let showSearch: () -> Void
     let showActions: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Scales the round controls with Dynamic Type; a minimum, never a cap.
     @ScaledMetric(relativeTo: .body) private var controlSize: CGFloat = 46
+    /// Arc Search's proportions: a short pill, not a field-width one.
+    @ScaledMetric(relativeTo: .body) private var newTabWidth: CGFloat = 88
 
     private var isCollapsed: Bool { (session?.isBarCollapsed ?? false) && !isSearching }
     private var isLoading: Bool { session?.isLoading == true }
@@ -72,7 +74,9 @@ struct BottomBar: View {
         GlassEffectContainer(spacing: 10) {
             HStack(spacing: 10) {
                 tabsButton
-                searchPill
+                Spacer(minLength: 0)
+                newTabPill
+                Spacer(minLength: 0)
                 actionsButton
             }
         }
@@ -101,33 +105,23 @@ struct BottomBar: View {
         .accessibilityAction(named: "New Tab") { store.newTab() }
     }
 
-    private var searchPill: some View {
-        Button(action: showSearch) {
-            Group {
-                if let url {
-                    Text(url.displayHost)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.primary)
-                } else {
-                    Label("Search or enter address", systemImage: "magnifyingglass")
-                        .labelStyle(.titleAndIcon)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, minHeight: controlSize)
-            .overlay(alignment: .bottom) { LoadingLine(progress: progress, isLoading: isLoading) }
-            .contentShape(.capsule)
+    private var newTabPill: some View {
+        Button { store.newTab() } label: {
+            Image(systemName: "plus")
+                .font(.title3.weight(.medium))
+                // Gives way before the round buttons do (a narrow screen at the largest text size).
+                .frame(minWidth: controlSize, idealWidth: newTabWidth, maxWidth: newTabWidth, minHeight: controlSize)
+                .overlay(alignment: .bottom) { LoadingLine(progress: progress, isLoading: isLoading) }
+                .contentShape(.capsule)
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .capsule)
-        .accessibilityLabel("Address")
-        .accessibilityValue(url?.displayHost ?? "")
+        // Offered its width before the flexible gaps take an even share.
+        .layoutPriority(1)
+        .accessibilityLabel("New Tab")
         .accessibilityHint("Search or enter address")
+        // UI tests tell it from the tab button's menu item and the switcher's button, also "New Tab".
+        .accessibilityIdentifier("NewTabPill")
     }
 
     private var actionsButton: some View {
@@ -172,7 +166,7 @@ private struct LoadingLine: View {
         ProgressView(value: progress)
             .progressViewStyle(.linear)
             .scaleEffect(x: 1, y: 0.6, anchor: .bottom)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 14)
             .padding(.bottom, 2)
             .opacity(isLoading ? 1 : 0)
             .animation(.easeOut(duration: 0.25), value: isLoading)

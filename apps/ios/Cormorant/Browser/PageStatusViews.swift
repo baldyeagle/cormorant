@@ -21,7 +21,9 @@ struct LoadErrorView: View {
                 .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
+        // Up behind the status bar too, over the page running under it; the status bar takes the
+        // default chrome's style here.
+        .background(Color(.launchBackground).ignoresSafeArea())
     }
 }
 

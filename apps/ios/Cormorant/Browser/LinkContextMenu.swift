@@ -59,9 +59,11 @@ extension TabSession {
         // card), so the card doesn't wait on it.
         animator.preferredCommitStyle = .pop
         let handoff = takeHandoff(for: url, freezingPreview: true)
-        // Where the browser draws the page, read before the switch.
+        // Where the browser draws the page, read before the switch: below the status bar, where the card
+        // starts, if the page runs under it.
         let window = webView.window
         let page = webView.superview.flatMap { container in window.map { container.convert(container.bounds, to: $0) } }
+            .map { $0.inset(by: UIEdgeInsets(top: min(webView.obscuredContentInsets.top, $0.height), left: 0, bottom: 0, right: 0)) }
         guard onOpenInNewTab?(url, false, handoff) == true else { return }
         // The new tab is showing the adopted page underneath; the card grows over it, as the switcher's
         // does, in place of the system's card.
@@ -71,8 +73,10 @@ extension TabSession {
                 in: window,
                 card: CardExpansion.Card(frame: card.frame, topRadius: card.cornerRadius, bottomRadius: card.cornerRadius),
                 snapshot: card.snapshot, host: url.displayHost, page: page,
-                // A tab just opened has no theme color yet.
-                backdrop: CardExpansion.backdrop(themeColor: nil)
+                // The new tab's page color, known now (it came with the preview's page).
+                backdrop: { [weak self, style = window.traitCollection.userInterfaceStyle] in
+                    CardExpansion.backdrop(stripColor: self?.activeStripColor?(style))
+                }
             )
         }
     }
@@ -188,8 +192,9 @@ struct LinkPreviewHandoff {
         /// In window coordinates.
         let frame: CGRect
         let cornerRadius: CGFloat
-        /// The page at the tab's size (the card showed its top, shrunk to the card's width).
-        let snapshot: UIImage?
+        /// The page at the tab's size (the card showed its top below the status bar, shrunk to the
+        /// card's width).
+        let snapshot: PageSnapshot?
         /// The system's card, hidden while the tab grows from where it was.
         weak var platter: UIView?
     }
@@ -282,11 +287,12 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard !isHandedOff else { return }
-        // The page keeps the tab's layout; the card shows the top of it, shrunk to the card's width.
+        // The page keeps the tab's layout; the card shows the top of it, shrunk to the card's width,
+        // from below the status bar the page runs under (above the card's top, which clips it).
         let s = scale
         webView.bounds = CGRect(origin: .zero, size: pageSize)
         webView.transform = CGAffineTransform(scaleX: s, y: s)
-        webView.center = CGPoint(x: pageSize.width * s / 2, y: pageSize.height * s / 2)
+        webView.center = CGPoint(x: pageSize.width * s / 2, y: (pageSize.height / 2 - statusBandHeight) * s)
     }
 
     /// Stops loading for good. The view itself goes when UIKit releases the preview.
@@ -311,14 +317,16 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
         var card: LinkPreviewHandoff.Card?
         if freezing, let window = view.window {
             if let (platter, frame) = onScreenPlatter(in: window) {
-                // What the menu's card showed, as it was: the page at its full size.
-                // Nil if it couldn't be drawn: the card then shows the host, not a blank page.
+                // What the menu's card showed, as it was: the page at its full size, with the band the
+                // tab's status bar will cover split off. Nil if it couldn't be drawn: the card then
+                // shows the host, not a blank page.
                 var drawn = false
                 let snapshot = UIGraphicsImageRenderer(bounds: webView.bounds).image { _ in
                     drawn = webView.drawHierarchy(in: webView.bounds, afterScreenUpdates: false)
                 }
                 card = LinkPreviewHandoff.Card(frame: frame, cornerRadius: cornerRadius(of: platter),
-                                               snapshot: drawn ? snapshot : nil, platter: platter)
+                                               snapshot: drawn ? PageSnapshot(snapshot, band: statusBandHeight, of: webView.bounds.height) : nil,
+                                               platter: platter)
             }
             if let frozen = webView.snapshotView(afterScreenUpdates: false) {
                 frozen.bounds = webView.bounds
@@ -339,6 +347,10 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
             effectiveContentMode: effectiveContentMode, requestedURL: url, card: card
         )
     }
+
+    /// The top of the page the tab's status bar covers (WebKit lays the page out below it, as in the
+    /// tab), which the card leaves out.
+    private var statusBandHeight: CGFloat { min(layout.obscuredInsets.top, pageSize.height) }
 
     private var pageSize: CGSize {
         layout.size.width > 0 && layout.size.height > 0 ? layout.size : view.bounds.size

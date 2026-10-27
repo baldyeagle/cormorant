@@ -14,6 +14,9 @@ struct BottomBar: View {
     let showActions: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// A tint for every control's glass. Reserved for the current Space's color (faint: about 10% in
+    /// light mode, 14% in dark); websites never tint the bar. Nothing sets it yet.
+    var glassTint: Color? = nil
     /// Scales the round controls with Dynamic Type; a minimum, never a cap.
     @ScaledMetric(relativeTo: .body) private var controlSize: CGFloat = 46
     /// Arc Search's proportions: a short pill, not a field-width one.
@@ -40,6 +43,10 @@ struct BottomBar: View {
         .padding(.bottom, isCollapsed && !reduceMotion ? -14 : 0)
     }
 
+    private var glass: Glass {
+        glassTint.map { .regular.tint($0).interactive() } ?? .regular.interactive()
+    }
+
     private var stripTransition: AnyTransition {
         reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.92, anchor: .bottom))
     }
@@ -59,7 +66,7 @@ struct BottomBar: View {
                 // Wide enough for the progress line to read under a short host like "x.com".
                 .frame(minWidth: 140)
                 .overlay(alignment: .bottom) { LoadingLine(progress: progress, isLoading: isLoading) }
-                .glassEffect(.regular.interactive(), in: .capsule)
+                .glassEffect(glass, in: .capsule)
                 .contentShape(.capsule)
         }
         .buttonStyle(.plain)
@@ -99,7 +106,7 @@ struct BottomBar: View {
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .glassEffect(glass, in: .circle)
         .accessibilityLabel("Tabs, \(store.tabs.count) open")
         .accessibilityHint("Shows open tabs")
         .accessibilityAction(named: "New Tab") { store.newTab() }
@@ -115,7 +122,7 @@ struct BottomBar: View {
                 .contentShape(.capsule)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
+        .glassEffect(glass, in: .capsule)
         // Offered its width before the flexible gaps take an even share.
         .layoutPriority(1)
         .accessibilityLabel("New Tab")
@@ -132,7 +139,7 @@ struct BottomBar: View {
                 .contentShape(.circle)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .glassEffect(glass, in: .circle)
         .accessibilityLabel("Page actions")
     }
 }

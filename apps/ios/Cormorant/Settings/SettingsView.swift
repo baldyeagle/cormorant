@@ -9,6 +9,7 @@ struct SettingsView: View {
             Form {
                 DefaultBrowserSettings(status: store.defaultBrowser)
                 SearchEngineSettings(settings: store.settings)
+                AppearanceSettings(settings: store.settings)
                 BlockingSettings()
             }
             .navigationTitle("Settings")

@@ -7,6 +7,7 @@ struct BrowserView: View {
     @Environment(BrowserStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showSwitcher = false
     @State private var showActions = false
     @State private var isSearching = false
@@ -22,10 +23,11 @@ struct BrowserView: View {
     var body: some View {
         ZStack {
             if let session = store.activeSession {
-                // Below the status bar; under the bottom bar so its inset scrolls the page clear of it.
+                // Under the status bar (unless that's off), and under the bottom bar so its inset
+                // scrolls the page clear of it. Not under a status-bar column at the side (iPhone Duo).
                 WebViewContainer(webView: session.webView, barHeight: barHeight,
                                  backSwipeClose: backSwipeClose(for: session))
-                    .ignoresSafeArea(.container, edges: .bottom)
+                    .ignoresSafeArea(.container, edges: store.pageRunsUnderStatusBar ? [.top, .bottom] : .bottom)
                     .ignoresSafeArea(.keyboard)
             }
             // Also while tabs load, so the launch screen's bird stays put until there's something to show.
@@ -49,9 +51,11 @@ struct BrowserView: View {
         }
         .animation(.snappy, value: store.activeSession?.blockedDownloadURL)
         .background {
-            // Fills the status-bar strip; site-tinted once tabs report a theme color.
-            (store.activeSession?.themeColor ?? Color(.systemBackground))
+            // Behind the status bar where the page doesn't run under it: the strip with the setting
+            // off, and the iPhone Duo's status-bar column, which takes the page's color.
+            store.stripColor(in: colorScheme)
                 .ignoresSafeArea()
+                .statusBarColorScheme(store.statusBarTint(in: colorScheme)?.colorScheme)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {

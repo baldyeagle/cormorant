@@ -178,10 +178,8 @@ final class LinkContextMenuTests: UITestCase {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
 
-        let previewHeading = openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
-        // The preview's content isn't hittable; tap where it is, once it has stopped growing.
-        let frame = previewHeading.settledFrame()
-        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+        openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
+        tapLinkPreview(in: app)
 
         XCTAssertTrue(app.buttons["Open Link"].disappears(within: Ceiling.ui), "menu didn't close")
         app.waitsForAnimations = true

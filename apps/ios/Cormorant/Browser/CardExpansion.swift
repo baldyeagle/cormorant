@@ -22,21 +22,25 @@ struct CardExpansion: View {
 
     let card: Card
     /// The page as the card shows it, pinned to the top.
-    let snapshot: UIImage?
+    let snapshot: PageSnapshot?
     /// Shown instead when there's no snapshot.
     let host: String
-    /// Where the browser draws the page: inside the safe area at the top, down to the bottom edge under
-    /// the bar (see BrowserView's WebViewContainer).
+    /// Where the browser draws the page, as the card shows it: below the status bar (the page may run
+    /// under it, but cards start at the page's content) and down to the bottom edge under the bar
+    /// (see BrowserView's WebViewContainer).
     let page: CGRect
-    let backdrop: Color
+    /// Fades in behind the card: the color behind the browser's status bar for the tab (its page's
+    /// background), so the page lands with no seam (`BrowserStore.stripColor(in:)`). Read as it draws,
+    /// so it follows the page's color should it settle while the card grows.
+    let backdrop: () -> Color
     let onFinished: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
 
-    /// What's behind the growing card: the tab's own chrome color, or the system background.
-    static func backdrop(themeColor: Color?) -> Color {
-        themeColor ?? Color(.systemBackground)
+    /// The backdrop for a UIKit caller: the strip's color, or the default strip's without one.
+    static func backdrop(stripColor: UIColor?) -> Color {
+        Color(uiColor: stripColor ?? UIColor(resource: .launchBackground))
     }
 
     var body: some View {
@@ -45,8 +49,16 @@ struct CardExpansion: View {
         let top: CGFloat = expanded ? 0 : card.topRadius
         let bottom: CGFloat = expanded ? 0 : card.bottomRadius
         ZStack(alignment: .topLeading) {
-            backdrop.opacity(expanded ? 1 : 0)
-            TabPreview(snapshot: snapshot, host: host, width: frame.width)
+            backdrop().opacity(expanded ? 1 : 0)
+            // What the page shows behind the status bar, fading in with the backdrop above the card.
+            if let band = snapshot?.statusBand, page.minY > 0 {
+                Image(uiImage: band)
+                    .resizable()
+                    .frame(width: page.width, height: page.minY)
+                    .position(x: page.midX, y: page.minY / 2)
+                    .opacity(expanded ? 1 : 0)
+            }
+            TabPreview(snapshot: snapshot?.content, host: host, width: frame.width)
                 .frame(width: frame.width, height: frame.height)
                 .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(UnevenRoundedRectangle(topLeadingRadius: top, bottomLeadingRadius: bottom,
@@ -74,8 +86,8 @@ struct CardExpansion: View {
 /// tree: the link menu's preview, whose menu is drawn above the app. Removes itself when it's done.
 @MainActor
 enum CardExpansionOverlay {
-    static func play(in window: UIWindow, card: CardExpansion.Card, snapshot: UIImage?, host: String,
-                     page: CGRect, backdrop: Color) {
+    static func play(in window: UIWindow, card: CardExpansion.Card, snapshot: PageSnapshot?, host: String,
+                     page: CGRect, backdrop: @escaping () -> Color) {
         let ending = Ending()
         let controller = UIHostingController(rootView: CardExpansion(
             card: card, snapshot: snapshot, host: host, page: page, backdrop: backdrop,

@@ -67,6 +67,15 @@ class UITestCase: XCTestCase {
         return false
     }
 
+    /// Taps the link menu's preview card, once it has stopped growing. The page inside isn't hittable,
+    /// and its elements report where the preview's view is kept, not where the card draws it.
+    func tapLinkPreview(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let card = app.otherElements.matching(NSPredicate(format: "label == 'Preview'")).firstMatch
+        XCTAssertTrue(card.appears(within: Ceiling.ui), "no preview card", file: file, line: line)
+        let frame = card.settledFrame()
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+    }
+
     private static func attachScreen(to issue: inout XCTIssue) {
         issue.add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()))
         let app = XCUIApplication()

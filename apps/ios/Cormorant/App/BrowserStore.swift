@@ -34,7 +34,7 @@ final class BrowserStore {
     /// The app group was unavailable and tabs are stored in Application Support instead. Shown once.
     private(set) var showsStorageFallbackWarning = false
     private(set) var activeSession: TabSession?
-    private(set) var snapshots: [UUID: UIImage] = [:]
+    private(set) var snapshots: [UUID: PageSnapshot] = [:]
     /// Bumped to ask the browser screen to open the search panel.
     private(set) var addressFocusRequest = 0
     /// New Tab was chosen and the search panel is composing it. No tab exists until a submit;
@@ -253,7 +253,7 @@ final class BrowserStore {
 
     /// The last snapshot of the tab `close(_:)` would land on, to show under the page while it's
     /// swiped away.
-    func backSwipeSnapshot(for tabID: UUID) -> UIImage? {
+    func backSwipeSnapshot(for tabID: UUID) -> PageSnapshot? {
         state.tabAfterArchiving(tabID).flatMap { snapshots[$0] }
     }
 
@@ -373,11 +373,14 @@ final class BrowserStore {
         guard session.webView.window != nil, session.webView.url != nil else { return nil }
         let configuration = WKSnapshotConfiguration()
         configuration.snapshotWidth = 360
+        // Where the page runs under the status bar: split off there (`PageSnapshot`).
+        let band = session.webView.obscuredContentInsets.top
+        let height = session.webView.bounds.height
         let tabID = session.tabID
         return Task {
             guard let image = try? await session.webView.takeSnapshot(configuration: configuration),
                   state.tabs.contains(where: { $0.id == tabID }) else { return }
-            snapshots[tabID] = image
+            snapshots[tabID] = PageSnapshot(image, band: band, of: height)
         }
     }
 
@@ -578,6 +581,7 @@ final class BrowserStore {
                              adopting handoff: LinkPreviewHandoff? = nil) -> TabSession {
         let session = handoff.map { TabSession(tabID: tab.id, blocking: blocking, adopting: $0) }
             ?? TabSession(tabID: tab.id, blocking: blocking, configuration: configuration)
+        session.activeStripColor = { [weak self] in self?.stripUIColor(for: $0) }
         let tabID = tab.id
         session.onPageChange = { [weak self] url, title in self?.pageDidChange(tabID: tabID, url: url, title: title) }
         session.onPageLoaded = { [weak self, weak session] in

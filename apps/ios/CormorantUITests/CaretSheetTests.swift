@@ -96,12 +96,11 @@ final class CaretSheetTests: XCTestCase {
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 5), "caret sheet didn't open")
     }
 
-    /// The sheet's host button. The bar's pill has the same label, so pick the one above the tiles.
+    /// The sheet's host button.
     private func sheetHost(in app: XCUIApplication) -> XCUIElement {
-        let tiles = app.buttons["Find on Page"]
-        XCTAssertTrue(tiles.waitForExistence(timeout: 5))
-        let hosts = app.buttons.matching(NSPredicate(format: "label == 'Address'")).allElementsBoundByIndex
-        return hosts.first { $0.frame.maxY <= tiles.frame.minY } ?? hosts[0]
+        let host = app.buttons["Address"]
+        XCTAssertTrue(host.waitForExistence(timeout: 5))
+        return host
     }
 
     private func openSettingsAndClose(in app: XCUIApplication) {

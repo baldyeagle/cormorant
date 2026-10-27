@@ -61,7 +61,6 @@ struct BrowserView: View {
                     url: store.activeTab?.url,
                     isSearching: isSearching,
                     showSwitcher: presentSwitcher,
-                    showSearch: presentSearch,
                     showActions: presentActions
                 )
                 // Beyond this the three controls stop fitting on one line on a phone. Applied out
@@ -100,13 +99,17 @@ struct BrowserView: View {
                             dimsPage: store.activeTab?.url != nil,
                             // Not from a panel still animating out after a dismiss.
                             onPanelTopChange: { if isSearching { searchPanelTop = $0 } })
-                    // Fresh text per tab and per intent (editing this page vs composing a new tab).
-                    .id("\(store.state.activeTabID?.uuidString ?? "none")-\(store.isComposingNewTab)")
+                    // Fresh text per tab. Not per intent: the panel's own Edit row switches from composing
+                    // a new tab to editing this one, and must keep the field (and its focus) in place.
+                    .id(store.state.activeTabID?.uuidString ?? "none")
             }
         }
         .animation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.3), value: isSearching)
         .fullScreenCover(isPresented: $showSwitcher, onDismiss: switcherDidDismiss) {
             TabSwitcherView()
+                // Keeps the browser in the window under the switcher (it draws its own background), so
+                // a tab opened from a card has drawn its page by the time the card hands over to it.
+                .presentationBackground(.clear)
         }
         .sheet(isPresented: $showActions, onDismiss: actionsDidDismiss) {
             ActionsSheet(session: store.activeSession, url: store.activeTab?.url, showSearch: {

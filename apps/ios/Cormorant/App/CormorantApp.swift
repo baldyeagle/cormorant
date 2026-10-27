@@ -27,9 +27,14 @@ struct CormorantApp: App {
         #if DEBUG
         // `-uiTesting` launch argument (CormorantUITests): every launch starts with no tabs, saved to a
         // throwaway file instead of the app group's, and leaves the share extension's inbox alone.
+        // Icons are cached in a throwaway directory too, so one run's icons can't show up in the next.
         if ProcessInfo.processInfo.arguments.contains("-uiTesting") {
-            let file = URL.temporaryDirectory.appending(path: "ui-testing-\(UUID().uuidString).json")
-            return BrowserStore(stateStore: JSONBrowserStateStore(fileURL: file), receivesSharedLinks: false)
+            let run = URL.temporaryDirectory.appending(path: "ui-testing-\(UUID().uuidString)")
+            return BrowserStore(
+                stateStore: JSONBrowserStateStore(fileURL: run.appendingPathExtension("json")),
+                favicons: FaviconStore(directory: run.appending(path: "Favicons")),
+                receivesSharedLinks: false
+            )
         }
         #endif
         return BrowserStore()

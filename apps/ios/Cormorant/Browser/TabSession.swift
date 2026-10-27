@@ -45,13 +45,17 @@ final class TabSession {
     @ObservationIgnored var onPageLoaded: (() -> Void)?
     /// `window.open` / `target=_blank`: return a web view built from the configuration, or nil.
     @ObservationIgnored var onCreateWebView: ((WKWebViewConfiguration, WKNavigationAction) -> WKWebView?)?
-    /// A link from the long-press menu, to open in a new tab (switched to unless `inBackground`).
-    @ObservationIgnored var onOpenInNewTab: ((_ url: URL, _ inBackground: Bool) -> Void)?
+    /// A link from the long-press menu, to open in a new tab (switched to unless `inBackground`),
+    /// adopting the menu's preview web view when there is a `handoff`. Returns false if no tab opened.
+    @ObservationIgnored var onOpenInNewTab: ((_ url: URL, _ inBackground: Bool, _ handoff: LinkPreviewHandoff?) -> Bool)?
     /// The page called `window.close()`.
     @ObservationIgnored var onClose: (() -> Void)?
     /// The long-press menu's page preview, while one is up. See `LinkContextMenu.swift`.
     @ObservationIgnored weak var linkPreview: LinkPreviewController?
     @ObservationIgnored var onProcessTerminated: (() -> Void)?
+    /// This tab is the one on screen. Off screen (including loading on the background stage), a page
+    /// can't put up dialogs.
+    @ObservationIgnored private(set) var isActiveTab = false
 
     @ObservationIgnored let blocking: BlockingService
     @ObservationIgnored private let contentController: WKUserContentController
@@ -83,24 +87,58 @@ final class TabSession {
     /// Never acted on from inside a page: our own scheme (pages must not drive the app) and local files.
     static let refusedSchemes: Set<String> = ["cormorant", "file"]
 
+    /// A tab's web view configuration. Link previews are built from it too, so a preview's web view
+    /// can become a tab (`init(tabID:blocking:adopting:)`) with nothing configured differently.
+    /// Configuration-level settings, user scripts included, belong here; anything that needs the
+    /// session (script message handlers) goes in `init(tabID:blocking:webView:contentController:)`.
+    /// Each web view gets its own content controller, so rules applied to one never touch another.
+    static func makeConfiguration() -> (WKWebViewConfiguration, WKUserContentController) {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        configuration.allowsInlineMediaPlayback = true
+        let contentController = WKUserContentController()
+        configuration.userContentController = contentController
+        return (configuration, contentController)
+    }
+
     /// - Parameter configuration: supplied by WebKit for `window.open`; the new view must be built from it.
-    init(tabID: UUID, blocking: BlockingService, configuration supplied: WKWebViewConfiguration? = nil) {
-        self.tabID = tabID
-        self.blocking = blocking
+    convenience init(tabID: UUID, blocking: BlockingService, configuration supplied: WKWebViewConfiguration? = nil) {
         let configuration: WKWebViewConfiguration
+        let contentController: WKUserContentController
         if let supplied {
             configuration = supplied
+            contentController = WKUserContentController()
+            configuration.userContentController = contentController
         } else {
-            configuration = WKWebViewConfiguration()
-            configuration.websiteDataStore = .default()
-            configuration.allowsInlineMediaPlayback = true
+            (configuration, contentController) = Self.makeConfiguration()
         }
-        // Each tab gets its own controller so rules applied here never touch an opener's web view.
-        contentController = WKUserContentController()
-        configuration.userContentController = contentController
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        self.init(tabID: tabID, blocking: blocking, webView: webView, contentController: contentController)
+    }
+
+    /// A tab that takes over a link preview's web view, page and all (see `LinkPreviewHandoff`).
+    convenience init(tabID: UUID, blocking: BlockingService, adopting handoff: LinkPreviewHandoff) {
+        self.init(tabID: tabID, blocking: blocking, webView: handoff.webView, contentController: handoff.contentController)
+        appliedHost = handoff.appliedHost
+        appliedListsVersion = handoff.appliedListsVersion
+        requestedContentMode = handoff.requestedContentMode
+        effectiveContentMode = handoff.effectiveContentMode
+        pageZoom = webView.pageZoom
+        lastRequestedURL = handoff.requestedURL
+        // The page loaded before this session observed it.
+        pullToRefresh.pageDidChange(webView.url)
+        // Suspended while it was a preview; a tab plays media under the usual rules.
+        webView.setAllMediaPlaybackSuspended(false)
+    }
+
+    private init(tabID: UUID, blocking: BlockingService, webView: WKWebView, contentController: WKUserContentController) {
+        self.tabID = tabID
+        self.blocking = blocking
+        self.webView = webView
+        self.contentController = contentController
         pullToRefresh = PullToRefresh(webView: webView)
         webView.allowsBackForwardNavigationGestures = true
+        webView.allowsLinkPreview = true
         webView.isFindInteractionEnabled = true
         #if DEBUG
         webView.isInspectable = true
@@ -247,6 +285,7 @@ final class TabSession {
 
     /// Call when this tab becomes the one on screen.
     func didBecomeActiveTab() {
+        isActiveTab = true
         // Asked for while another tab's sheet was open; it must not fire on a later dismissal.
         pendingAction = nil
         if needsReload { recoverFromCrash() }
@@ -254,6 +293,7 @@ final class TabSession {
 
     /// Call when another tab takes the screen.
     func didResignActiveTab() {
+        isActiveTab = false
         pullToRefresh.cancel()
     }
 
@@ -376,7 +416,7 @@ final class TabSession {
 
     /// Asks before handing `url` to the app that owns its scheme.
     func confirmOpeningInOtherApp(_ url: URL) {
-        guard let presenter = webView.alertPresenter else { return }
+        guard isActiveTab, let presenter = webView.alertPresenter else { return }
         let alert = UIAlertController(title: "Open in \(Self.appName(for: url))?", message: nil, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         alert.addAction(UIAlertAction(title: "Open", style: .default) { _ in

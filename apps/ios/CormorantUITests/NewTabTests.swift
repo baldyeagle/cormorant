@@ -3,6 +3,8 @@ import XCTest
 /// New Tab must bring up the search panel even after the page has been tapped. Tapping makes the
 /// web view first responder; the dismissing tab switcher then handed focus back to it, the search
 /// field lost focus as soon as it got it, and the panel closed: New Tab appeared to do nothing.
+///
+/// The bar's + composes a new tab; the panel's row for the tab it came from edits that tab instead.
 @MainActor
 final class NewTabTests: XCTestCase {
     private static let page = """
@@ -11,6 +13,8 @@ final class NewTabTests: XCTestCase {
         <title>Fixture</title>
         <h1>Fixture page</h1>
         <p>Tap this paragraph so the web view becomes first responder.</p>
+        <p id="path">Path</p>
+        <script>document.getElementById('path').textContent = 'Path ' + location.pathname</script>
         """
 
     func testNewTabFromSwitcherAfterTappingPage() throws {
@@ -18,7 +22,7 @@ final class NewTabTests: XCTestCase {
         let app = launchOnPage(server.url)
 
         app.buttons["Tabs, 1 open"].tap()
-        let newTab = app.buttons["New Tab"]
+        let newTab = app.toolbars.buttons["New Tab"]
         XCTAssertTrue(newTab.waitForExistence(timeout: 5))
         newTab.tap()
 
@@ -31,7 +35,7 @@ final class NewTabTests: XCTestCase {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
         let tabs = app.buttons["Tabs, 1 open"]
-        let item = app.buttons["New Tab"]
+        let item = app.buttons.matching(NSPredicate(format: "label == 'New Tab' AND identifier != 'NewTabPill'")).firstMatch
 
         // A synthesized tap doesn't activate menu items on the iOS 27 simulator (the menu stays up),
         // so choose it the other way a finger can: hold the button, slide onto the item, lift. Open
@@ -50,6 +54,48 @@ final class NewTabTests: XCTestCase {
         start.press(forDuration: 1.2, thenDragTo: origin.withOffset(CGVector(dx: itemCenter.x, dy: itemCenter.y)))
 
         assertSearchPanelStaysUp(in: app)
+        withExtendedLifetime(server) {}
+    }
+
+    func testNewTabPillOpensANewTab() throws {
+        let server = try FixtureServer(html: Self.page)
+        let app = launchOnPage(server.url)
+
+        app.buttons["NewTabPill"].tap()
+        assertSearchPanelStaysUp(in: app)
+        // An empty field reports its placeholder as its value.
+        let field = searchField(in: app)
+        XCTAssertEqual(field.value as? String, field.placeholderValue, "a new tab's field isn't empty")
+        field.typeText(server.url.appending(path: "next").absoluteString + "\n")
+
+        XCTAssertTrue(app.buttons["Tabs, 2 open"].waitForExistence(timeout: 10), "+ didn't open a new tab")
+        XCTAssertTrue(app.webViews.staticTexts["Path /next"].waitForExistence(timeout: 10), "the new tab didn't load")
+        withExtendedLifetime(server) {}
+    }
+
+    func testEditRowEditsTheCurrentTab() throws {
+        let server = try FixtureServer(html: Self.page)
+        let app = launchOnPage(server.url)
+
+        app.buttons["NewTabPill"].tap()
+        assertSearchPanelStaysUp(in: app)
+        let row = app.buttons["Edit address: Fixture"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "no row for the current tab")
+        row.tap()
+
+        // The panel stays up with this tab's address in the field, selected, so typing replaces it.
+        let field = searchField(in: app)
+        let filled = expectation(for: NSPredicate(format: "value == %@", server.url.absoluteString), evaluatedWith: field)
+        wait(for: [filled], timeout: 5)
+        XCTAssertEqual(field.value(forKey: "hasKeyboardFocus") as? Bool, true, "search field lost focus")
+        let next = server.url.appending(path: "next").absoluteString
+        field.typeText(next)
+        XCTAssertEqual(field.value as? String, next, "the address wasn't selected, so typing didn't replace it")
+        field.typeText("\n")
+
+        XCTAssertTrue(app.webViews.staticTexts["Path /next"].waitForExistence(timeout: 10), "the tab didn't navigate")
+        XCTAssertFalse(app.buttons["Tabs, 2 open"].waitForExistence(timeout: 2), "editing opened a new tab")
+        XCTAssertTrue(app.buttons["Tabs, 1 open"].exists)
         withExtendedLifetime(server) {}
     }
 

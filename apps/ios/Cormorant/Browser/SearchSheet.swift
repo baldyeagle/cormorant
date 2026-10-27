@@ -2,7 +2,8 @@ import CormorantCore
 import SwiftUI
 
 /// The search panel: an in-place overlay (not a `.sheet`) that rides on the keyboard, with the
-/// full URL selected in the field and, below it, other open tabs and recently archived pages.
+/// full URL selected in the field (empty for a new tab) and, below it, open tabs and recently
+/// archived pages. Composing a new tab, the tab it came from is listed first, to edit its address.
 /// Closes on submit, on choosing a row, on a tap outside, on a swipe down, on Escape, and when
 /// the keyboard goes away; the owner does that by watching `isFocused`.
 struct SearchSheet: View {
@@ -10,6 +11,8 @@ struct SearchSheet: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let url: URL?
     var isFocused: FocusState<Bool>.Binding
+    /// VoiceOver's cursor, moved to the field when the Edit row fills it (the row itself goes away).
+    @AccessibilityFocusState private var fieldHasVoiceOver: Bool
     let onDismiss: () -> Void
     /// False over the empty state: there's no page to dim, so the launch screen's background stays put.
     var dimsPage = true
@@ -123,6 +126,7 @@ struct SearchSheet: View {
                     return .handled
                 }
                 .accessibilityLabel("Search or enter address")
+                .accessibilityFocused($fieldHasVoiceOver)
             if !text.isEmpty {
                 Button("Clear", systemImage: "xmark.circle.fill") {
                     text = ""
@@ -165,15 +169,22 @@ struct SearchSheet: View {
     private func rows(tabs: [CormorantCore.Tab], pages: [ArchivedTab]) -> some View {
         VStack(spacing: 0) {
             ForEach(tabs) { tab in
-                SearchRow(title: tab.displayTitle, host: tab.url?.displayHost ?? "") {
-                    Image(systemName: "square.on.square")
+                // Composing a new tab, the tab it was opened from offers its address for editing.
+                let editsTab = tab.id == store.state.activeTabID
+                SearchRow(title: tab.displayTitle, host: tab.url?.displayHost ?? "",
+                          accessibilityTitle: editsTab ? "Edit address: \(tab.displayTitle)" : nil) {
+                    Image(systemName: editsTab ? "pencil" : "square.on.square")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } action: {
-                    store.activate(tab.id)
-                    onDismiss()
+                    if editsTab {
+                        editActiveTab()
+                    } else {
+                        store.activate(tab.id)
+                        onDismiss()
+                    }
                 }
-                .accessibilityHint("Switches to this tab")
+                .accessibilityHint(editsTab ? "Edits this tab's address" : "Switches to this tab")
             }
             ForEach(pages) { page in
                 SearchRow(title: page.displayTitle, host: page.url.displayHost) {
@@ -204,11 +215,13 @@ struct SearchSheet: View {
     }
 
     /// Open tabs with a page, most recently viewed first. Editing this page leaves it out; composing
-    /// a new tab keeps it, since going back to it is a real choice then.
+    /// a new tab lists it first, as the way to edit its address instead.
     private var openTabs: [CormorantCore.Tab] {
-        let excluded = store.isComposingNewTab ? nil : store.state.activeTabID
-        return Array(store.tabs
-            .filter { $0.id != excluded && $0.url != nil && matches($0.displayTitle, $0.url) }
+        let activeID = store.state.activeTabID
+        let others = store.tabs.filter { $0.id != activeID }
+        let candidates = store.isComposingNewTab ? store.tabs.filter { $0.id == activeID } + others : others
+        return Array(candidates
+            .filter { $0.url != nil && matches($0.displayTitle, $0.url) }
             .prefix(Self.rowLimit))
     }
 
@@ -228,6 +241,17 @@ struct SearchSheet: View {
         onDismiss()
     }
 
+    /// Switches from composing a new tab to editing the active one, with its URL selected in the field.
+    private func editActiveTab() {
+        store.cancelComposing()
+        text = store.activeTab?.url?.absoluteString ?? ""
+        initialText = text
+        isFocused.wrappedValue = true
+        fieldHasVoiceOver = true
+        // After the new text has reached the field, or setting it moves the caret to the end.
+        Task { selectAll() }
+    }
+
     private func selectAll() {
         selection = text.isEmpty ? nil : TextSelection(range: text.startIndex..<text.endIndex)
     }
@@ -245,6 +269,8 @@ struct SearchSheet: View {
 private struct SearchRow<Trailing: View>: View {
     let title: String
     let host: String
+    /// When the row does something other than its trailing icon's usual meaning.
+    var accessibilityTitle: String?
     @ViewBuilder let trailing: Trailing
     let action: () -> Void
 
@@ -272,7 +298,7 @@ private struct SearchRow<Trailing: View>: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title)
+        .accessibilityLabel(accessibilityTitle ?? title)
         .accessibilityValue(host)
     }
 }

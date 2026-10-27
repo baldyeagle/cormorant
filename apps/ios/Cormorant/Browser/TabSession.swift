@@ -1,4 +1,5 @@
 import CormorantBlocking
+import CormorantCore
 import Observation
 import OSLog
 import SwiftUI
@@ -24,9 +25,8 @@ final class TabSession {
     private(set) var progress = 0.0
     /// Set while the user scrolls down a page; the bottom bar shrinks to a strip.
     var isBarCollapsed = false
-    /// Chrome tint for the status-bar strip. Always nil in build one; a later build can fill it
-    /// from `<meta name="theme-color">` (it also needs a matching status-bar style).
-    private(set) var themeColor: Color?
+    /// What the page offers the status-bar strip. Settled: see `schedulePageColorsRefresh()`.
+    private(set) var pageColors = PageColors()
     private(set) var loadError: LoadError?
     /// A main-frame response WebKit can't display (a download). Downloads come in build two.
     var blockedDownloadURL: URL?
@@ -63,6 +63,7 @@ final class TabSession {
     @ObservationIgnored private let contentController: WKUserContentController
     @ObservationIgnored private let coordinator = WebViewCoordinator()
     @ObservationIgnored private let pullToRefresh: PullToRefresh
+    @ObservationIgnored private let pageTopTracker = PageTopTracker()
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     /// Host and lists version the current rules were applied for; nil until the first successful apply.
     @ObservationIgnored private var appliedHost: String?
@@ -75,9 +76,48 @@ final class TabSession {
     @ObservationIgnored private var lastRequestedURL: URL?
     @ObservationIgnored private var lastScrollY: CGFloat = 0
     @ObservationIgnored private var lastInsetTop: CGFloat = 0
+    @ObservationIgnored private var hasCommittedPage = false
+    @ObservationIgnored private var pageColorsTask: Task<Void, Never>?
+    /// When the pending page-colors refresh runs; pushed back while things keep changing.
+    @ObservationIgnored private var pageColorsDeadline: ContinuousClock.Instant?
+    /// Bumped per refresh, so a slow snapshot can't land after a newer refresh.
+    @ObservationIgnored private var pageColorsGeneration = 0
+    /// The next colors read are a page's first (it was just committed, adopted or shown), so they cut
+    /// in rather than fade. Held while the page loads: its first frames may be the old page or blank.
+    @ObservationIgnored private var cutsNextPageColors = true
+    @ObservationIgnored private var traitRegistration: (any UITraitChangeRegistration)?
+    /// The link preview's card snapshot, for this tab's first colors (see `seedPageColors()`).
+    @ObservationIgnored private var adoptedSnapshot: UIImage?
+    /// The switcher's picture of this tab's page, for first colors when it has never been on screen
+    /// (it loaded in the background).
+    @ObservationIgnored var thumbnail: (() -> UIImage?)?
+    /// A refresh was asked for at once (the tab was just shown); later requests don't put it off.
+    @ObservationIgnored private var pageColorsUrgent = false
+    /// The pending refresh may run while the page scrolls (the live estimate couldn't read the top).
+    @ObservationIgnored private var pageColorsDuringScroll = false
+    /// The page's script can't read its top (a picture, a gradient, a frame): while it scrolls, the top
+    /// is followed with snapshots instead, a few a second.
+    @ObservationIgnored private var pageTopUnreadable = false
+    private static let unreadableTopInterval: Duration = .milliseconds(250)
+    #if DEBUG
+    /// The last color the page's script reported at its top and the strip took up, for UI tests
+    /// (`UITestingProbes`): the snapshot at rest can't tell them whether the strip followed a scroll.
+    @ObservationIgnored private(set) var lastLivePageTop: RGBColor?
+    #endif
+    /// The status-bar strip's color for whichever tab is on screen, for an animation that hands over to
+    /// it (the link preview's card growing into its new tab).
+    @ObservationIgnored var activeStripColor: ((UIUserInterfaceStyle) -> UIColor?)?
+    /// Whether the strip uses page colors at all; nothing is sampled while it doesn't.
+    @ObservationIgnored var tintsChrome: () -> Bool = { true }
     /// Asked of WebKit for every navigation in this tab. Per tab, not persisted.
     @ObservationIgnored private(set) var requestedContentMode: WKWebpagePreferences.ContentMode = .recommended
     @ObservationIgnored private var scrollTravel: CGFloat = 0
+
+    static let pageColorsSettle: Duration = .milliseconds(150)
+    /// Points of the page's top edge sampled for the strip (its first and last rows are compared, so a
+    /// thin border along the top isn't taken for the page), and the sample's width in points.
+    private static let topEdgeHeight: CGFloat = 12
+    private static let topEdgeSampleWidth: CGFloat = 48
 
     /// Safari's page zoom steps.
     static let zoomSteps: [CGFloat] = [0.5, 0.75, 0.85, 1, 1.15, 1.25, 1.5, 1.75, 2, 2.5, 3]
@@ -131,6 +171,14 @@ final class TabSession {
         pullToRefresh.pageDidChange(webView.url)
         // Suspended while it was a preview; a tab plays media under the usual rules.
         webView.setAllMediaPlaybackSuspended(false)
+        // Already committed, so no commit will say so. Its colors come with it when it's shown: the
+        // card's snapshot is the page as it is, top edge included (see `seedPageColors()`).
+        hasCommittedPage = webView.url != nil
+        adoptedSnapshot = handoff.card?.snapshot
+        // Its page loaded before the script was installed.
+        if hasCommittedPage { pageTopTracker.inject(into: webView) }
+        cutsNextPageColors = true
+        schedulePageColorsRefresh()
     }
 
     private init(tabID: UUID, blocking: BlockingService, webView: WKWebView, contentController: WKUserContentController) {
@@ -149,7 +197,14 @@ final class TabSession {
         webView.navigationDelegate = coordinator
         webView.uiDelegate = coordinator
         pullToRefresh.onRefresh = { [weak self] in self?.reload() }
+        pageTopTracker.session = self
+        pageTopTracker.install(in: contentController)
         observe()
+        // The page's colors (and its media queries) follow the appearance; re-read them when it changes.
+        traitRegistration = webView.registerForTraitChanges([UITraitUserInterfaceStyle.self]) {
+            [weak self] (_: WKWebView, _: UITraitCollection) in
+            self?.schedulePageColorsRefresh()
+        }
     }
 
     /// Installs blocking rules, then performs the tab's first load: restoring saved back/forward
@@ -295,6 +350,11 @@ final class TabSession {
         // Asked for while another tab's sheet was open; it must not fire on a later dismissal.
         pendingAction = nil
         if needsReload { recoverFromCrash() }
+        // Colors with the tab: its own if they're for the page it's on now, else the page's kept ones,
+        // else what WebKit already knows (the top edge comes with the sample, which runs at once).
+        seedPageColors()
+        schedulePageColorsRefresh(after: .zero)
+        updatePageTopTracking()
     }
 
     /// For a tab loading in the background: nothing plays (or is heard) until it's shown.
@@ -308,6 +368,7 @@ final class TabSession {
     func didResignActiveTab() {
         isActiveTab = false
         pullToRefresh.cancel()
+        updatePageTopTracking()
     }
 
     // MARK: Called by the coordinator
@@ -366,9 +427,32 @@ final class TabSession {
 
     func navigationDidCommit(_ navigation: WKNavigation) {
         effectiveContentMode = navigation.effectiveContentMode
+        hasCommittedPage = true
+        // A new document; its script will say whether it can read the top. One restored from the
+        // back/forward cache asks again itself; this covers it too.
+        pageTopUnreadable = false
+        updatePageTopTracking()
+        // A refresh still waiting on a snapshot was for the page before; it mustn't land on this one.
+        pageColorsGeneration += 1
+        // Back or forward to a page seen before: its colors come with it, not a beat later.
+        if let item = webView.backForwardList.currentItem, item !== pageColors.item, var colors = item.pageColors {
+            colors.item = item
+            colors.fades = false
+            pageColors = colors
+        }
+        cutsNextPageColors = true
+        schedulePageColorsRefresh()
+        // And once more after the page has had time to paint past its first frames.
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            self?.schedulePageColorsRefresh()
+        }
     }
 
-    func pageDidFinishLoading() { onPageLoaded?() }
+    func pageDidFinishLoading() {
+        onPageLoaded?()
+        schedulePageColorsRefresh()
+    }
     func pageDidRequestClose() { onClose?() }
 
     func webContentProcessDidTerminate() {
@@ -470,16 +554,220 @@ final class TabSession {
                 MainActor.assumeIsolated {
                     self?.setBarCollapsed(false)
                     self?.pullToRefresh.pageDidChange(web.url)
+                    // Also same-document navigations (pushState), which commit nothing.
+                    self?.schedulePageColorsRefresh()
                     self?.onPageChange?(web.url, web.title ?? "")
                 }
+            },
+            webView.observe(\.themeColor, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.schedulePageColorsRefresh() }
+            },
+            webView.observe(\.underPageBackgroundColor, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.schedulePageColorsRefresh() }
             },
             webView.observe(\.title, options: [.new]) { [weak self] web, _ in
                 MainActor.assumeIsolated { self?.onPageChange?(web.url, web.title ?? "") }
             },
             webView.scrollView.observe(\.contentOffset, options: [.new]) { [weak self] scrollView, _ in
-                MainActor.assumeIsolated { self?.scrollViewDidScroll(scrollView) }
+                MainActor.assumeIsolated {
+                    self?.scrollViewDidScroll(scrollView)
+                    self?.pageDidScroll()
+                }
             },
         ]
+    }
+
+    /// Re-reads the page's colors once nothing has changed for `pageColorsSettle`: a scroll has come
+    /// to rest, a load has settled. Around a first load or a crash reload WebKit passes through
+    /// placeholders (no theme color, a white under-page color) for ~100 ms before the page's own;
+    /// adopting those would flash the strip and flip the status bar. Cheap to call per scroll frame:
+    /// it only pushes a deadline back.
+    func schedulePageColorsRefresh(after settle: Duration = pageColorsSettle, duringScroll: Bool = false) {
+        if duringScroll { pageColorsDuringScroll = true }
+        let deadline = ContinuousClock.now + settle
+        if settle < Self.pageColorsSettle {
+            pageColorsUrgent = true
+            pageColorsDeadline = min(deadline, pageColorsDeadline ?? deadline)
+        } else if !pageColorsUrgent {
+            pageColorsDeadline = deadline
+        }
+        guard pageColorsTask == nil else { return }
+        // One task at a time, so at most one snapshot is ever in flight; a call during one runs
+        // another refresh after it.
+        pageColorsTask = Task {
+            while let deadline = pageColorsDeadline {
+                if deadline > .now {
+                    // In short steps, so a deadline brought forward (the tab was shown) is met.
+                    try? await Task.sleep(until: min(deadline, .now + .milliseconds(30)))
+                    continue
+                }
+                // Never mid-scroll, even a drag held still: only once the page is at rest.
+                let scrollView = webView.scrollView
+                if !pageColorsDuringScroll, scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating {
+                    pageColorsDeadline = .now + Self.pageColorsSettle
+                    continue
+                }
+                pageColorsDeadline = nil
+                pageColorsUrgent = false
+                pageColorsDuringScroll = false
+                await refreshPageColors()
+            }
+            pageColorsTask = nil
+        }
+    }
+
+    // MARK: Live tracking while scrolling (see `PageTopTracker`)
+
+    /// The page's script follows the top while it scrolls: only for the tab on screen, with tinting on.
+    var tracksPageTopLive: Bool { isActiveTab && tintsChrome() }
+
+    /// Call when `tracksPageTopLive` may have changed.
+    func updatePageTopTracking() {
+        pageTopTracker.setActive(tracksPageTopLive, in: webView)
+    }
+
+    /// The page's top edge changes as it scrolls: its script follows it, and a snapshot confirms it once
+    /// the page rests. Where the script can't read the top, snapshots follow it instead, a few a second.
+    private func pageDidScroll() {
+        if pageTopUnreadable, tracksPageTopLive {
+            schedulePageColorsRefresh(after: Self.unreadableTopInterval, duringScroll: true)
+        } else {
+            schedulePageColorsRefresh()
+        }
+    }
+
+    /// The page's script read a new color at its top: `[r, g, b, a]`, alpha below 1 where the canvas
+    /// shows through, or nil when it couldn't tell (a picture, a frame, a mix). Shown at once, with the
+    /// in-place fade; the snapshot once scrolling rests confirms or corrects it.
+    func pageTopDidChange(_ components: [Double]?, isBaseline: Bool = false) {
+        let scrollView = webView.scrollView
+        guard tracksPageTopLive, hasCommittedPage,
+              // Pulled down for a refresh: the top shows the overscroll area, not the page.
+              scrollView.contentOffset.y + scrollView.adjustedContentInset.top >= -1,
+              scrollView.refreshControl?.isRefreshing != true else { return }
+        pageTopUnreadable = components == nil
+        // Where tracking started (the tab was shown, the page loaded): the snapshot has that covered.
+        guard !isBaseline else { return }
+        guard let components else {
+            // Only a snapshot can say; take one now rather than when the scrolling stops.
+            schedulePageColorsRefresh(after: .zero, duringScroll: true)
+            return
+        }
+        let item = webView.backForwardList.currentItem
+        let style = webView.traitCollection.userInterfaceStyle
+        var color = RGBColor(red: components[0], green: components[1], blue: components[2], alpha: components[3])
+        if color.alpha < 1 {
+            // What shows through is the canvas, which WebKit draws in the under-page color.
+            let canvas = RGBColor(webView.underPageBackgroundColor, in: webView.traitCollection)
+                ?? RGBColor(UIColor(resource: .launchBackground), in: webView.traitCollection) ?? .white
+            color = color.composited(over: canvas)
+        }
+        guard let topEdge = TopEdgeSample(pixels: [color]) else { return }
+        #if DEBUG
+        lastLivePageTop = color
+        #endif
+        var colors = pageColors
+        colors.topEdge = topEdge
+        colors.item = item
+        colors.style = style
+        colors.fades = !cutsNextPageColors
+        // Newer than any snapshot still in flight, which mustn't land on top of it.
+        pageColorsGeneration += 1
+        if colors != pageColors { pageColors = colors }
+        // The arbiter: a snapshot once it all comes to rest.
+        schedulePageColorsRefresh()
+    }
+
+    /// Brings `pageColors` in line with the page on screen without waiting for a sample: the item's
+    /// kept colors, or WebKit's theme and under-page colors, read now in the current appearance.
+    private func seedPageColors() {
+        let item = webView.backForwardList.currentItem
+        let style = webView.traitCollection.userInterfaceStyle
+        let snapshot = adoptedSnapshot
+        adoptedSnapshot = nil
+        guard item !== pageColors.item || style != pageColors.style else { return }
+        if var colors = item?.pageColors, colors.style == style {
+            colors.item = item
+            colors.fades = false
+            pageColors = colors
+        } else {
+            // A picture of the page as it is, if there is one: the link preview's card (the page at
+            // this tab's size), or the switcher's thumbnail of a tab that has never been on screen (it
+            // loaded in the background). The same top edge a live sample would find, without one.
+            var topEdge: TopEdgeSample?
+            let width = webView.bounds.width
+            if tintsChrome(), hasCommittedPage, width > 0 {
+                if let snapshot {
+                    topEdge = snapshot.topEdgeSample(height: Self.topEdgeHeight * snapshot.size.width / width,
+                                                     width: Self.topEdgeSampleWidth)
+                } else if pageColors.item == nil, let thumbnail = thumbnail?() {
+                    topEdge = thumbnail.topEdgeSample(height: Self.topEdgeHeight * thumbnail.size.width / width,
+                                                      width: Self.topEdgeSampleWidth)
+                }
+            }
+            pageColors = PageColors(theme: webView.themeColor,
+                                    underPage: hasCommittedPage ? webView.underPageBackgroundColor : nil,
+                                    topEdge: topEdge, item: item, style: style, fades: false)
+            // Its first colors are in; a page still loading may yet paint differently, and cuts again.
+            cutsNextPageColors = webView.isLoading
+        }
+    }
+
+    private func refreshPageColors() async {
+        // Only the tab on screen: one loading on the background stage, or off screen, doesn't drive the
+        // strip and isn't worth a snapshot (and its appearance may not be the window's). It's refreshed
+        // when it's shown.
+        guard isActiveTab, webView.window != nil else { return }
+        pageColorsGeneration += 1
+        let generation = pageColorsGeneration
+        // All read together, before the snapshot, so they describe one page in one appearance.
+        let item = webView.backForwardList.currentItem
+        let theme = webView.themeColor
+        let underPage = hasCommittedPage ? webView.underPageBackgroundColor : nil
+        let style = webView.traitCollection.userInterfaceStyle
+        let sample = await sampleTopEdge()
+        // A newer refresh, or a navigation, came along while this one waited on the snapshot.
+        guard generation == pageColorsGeneration, webView.backForwardList.currentItem === item,
+              webView.traitCollection.userInterfaceStyle == style else { return }
+        // No sample (pulled past the top, mid-refresh): keep this page's last one if it's from this
+        // appearance, never another page's. With tinting off, none: it would be stale when turned on.
+        let keeps = tintsChrome() && item === pageColors.item && style == pageColors.style
+        let topEdge = sample ?? (keeps ? pageColors.topEdge : nil)
+        // A page's first colors cut in, as the page did (after a relaunch, in a rebuilt or adopted tab,
+        // going back to a page whose colors weren't kept); later changes on the page fade, including
+        // same-document navigations (pushState, fragments).
+        let colors = PageColors(theme: theme, underPage: underPage, topEdge: topEdge, item: item, style: style,
+                                fades: !cutsNextPageColors)
+        if !webView.isLoading { cutsNextPageColors = false }
+        if colors != pageColors { pageColors = colors }
+        // Kept on the item itself (without a reference back to it), so they go when WebKit drops it.
+        var stored = colors
+        stored.item = nil
+        item?.pageColors = stored
+    }
+
+    /// A thin row along the top of what's on screen, for the strip to continue. Nil when there's
+    /// nothing meaningful to sample: no page, not on screen, or pulled down past the top (the edge
+    /// then shows the overscroll area, or the refresh spinner).
+    private func sampleTopEdge() async -> TopEdgeSample? {
+        let scrollView = webView.scrollView
+        // A point of slack: a bounce can settle a fraction above the top.
+        guard tintsChrome(), hasCommittedPage, webView.window != nil, webView.bounds.width > 0,
+              scrollView.contentOffset.y + scrollView.adjustedContentInset.top >= -1,
+              scrollView.refreshControl?.isRefreshing != true else { return nil }
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = CGRect(x: 0, y: 0, width: webView.bounds.width, height: Self.topEdgeHeight)
+        // Wide enough that the image has at least 4 pixel rows on any width of view (a wide iPad's
+        // 12 pt would otherwise round to one row, or none).
+        let scale = webView.window?.screen.scale ?? 3
+        let width = max(Self.topEdgeSampleWidth, (webView.bounds.width * 4 / (Self.topEdgeHeight * scale)).rounded(.up))
+        configuration.snapshotWidth = NSNumber(value: Double(width))
+        // What's on screen now, not the last frame before the page painted.
+        configuration.afterScreenUpdates = true
+        guard let image = try? await webView.takeSnapshot(configuration: configuration) else { return nil }
+        let rows = image.sRGBRows()
+        guard let edge = rows.first, let below = rows.last else { return nil }
+        return TopEdgeSample(rows: [edge, below])
     }
 
     /// Collapses the bar after a short scroll down, expands it after a short scroll up or at the top.

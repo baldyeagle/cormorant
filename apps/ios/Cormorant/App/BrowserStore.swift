@@ -573,6 +573,9 @@ final class BrowserStore {
                              adopting handoff: LinkPreviewHandoff? = nil) -> TabSession {
         let session = handoff.map { TabSession(tabID: tab.id, blocking: blocking, adopting: $0) }
             ?? TabSession(tabID: tab.id, blocking: blocking, configuration: configuration)
+        session.tintsChrome = { [weak self] in self?.settings.tintsChrome ?? true }
+        session.activeStripColor = { [weak self] in self?.stripUIColor(for: $0) }
+        session.thumbnail = { [weak self, tabID = tab.id] in self?.snapshots[tabID] }
         let tabID = tab.id
         session.onPageChange = { [weak self] url, title in self?.pageDidChange(tabID: tabID, url: url, title: title) }
         session.onPageLoaded = { [weak self, weak session] in

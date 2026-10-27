@@ -1,4 +1,5 @@
 #if DEBUG
+import CormorantCore
 import SwiftUI
 import UIKit
 
@@ -11,6 +12,8 @@ import UIKit
 ///   it (`OwnPasteboardWrite`). The test runner reading the pasteboard itself would be a cross-app
 ///   paste, which asks for permission, and so would the app reading anything another app (or the
 ///   Mac's clipboard, synced into the Simulator) put there.
+/// - `UITesting.pageTop`: the last color (`#RRGGBB`) the tab on screen's page script reported at the
+///   page's top while it scrolled, and the strip took up (`TabSession.lastLivePageTop`).
 struct UITestingProbes: View {
     @Environment(BrowserStore.self) private var store
 
@@ -22,6 +25,12 @@ struct UITestingProbes: View {
                 // `changeCount` never asks; the contents only once it's known to be the app's own.
                 guard pasteboard.changeCount == OwnPasteboardWrite.changeCount else { return nil }
                 return pasteboard.url?.absoluteString ?? pasteboard.string
+            }
+            Probe(identifier: "UITesting.pageTop") { [store] in
+                store.activeSession?.lastLivePageTop.map {
+                    String(format: "#%02X%02X%02X", Int($0.red * 255 + 0.5), Int($0.green * 255 + 0.5),
+                           Int($0.blue * 255 + 0.5))
+                }
             }
         }
         .allowsHitTesting(false)

@@ -6,6 +6,7 @@ struct TabSwitcherView: View {
     @Environment(BrowserStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     /// How much of each card the next one covers.
     private static let overlap: CGFloat = 0.26
@@ -102,7 +103,8 @@ struct TabSwitcherView: View {
                         page: CGRect(x: geometry.safeAreaInsets.leading, y: geometry.safeAreaInsets.top,
                                      width: geometry.size.width,
                                      height: geometry.size.height + geometry.safeAreaInsets.bottom),
-                        backdrop: CardExpansion.backdrop(themeColor: store.activeSession?.themeColor),
+                        // The status-bar strip's color for the tab, so the page lands with no seam.
+                        backdrop: { store.stripColor(in: colorScheme) },
                         onFinished: {
                             // The snapshot now covers the page's place in the browser: swap without a slide.
                             var transaction = Transaction()

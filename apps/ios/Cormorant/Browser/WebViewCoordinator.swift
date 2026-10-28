@@ -96,7 +96,7 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     ) {
         let alert = UIAlertController(title: Self.title(for: frame), message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler() })
-        if !Self.present(alert, over: webView) { completionHandler() }
+        if !present(alert, over: webView) { completionHandler() }
     }
 
     func webView(
@@ -108,7 +108,7 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let alert = UIAlertController(title: Self.title(for: frame), message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in completionHandler(false) })
         alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler(true) })
-        if !Self.present(alert, over: webView) { completionHandler(false) }
+        if !present(alert, over: webView) { completionHandler(false) }
     }
 
     func webView(
@@ -124,12 +124,13 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak alert] _ in
             completionHandler(alert?.textFields?.first?.text ?? "")
         })
-        if !Self.present(alert, over: webView) { completionHandler(nil) }
+        if !present(alert, over: webView) { completionHandler(nil) }
     }
 
-    /// Presents from the web view's window scene. Returns false if the web view isn't on screen.
-    private static func present(_ alert: UIAlertController, over webView: WKWebView) -> Bool {
-        guard let presenter = webView.alertPresenter else { return false }
+    /// Presents from the web view's window scene. Returns false if the tab isn't the one on screen (a
+    /// background tab loading on the stage is in the window, but its dialogs mustn't appear).
+    private func present(_ alert: UIAlertController, over webView: WKWebView) -> Bool {
+        guard session?.isActiveTab == true, let presenter = webView.alertPresenter else { return false }
         presenter.present(alert, animated: true)
         return true
     }

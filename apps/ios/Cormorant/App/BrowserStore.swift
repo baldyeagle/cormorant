@@ -20,6 +20,12 @@ final class BrowserStore {
     static let archivePolicy = ArchivePolicy.oneDay
     /// Web views are kept for this many most-recently-viewed tabs; older ones are rebuilt on demand.
     static let liveWebViewLimit = 10
+    /// Background tabs that load at once. Each is a full-size page painting in its own web content
+    /// process until it's snapshotted; more would compete with the page on screen for memory and CPU.
+    static let backgroundLoadLimit = 2
+    /// A background page that hasn't finished by now (long polling, a hung subresource) is snapshotted
+    /// as it is and taken off the stage.
+    static let backgroundLoadTimeout: Duration = .seconds(20)
     private static let warnedStorageFallbackKey = "warnedAppGroupUnavailable"
 
     private(set) var state = BrowserState.empty
@@ -53,8 +59,18 @@ final class BrowserStore {
     @ObservationIgnored private var navigatedTabIDs: Set<UUID> = []
     /// Tail of the history save chain, like `saveChain`.
     @ObservationIgnored private var historySaveChain: Task<Void, Never>?
-    /// Zoom and desktop mode of evicted tabs, likewise. Memory only.
-    @ObservationIgnored private var evictedViewSettings: [UUID: TabSession.ViewSettings] = [:]
+    /// Zoom and desktop mode to give a tab's web view when it's next built: an evicted tab's own, or
+    /// those a link-menu tab inherits from its opener. Memory only.
+    @ObservationIgnored private var pendingViewSettings: [UUID: TabSession.ViewSettings] = [:]
+    /// Background tabs loading on the stage, with the timers that give up waiting for them.
+    @ObservationIgnored private var stagedLoads: [UUID: Task<Void, Never>] = [:]
+    /// Background tabs waiting for a stage slot, oldest first. They have no web view yet.
+    @ObservationIgnored private var backgroundQueue: [UUID] = []
+    @ObservationIgnored private let backgroundStage = BackgroundPageStage()
+    /// Where background tabs load, and at what size: the window and layout of the tab they were opened
+    /// from, so they're ready to show as they are.
+    @ObservationIgnored private weak var stagingWindow: UIWindow?
+    @ObservationIgnored private var stagingLayout: PageLayout?
     @ObservationIgnored private var pendingURLs: [URL] = []
     @ObservationIgnored private var sceneIsActive = true
     @ObservationIgnored private var debouncedSave: Task<Void, Never>?
@@ -272,18 +288,43 @@ final class BrowserStore {
         }
     }
 
-    /// A link from a page's long-press menu, opened in a new tab: switched to, or left in the
-    /// background with the current page still on screen.
-    func openLinkInNewTab(_ url: URL, inBackground: Bool) {
-        guard isLoaded, Self.isWeb(url) else { return }
+    /// A link from a page's long-press menu, opened in a new tab: switched to, or loaded in the
+    /// background with the current page still on screen. With a `handoff` the tab adopts the menu
+    /// preview's web view, page and all; otherwise it loads the link. Either way it gets the opener's
+    /// zoom and desktop/mobile choice, as the preview (and a `target=_blank` popup) does.
+    /// Returns false if no tab was opened.
+    @discardableResult
+    func openLinkInNewTab(_ url: URL, inBackground: Bool, from opener: TabSession?, handoff: LinkPreviewHandoff?) -> Bool {
+        guard isLoaded, Self.isWeb(url) else { return false }
         if !inBackground {
             isComposingNewTab = false
             stampActiveTab()
         }
-        _ = state.openTab(url: url, activate: !inBackground, fromLink: true)
+        // An adopted page may have redirected; the tab records where it ended up. Like any tab a link
+        // opens, swiping back from its first page closes it.
+        let tab = state.openTab(url: handoff?.webView.url ?? url, title: handoff?.webView.title ?? "",
+                                activate: !inBackground, fromLink: true)
         // Stamped after, so the page being read stays first in the switcher, the new tab next.
         if inBackground { stampActiveTab() }
+        if let handoff {
+            let session = makeSession(for: tab, adopting: handoff)
+            // Its page may be in already, so no `didFinish` will say so: its one-entry history is
+            // saved and its icon fetched now (a page still loading gets both again when it finishes).
+            navigatedTabIDs.insert(tab.id)
+            if !session.webView.isLoading { favicons.pageDidLoad(in: session.webView) }
+        } else if let opener {
+            pendingViewSettings[tab.id] = opener.viewSettings
+        }
+        if inBackground {
+            if let opener, let window = opener.webView.window {
+                stagingWindow = window
+                stagingLayout = PageLayout(of: opener.webView)
+            }
+            loadInBackground(tab.id)
+        }
         stateDidChange()
+        if handoff != nil { saveHistories(onlyNavigated: true) }
+        return true
     }
 
     // MARK: Blocking
@@ -320,16 +361,97 @@ final class BrowserStore {
         if let activeSession { snapshot(activeSession) }
     }
 
-    private func snapshot(_ session: TabSession) {
-        guard session.webView.window != nil, session.webView.url != nil else { return }
+    @discardableResult
+    private func snapshot(_ session: TabSession) -> Task<Void, Never>? {
+        guard session.webView.window != nil, session.webView.url != nil else { return nil }
         let configuration = WKSnapshotConfiguration()
         configuration.snapshotWidth = 360
         let tabID = session.tabID
-        Task {
+        return Task {
             guard let image = try? await session.webView.takeSnapshot(configuration: configuration),
                   state.tabs.contains(where: { $0.id == tabID }) else { return }
             snapshots[tabID] = image
         }
+    }
+
+    // MARK: Background loads
+
+    /// Background tabs load now rather than when first shown, so the switcher has their page by the
+    /// time it's opened. A tab adopting a preview's page has its web view already and goes straight
+    /// on the stage; others queue for one of `backgroundLoadLimit` slots.
+    private func loadInBackground(_ tabID: UUID) {
+        if let session = sessions[tabID] {
+            stage(session)
+            keepLive(tabID, inBackground: true)
+        } else {
+            backgroundQueue.append(tabID)
+            startQueuedBackgroundLoads()
+        }
+    }
+
+    /// With nowhere to stage (no window seen yet), queued tabs wait to load until they're shown.
+    private func startQueuedBackgroundLoads() {
+        guard stagingWindow != nil else { return }
+        while stagedLoads.count < Self.backgroundLoadLimit, !backgroundQueue.isEmpty {
+            let tabID = backgroundQueue.removeFirst()
+            // Shown, closed, or given a web view some other way meanwhile.
+            guard sessions[tabID] == nil, tabID != state.activeTabID,
+                  let tab = state.tabs.first(where: { $0.id == tabID }) else { continue }
+            let session = session(for: tab)
+            stage(session)
+            keepLive(tabID, inBackground: true)
+        }
+    }
+
+    /// Without a window to stage in, the page still loads but is snapshotted only once shown.
+    private func stage(_ session: TabSession) {
+        guard let window = stagingWindow, let layout = stagingLayout else { return }
+        let tabID = session.tabID
+        // Out of sight and earshot: no media until the tab is first shown.
+        session.suspendMediaUntilShown()
+        backgroundStage.add(session.webView, layout: layout, in: window)
+        stagedLoads[tabID] = Task { [weak self] in
+            try? await Task.sleep(for: Self.backgroundLoadTimeout)
+            if !Task.isCancelled { self?.finishBackgroundLoad(tabID) }
+        }
+        // An adopted page may be loaded already: no `didFinish` to wait for. A moment on the stage
+        // first, so the snapshot has it painted at its new size.
+        if session.webView.url != nil, !session.webView.isLoading {
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(250))
+                self?.finishBackgroundLoad(tabID)
+            }
+        }
+    }
+
+    /// Snapshots a background page for the switcher, then takes it off the stage so it stops
+    /// painting. Its web view stays live (within `liveWebViewLimit`) for when the tab is shown.
+    private func finishBackgroundLoad(_ tabID: UUID, snapshot takesSnapshot: Bool = true) {
+        guard let timer = stagedLoads.removeValue(forKey: tabID) else { return }
+        timer.cancel()
+        if let session = sessions[tabID], session !== activeSession {
+            if takesSnapshot, let snapshotting = snapshot(session) {
+                // The web view, not the session: the tab may close or be evicted meanwhile, and its
+                // web view must still leave the stage.
+                let webView = session.webView
+                Task { [weak self] in
+                    await snapshotting.value
+                    self?.backgroundStage.remove(webView)
+                }
+            } else {
+                backgroundStage.remove(session.webView)
+            }
+        }
+        startQueuedBackgroundLoads()
+    }
+
+    /// The tab is being shown, closed or evicted: it no longer loads in the background. A tab being
+    /// shown stays where it is; the on-screen container takes its web view off the stage.
+    private func cancelBackgroundLoad(_ tabID: UUID, unstaging: Bool) {
+        backgroundQueue.removeAll { $0 == tabID }
+        guard let timer = stagedLoads.removeValue(forKey: tabID) else { return }
+        timer.cancel()
+        if unstaging, let session = sessions[tabID] { backgroundStage.remove(session.webView) }
     }
 
     // MARK: Internals
@@ -403,37 +525,61 @@ final class BrowserStore {
         guard activeSession?.tabID != tab.id else { return }
         activeSession?.didResignActiveTab()
         if let activeSession { snapshot(activeSession) }
+        cancelBackgroundLoad(tab.id, unstaging: false)
         let session = session(for: tab)
         activeSession = session
         session.didBecomeActiveTab()
-        recentTabIDs.removeAll { $0 == tab.id }
-        recentTabIDs.insert(tab.id, at: 0)
-        for evicted in recentTabIDs.dropFirst(Self.liveWebViewLimit) {
-            if let history = sessions[evicted]?.webView.interactionState {
-                interactionStates[evicted] = history
-                navigatedTabIDs.insert(evicted)
+        keepLive(tab.id, inBackground: false)
+        startQueuedBackgroundLoads()
+    }
+
+    /// Marks the tab's web view as recently used: first for the tab being shown; last for a background
+    /// tab, which ranks behind every tab the user has looked at. Past `liveWebViewLimit` the least
+    /// recent web views are released (keeping their history to rebuild from), never the tab on screen,
+    /// one still loading in the background, or the one just added. So opening many background tabs can't
+    /// push out the pages being read, and memory stays at the limit plus the background slots.
+    private func keepLive(_ tabID: UUID, inBackground: Bool) {
+        recentTabIDs.removeAll { $0 == tabID }
+        if inBackground { recentTabIDs.append(tabID) } else { recentTabIDs.insert(tabID, at: 0) }
+        while recentTabIDs.count > Self.liveWebViewLimit,
+              let evicted = recentTabIDs.last(where: {
+                  $0 != tabID && $0 != state.activeTabID && stagedLoads[$0] == nil
+              }) {
+            recentTabIDs.removeAll { $0 == evicted }
+            cancelBackgroundLoad(evicted, unstaging: true)
+            if let session = sessions.removeValue(forKey: evicted) {
+                backgroundStage.remove(session.webView)
+                if let history = session.webView.interactionState {
+                    interactionStates[evicted] = history
+                    navigatedTabIDs.insert(evicted)
+                }
+                pendingViewSettings[evicted] = session.viewSettings
             }
-            if let settings = sessions[evicted]?.viewSettings { evictedViewSettings[evicted] = settings }
-            sessions[evicted] = nil
         }
-        recentTabIDs = Array(recentTabIDs.prefix(Self.liveWebViewLimit))
     }
 
     private func session(for tab: Tab) -> TabSession {
         if let existing = sessions[tab.id] { return existing }
         let session = makeSession(for: tab)
-        if let settings = evictedViewSettings.removeValue(forKey: tab.id) { session.apply(settings) }
+        if let settings = pendingViewSettings.removeValue(forKey: tab.id) { session.apply(settings) }
         session.start(loading: tab.url, restoring: interactionStates.removeValue(forKey: tab.id))
         return session
     }
 
-    private func makeSession(for tab: Tab, configuration: WKWebViewConfiguration? = nil) -> TabSession {
-        let session = TabSession(tabID: tab.id, blocking: blocking, configuration: configuration)
+    @discardableResult
+    private func makeSession(for tab: Tab, configuration: WKWebViewConfiguration? = nil,
+                             adopting handoff: LinkPreviewHandoff? = nil) -> TabSession {
+        let session = handoff.map { TabSession(tabID: tab.id, blocking: blocking, adopting: $0) }
+            ?? TabSession(tabID: tab.id, blocking: blocking, configuration: configuration)
         let tabID = tab.id
         session.onPageChange = { [weak self] url, title in self?.pageDidChange(tabID: tabID, url: url, title: title) }
         session.onPageLoaded = { [weak self, weak session] in
             guard let self, let session else { return }
-            if session === self.activeSession { self.snapshot(session) }
+            if session === self.activeSession {
+                self.snapshot(session)
+            } else if self.stagedLoads[tabID] != nil {
+                self.finishBackgroundLoad(tabID)
+            }
             self.favicons.pageDidLoad(in: session.webView)
             // The URL changes when a navigation starts; the history only has the new page once it's in.
             self.navigatedTabIDs.insert(tabID)
@@ -442,13 +588,18 @@ final class BrowserStore {
         session.onCreateWebView = { [weak self, weak session] configuration, action in
             self?.openChild(configuration: configuration, for: action, from: session)
         }
-        session.onOpenInNewTab = { [weak self] url, inBackground in
-            self?.openLinkInNewTab(url, inBackground: inBackground)
+        session.onOpenInNewTab = { [weak self, weak session] url, inBackground, handoff in
+            self?.openLinkInNewTab(url, inBackground: inBackground, from: session, handoff: handoff) ?? false
         }
         session.onClose = { [weak self] in self?.close(tabID) }
         session.onProcessTerminated = { [weak self, weak session] in
             // Background tabs reload when they're next shown (`didBecomeActiveTab`).
-            if let self, let session, session === self.activeSession { session.recoverFromCrash() }
+            guard let self, let session else { return }
+            if session === self.activeSession {
+                session.recoverFromCrash()
+            } else {
+                self.finishBackgroundLoad(tabID, snapshot: false)
+            }
         }
         sessions[tab.id] = session
         return session
@@ -456,13 +607,22 @@ final class BrowserStore {
 
     private func pruneSessions() {
         let live = Set(state.tabs.map(\.id))
+        for tabID in Set(stagedLoads.keys).union(backgroundQueue) where !live.contains(tabID) {
+            cancelBackgroundLoad(tabID, unstaging: true)
+        }
+        // Whatever state a closed tab's web view was in, it doesn't stay on the stage.
+        for (tabID, session) in sessions where !live.contains(tabID) {
+            backgroundStage.remove(session.webView)
+        }
         sessions = sessions.filter { live.contains($0.key) }
         interactionStates = interactionStates.filter { live.contains($0.key) }
-        evictedViewSettings = evictedViewSettings.filter { live.contains($0.key) }
+        pendingViewSettings = pendingViewSettings.filter { live.contains($0.key) }
         recentTabIDs.removeAll { !live.contains($0) }
         if snapshots.keys.contains(where: { !live.contains($0) }) {
             snapshots = snapshots.filter { live.contains($0.key) }
         }
+        // Closing a staged tab frees its slot for the next in the queue.
+        startQueuedBackgroundLoads()
     }
 
     private func pageDidChange(tabID: UUID, url: URL?, title: String) {

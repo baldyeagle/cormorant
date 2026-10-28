@@ -42,6 +42,8 @@ struct TabCard: View {
         // Explicit, or the merged Close button's action would be the default one.
         .accessibilityAction { onOpen(previewFrame.rect) }
         .accessibilityAction(named: "Close", onClose)
+        // For UI tests: whether the card shows the page or the placeholder. Not spoken.
+        .accessibilityIdentifier(snapshot == nil ? "TabCard" : "TabCard.snapshot")
     }
 
     private var label: some View {

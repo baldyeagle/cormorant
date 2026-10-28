@@ -173,7 +173,6 @@ final class LinkContextMenuTests: XCTestCase {
         withExtendedLifetime(server) {}
     }
 
-    /// Like Safari: tapping the preview opens the link here.
     /// Tapping the preview opens the link in a new tab, which takes over the preview's page (no second
     /// request) as the card grows into it.
     func testTappingPreviewOpensNewTabWithPreviewPage() throws {
@@ -191,6 +190,34 @@ final class LinkContextMenuTests: XCTestCase {
         XCTAssertTrue(heading("/next", in: app).waitForExistence(timeout: 5), "the new tab has no page")
         XCTAssertEqual(server.requestCount(for: "/next"), 1, "the page was loaded again")
         XCTAssertEqual(app.state, .runningForeground)
+        // Nothing is left over the page (the growing card is hidden from accessibility, so only a tap
+        // shows it's gone): the bar answers.
+        openSwitcher(in: app, count: 2)
+        withExtendedLifetime(server) {}
+    }
+
+    /// Tapping a switcher card opens its tab (it grows into the page with `CardExpansion`, as a tapped
+    /// link preview does).
+    func testSwitcherCardOpensItsTab() throws {
+        let server = try FixtureServer(html: Self.page)
+        let app = launchOnPage(server.url)
+
+        openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
+        choose("Open in New Tab", in: app)
+        XCTAssertTrue(heading("/", in: app).waitForNonExistence(timeout: 10), "didn't switch to the new tab")
+
+        openSwitcher(in: app, count: 2)
+        let cards = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'TabCard'"))
+        let waited = expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: cards)
+        wait(for: [waited], timeout: 10)
+        // The opener's card: the one that isn't selected (the new tab is the active one).
+        let opener = cards.allElementsBoundByIndex.first { !$0.isSelected }
+        let card = try XCTUnwrap(opener, "no card for the opener")
+        // Its left part: the stack starts scrolled to the newest card, which overlaps the opener's right.
+        card.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5)).tap()
+        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 10), "the card didn't open its tab")
+        XCTAssertTrue(app.staticTexts["2 Tabs"].waitForNonExistence(timeout: 5), "the switcher stayed up")
+        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5))
         withExtendedLifetime(server) {}
     }
 

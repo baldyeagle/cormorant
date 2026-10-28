@@ -407,6 +407,8 @@ final class BrowserStore {
     private func stage(_ session: TabSession) {
         guard let window = stagingWindow, let layout = stagingLayout else { return }
         let tabID = session.tabID
+        // Out of sight and earshot: no media until the tab is first shown.
+        session.suspendMediaUntilShown()
         backgroundStage.add(session.webView, layout: layout, in: window)
         stagedLoads[tabID] = Task { [weak self] in
             try? await Task.sleep(for: Self.backgroundLoadTimeout)
@@ -619,6 +621,8 @@ final class BrowserStore {
         if snapshots.keys.contains(where: { !live.contains($0) }) {
             snapshots = snapshots.filter { live.contains($0.key) }
         }
+        // Closing a staged tab frees its slot for the next in the queue.
+        startQueuedBackgroundLoads()
     }
 
     private func pageDidChange(tabID: UUID, url: URL?, title: String) {

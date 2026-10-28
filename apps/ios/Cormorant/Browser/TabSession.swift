@@ -56,6 +56,8 @@ final class TabSession {
     /// This tab is the one on screen. Off screen (including loading on the background stage), a page
     /// can't put up dialogs.
     @ObservationIgnored private(set) var isActiveTab = false
+    /// Media is held while the tab loads unseen in the background; released when it's first shown.
+    @ObservationIgnored private var isMediaSuspendedUntilShown = false
 
     @ObservationIgnored let blocking: BlockingService
     @ObservationIgnored private let contentController: WKUserContentController
@@ -286,9 +288,20 @@ final class TabSession {
     /// Call when this tab becomes the one on screen.
     func didBecomeActiveTab() {
         isActiveTab = true
+        if isMediaSuspendedUntilShown {
+            isMediaSuspendedUntilShown = false
+            webView.setAllMediaPlaybackSuspended(false)
+        }
         // Asked for while another tab's sheet was open; it must not fire on a later dismissal.
         pendingAction = nil
         if needsReload { recoverFromCrash() }
+    }
+
+    /// For a tab loading in the background: nothing plays (or is heard) until it's shown.
+    func suspendMediaUntilShown() {
+        guard !isActiveTab, !isMediaSuspendedUntilShown else { return }
+        isMediaSuspendedUntilShown = true
+        webView.setAllMediaPlaybackSuspended(true)
     }
 
     /// Call when another tab takes the screen.

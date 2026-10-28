@@ -14,6 +14,7 @@ final class LinkContextMenuTests: XCTestCase {
         <script>document.getElementById('path').textContent = 'Path ' + location.pathname</script>
         <a href="/next">Next page</a>
         <a href="/slow">Slow page</a>
+        <a href="/third">Third page</a>
         <a href="/popup" target="_blank">Blank target</a>
         <a href="mailto:someone@example.com">Mail link</a>
         <a href="javascript:void(0)">Script link</a>
@@ -113,6 +114,41 @@ final class LinkContextMenuTests: XCTestCase {
         XCTAssertTrue(heading("/", in: app).waitForNonExistence(timeout: 10), "didn't switch to the new tab")
         XCTAssertTrue(heading("/next", in: app).exists)
         XCTAssertEqual(server.requestCount(for: "/next"), 1, "the page was loaded again")
+        withExtendedLifetime(server) {}
+    }
+
+    /// A tab that adopted the preview's page keeps its history like any tab: across a relaunch, back
+    /// returns to that first page, and (a link opened the tab) swiping back from there closes it.
+    func testAdoptedTabHistorySurvivesRelaunch() throws {
+        let server = try FixtureServer(html: Self.page)
+        let app = launchOnPage(server.url, session: UUID().uuidString)
+
+        openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
+        choose("Open in New Tab", in: app)
+        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5), "no new tab")
+        XCTAssertTrue(heading("/", in: app).waitForNonExistence(timeout: 10), "didn't switch to the new tab")
+        XCTAssertEqual(server.requestCount(for: "/next"), 1, "the page was loaded again")
+        app.webViews.links["Third page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(heading("/third", in: app).waitForExistence(timeout: 30), "link didn't navigate")
+
+        // Killed while open: only the save made while browsing has run.
+        Thread.sleep(forTimeInterval: 2)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(heading("/third", in: app).waitForExistence(timeout: 60), "tab didn't come back")
+        XCTAssertTrue(tabsButton(count: 2, in: app).exists)
+
+        app.buttons["Page actions"].tap()
+        let back = app.buttons["Back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "caret sheet didn't open")
+        back.tap()
+        XCTAssertTrue(heading("/next", in: app).waitForExistence(timeout: 30), "the adopted page's entry was lost")
+        XCTAssertTrue(tabsButton(count: 2, in: app).exists, "Back closed the tab instead of going back")
+
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 2, dy: 0))
+        edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)),
+                   withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(tabsButton(count: 1, in: app).waitForExistence(timeout: 5), "swipe didn't close the tab")
         withExtendedLifetime(server) {}
     }
 
@@ -231,9 +267,11 @@ final class LinkContextMenuTests: XCTestCase {
     // MARK: Helpers
 
     /// Launches with no saved tabs and opens `url` from the launch search panel.
-    private func launchOnPage(_ url: URL) -> XCUIApplication {
+    /// `session` keeps the app's saved tabs across relaunches of `app`.
+    private func launchOnPage(_ url: URL, session: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTesting"]
+        if let session { app.launchEnvironment["CORMORANT_UI_TESTING_SESSION"] = session }
         // On the iOS 27.1 simulator a context menu never reports its animations idle, so every query
         // after a long-press waited out a 60-second timeout. Skip only that wait; the app must still
         // be idle on its main thread. Private, so a no-op if XCTest drops it.

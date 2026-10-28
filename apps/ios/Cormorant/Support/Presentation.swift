@@ -2,7 +2,7 @@ import OSLog
 import UIKit
 
 extension Logger {
-    static let app = Logger(subsystem: "dev.baldyeagle.cormorant", category: "app")
+    nonisolated static let app = Logger(subsystem: "dev.baldyeagle.cormorant", category: "app")
 }
 
 extension UIView {

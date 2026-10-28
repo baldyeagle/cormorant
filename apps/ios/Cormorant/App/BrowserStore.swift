@@ -40,11 +40,19 @@ final class BrowserStore {
     let favicons: FaviconStore
 
     @ObservationIgnored private let stateStore: any BrowserStateStore
+    @ObservationIgnored private let historyStore: TabHistoryStore
     @ObservationIgnored private let inbox: SharedInbox?
     @ObservationIgnored private var sessions: [UUID: TabSession] = [:]
     @ObservationIgnored private var recentTabIDs: [UUID] = []
-    /// Back/forward history of tabs whose web views were evicted, restored when they're rebuilt.
+    /// Back/forward history of tabs with no web view (evicted, or not shown since launch), restored
+    /// when they're built.
     @ObservationIgnored private var interactionStates: [UUID: Any] = [:]
+    /// What `historyStore` holds, so only histories that changed are written.
+    @ObservationIgnored private var savedHistories: [UUID: Data] = [:]
+    /// Tabs that went to another page since their history was last saved.
+    @ObservationIgnored private var navigatedTabIDs: Set<UUID> = []
+    /// Tail of the history save chain, like `saveChain`.
+    @ObservationIgnored private var historySaveChain: Task<Void, Never>?
     /// Zoom and desktop mode of evicted tabs, likewise. Memory only.
     @ObservationIgnored private var evictedViewSettings: [UUID: TabSession.ViewSettings] = [:]
     @ObservationIgnored private var pendingURLs: [URL] = []
@@ -60,6 +68,7 @@ final class BrowserStore {
 
     init(
         stateStore: (any BrowserStateStore)? = nil,
+        historyStore: TabHistoryStore = TabHistoryStore(),
         blocking: BlockingService = BlockingService(),
         settings: AppSettings = AppSettings(),
         favicons: FaviconStore = FaviconStore(),
@@ -79,6 +88,7 @@ final class BrowserStore {
             self.stateStore = JSONBrowserStateStore(fileURL: fallback)
             usesFallbackStorage = true
         }
+        self.historyStore = historyStore
         inbox = receivesSharedLinks ? SharedInbox(appGroup: AppGroup.identifier) : nil
         if receivesSharedLinks, inbox == nil {
             Logger.app.fault("App group unavailable: shared links can't be received.")
@@ -106,6 +116,8 @@ final class BrowserStore {
         do {
             state = try await stateStore.load()
             lastSavedState = state
+            savedHistories = await historyStore.load(keeping: Set(state.tabs.map(\.id)))
+            interactionStates = savedHistories
         } catch BrowserStateStoreError.unreadable(let quarantinedTo, let underlying) {
             Logger.app.fault("Saved tabs unreadable (\(underlying, privacy: .public)); moved to \(quarantinedTo?.path ?? "nowhere", privacy: .public). Saving is off until Start Fresh.")
             state = .empty
@@ -149,6 +161,7 @@ final class BrowserStore {
     func didBecomeInactive() {
         sceneIsActive = false
         saveNow()
+        saveHistories()
     }
 
     func didEnterBackground() {
@@ -156,6 +169,7 @@ final class BrowserStore {
         stampActiveTab()
         if let activeSession { snapshot(activeSession) }
         saveNow()
+        saveHistories()
     }
 
     /// `cormorant://open` drains the inbox (optionally with an http(s) `?url=`); plain web URLs open as tabs.
@@ -395,7 +409,10 @@ final class BrowserStore {
         recentTabIDs.removeAll { $0 == tab.id }
         recentTabIDs.insert(tab.id, at: 0)
         for evicted in recentTabIDs.dropFirst(Self.liveWebViewLimit) {
-            if let history = sessions[evicted]?.webView.interactionState { interactionStates[evicted] = history }
+            if let history = sessions[evicted]?.webView.interactionState {
+                interactionStates[evicted] = history
+                navigatedTabIDs.insert(evicted)
+            }
             if let settings = sessions[evicted]?.viewSettings { evictedViewSettings[evicted] = settings }
             sessions[evicted] = nil
         }
@@ -418,6 +435,9 @@ final class BrowserStore {
             guard let self, let session else { return }
             if session === self.activeSession { self.snapshot(session) }
             self.favicons.pageDidLoad(in: session.webView)
+            // The URL changes when a navigation starts; the history only has the new page once it's in.
+            self.navigatedTabIDs.insert(tabID)
+            self.saveHistories(onlyNavigated: true)
         }
         session.onCreateWebView = { [weak self, weak session] configuration, action in
             self?.openChild(configuration: configuration, for: action, from: session)
@@ -447,6 +467,7 @@ final class BrowserStore {
 
     private func pageDidChange(tabID: UUID, url: URL?, title: String) {
         guard let index = state.tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        if let url, url != state.tabs[index].url { navigatedTabIDs.insert(tabID) }
         state.update(tabID: tabID, url: url ?? state.tabs[index].url, title: title)
         if tabID == state.activeTabID { state.tabs[index].lastViewedAt = .now }
         scheduleSave()
@@ -475,6 +496,8 @@ final class BrowserStore {
             guard !Task.isCancelled else { return }
             debouncedSave = nil
             if needsSave { enqueueSave() }
+            // Not only when the app goes away: it can be killed without that (a crash, a watchdog).
+            saveHistories(onlyNavigated: true)
         }
     }
 
@@ -484,12 +507,65 @@ final class BrowserStore {
         debouncedSave = nil
         // Unchanged: nothing to write, but a write already in flight still gets the background time.
         guard let save = needsSave ? enqueueSave() : saveChain else { return }
+        keepRunning(until: save, named: "Save tabs")
+    }
+
+    /// Asks for background time until `task` finishes, so a write isn't cut off by suspension.
+    private func keepRunning(until task: Task<Void, Never>, named name: String) {
         let application = UIApplication.shared
-        let backgroundTask = application.beginBackgroundTask(withName: "Save tabs", expirationHandler: nil)
+        let backgroundTask = application.beginBackgroundTask(withName: name, expirationHandler: nil)
         Task {
-            await save.value
+            await task.value
             application.endBackgroundTask(backgroundTask)
         }
+    }
+
+    /// Writes each tab's back/forward history that changed since the last save, so it survives a
+    /// relaunch, and drops those of closed tabs. `onlyNavigated` limits it to tabs that went to another
+    /// page, for the saves made while browsing; when the app may be suspended, every tab is checked.
+    private func saveHistories(onlyNavigated: Bool = false) {
+        guard canSave else { return }
+        let tabIDs = onlyNavigated ? navigatedTabIDs : Set(sessions.keys).union(interactionStates.keys)
+        navigatedTabIDs.subtract(tabIDs)
+        var current: [UUID: Data] = [:]
+        for tabID in tabIDs {
+            guard let session = sessions[tabID] else {
+                if let history = interactionStates[tabID] as? Data { current[tabID] = history }
+                continue
+            }
+            if session.isRestoringHistory {
+                // Its web view's history is still empty.
+                if let pending = session.pendingHistory as? Data { current[tabID] = pending }
+            } else if session.webView.backForwardList.currentItem != nil,
+                      let history = session.webView.interactionState as? Data {
+                // Not a web view that never loaded a page: nothing to keep. (One whose content process
+                // crashed has no `url` but keeps its history.)
+                current[tabID] = history
+            }
+        }
+        let live = Set(state.tabs.map(\.id))
+        let changed = current.filter { live.contains($0.key) && savedHistories[$0.key] != $0.value }
+        let closed = savedHistories.keys.filter { !live.contains($0) }
+        guard !changed.isEmpty || !closed.isEmpty else {
+            // Nothing new, but a write queued while browsing may still be in flight: give it background time.
+            if !sceneIsActive, let inFlight = historySaveChain { keepRunning(until: inFlight, named: "Save tab history") }
+            return
+        }
+        savedHistories.merge(changed) { $1 }
+        for tabID in closed { savedHistories[tabID] = nil }
+
+        let previous = historySaveChain
+        let save = Task { [historyStore] in
+            await previous?.value
+            let failed = await historyStore.save(changed, live: live)
+            // Written again at the next save, unless a newer history has been queued meanwhile.
+            for tabID in failed where savedHistories[tabID] == changed[tabID] {
+                savedHistories[tabID] = nil
+                navigatedTabIDs.insert(tabID)
+            }
+        }
+        historySaveChain = save
+        if !sceneIsActive { keepRunning(until: save, named: "Save tab history") }
     }
 
     /// Appends a write of the current state to the save chain.

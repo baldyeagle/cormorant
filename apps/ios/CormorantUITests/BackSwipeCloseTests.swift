@@ -69,6 +69,41 @@ final class BackSwipeCloseTests: XCTestCase {
         withExtendedLifetime(server) {}
     }
 
+    /// A tab's back history survives the app being killed and relaunched, as in Arc: back still goes
+    /// to the link-opened tab's first page, and only then closes it. Also covers the opener tab, which
+    /// isn't shown after the relaunch until the close lands on it.
+    func testHistorySurvivesRelaunch() throws {
+        let server = try FixtureServer(html: Self.page)
+        let app = launchOnPage(server.url, session: UUID().uuidString)
+
+        app.webViews.links["Blank target"].tap()
+        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 15), "no new tab")
+        XCTAssertTrue(heading("/popup", in: app).waitForExistence(timeout: 30))
+        // By position: on the iOS 27.1 simulator XCUITest reported this link as not hittable at rest.
+        app.webViews.links["Third page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(heading("/third", in: app).waitForExistence(timeout: 30), "link didn't navigate")
+
+        // Killed while open, the harder case: only the save made while browsing (once a page has
+        // loaded) has run, not the one when the app goes away (swiped away from the app switcher).
+        Thread.sleep(forTimeInterval: 2)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(heading("/third", in: app).waitForExistence(timeout: 60), "tab didn't come back")
+        XCTAssertTrue(tabsButton(count: 2, in: app).exists)
+
+        app.buttons["Page actions"].tap()
+        let back = app.buttons["Back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "caret sheet didn't open")
+        back.tap()
+        XCTAssertTrue(heading("/popup", in: app).waitForExistence(timeout: 30), "history was lost on relaunch")
+        XCTAssertTrue(tabsButton(count: 2, in: app).exists, "Back closed the tab instead of going back")
+
+        swipeBackFromLeftEdge(in: app)
+        XCTAssertTrue(tabsButton(count: 1, in: app).waitForExistence(timeout: 5), "swipe didn't close the tab")
+        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 30), "didn't return to the previous tab")
+        withExtendedLifetime(server) {}
+    }
+
     /// Let go early and the page springs back; the tab stays.
     func testShortSwipeLeavesTabOpen() throws {
         let server = try FixtureServer(html: Self.page)
@@ -119,9 +154,11 @@ final class BackSwipeCloseTests: XCTestCase {
 
     // MARK: Helpers
 
-    private func launchOnPage(_ url: URL) -> XCUIApplication {
+    /// `session` keeps the app's saved tabs across relaunches of `app`.
+    private func launchOnPage(_ url: URL, session: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTesting"]
+        if let session { app.launchEnvironment["CORMORANT_UI_TESTING_SESSION"] = session }
         // See LinkContextMenuTests: a context menu never reports its animations idle on this simulator.
         if app.responds(to: NSSelectorFromString("setIdleAnimationWaitEnabled:")) {
             app.setValue(false, forKey: "idleAnimationWaitEnabled")
@@ -132,7 +169,7 @@ final class BackSwipeCloseTests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 10), "no search panel at launch")
         field.typeText(url.absoluteString + "\n")
         // Generous: a fresh simulator is also downloading and compiling the filter lists meanwhile.
-        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 30), "fixture page didn't load")
+        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 60), "fixture page didn't load")
         XCTAssertTrue(field.waitForNonExistence(timeout: 5), "search panel didn't close on submit")
         return app
     }

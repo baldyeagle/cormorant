@@ -36,8 +36,10 @@ final class TabSession {
     private(set) var pageZoom: CGFloat = 1
     /// The content mode the last committed main-frame navigation actually got.
     private(set) var effectiveContentMode: WKWebpagePreferences.ContentMode = .recommended
-    /// History saved at eviction is waiting to go back in; until it does, `canGoBack` reads false.
-    private(set) var isRestoringHistory = false
+    /// Saved back/forward history (from eviction or the last launch) waiting to go back in.
+    private(set) var pendingHistory: Any?
+    /// Until the history is back in, `canGoBack` reads false.
+    var isRestoringHistory: Bool { pendingHistory != nil }
 
     @ObservationIgnored var onPageChange: ((URL?, String) -> Void)?
     @ObservationIgnored var onPageLoaded: (() -> Void)?
@@ -114,14 +116,20 @@ final class TabSession {
     /// history if there is any, else loading `url`.
     func start(loading url: URL?, restoring interactionState: Any? = nil) {
         let host = url?.host()?.lowercased()
-        isRestoringHistory = interactionState != nil
+        pendingHistory = interactionState
+        // A reload after a content-process crash (which clears `webView.url`) needs it, history or not.
+        lastRequestedURL = url
         Task {
-            defer { isRestoringHistory = false }
+            defer { pendingHistory = nil }
             await applyBlocking(host: host)
             guard webView.url == nil, !webView.isLoading else { return }
             if let interactionState {
                 webView.interactionState = interactionState
-            } else if let url {
+            }
+            // No history, or WebKit rejected it (saved by another WebKit version): just the page. Or
+            // the tab moved on after its history was saved (the app was killed without going inactive):
+            // its newer page goes on top.
+            if let url, webView.backForwardList.currentItem?.url != url {
                 load(url)
             }
         }
@@ -232,7 +240,9 @@ final class TabSession {
     func retry() {
         let url = loadError?.url
         loadError = nil
-        if let url { load(url) } else { reload() }
+        // A page restored from history that failed to come back is reloaded in place; loading it
+        // would add a second back entry for it.
+        if let url, webView.backForwardList.currentItem?.url != url { load(url) } else { reload() }
     }
 
     /// Call when this tab becomes the one on screen.
@@ -332,7 +342,9 @@ final class TabSession {
     // MARK: Private
 
     private func reload() {
-        if webView.url != nil {
+        // After a content-process crash `url` is nil but the history survives: reloading its current
+        // item keeps the tab where it was, where loading `lastRequestedURL` would add an entry.
+        if webView.url != nil || webView.backForwardList.currentItem != nil {
             webView.reload()
         } else if let lastRequestedURL {
             load(lastRequestedURL)

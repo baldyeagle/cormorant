@@ -37,9 +37,6 @@ struct WebViewContainer: UIViewRepresentable {
         private var swipe: BackSwipe?
         /// A committed swipe whose snapshot is still fading off the destination.
         private var fading: BackSwipe?
-        /// A tab opened from a tapped link preview, growing from the preview's card over the page it
-        /// was opened from. It becomes the hosted web view when the animation ends.
-        private var expansion: (webView: WKWebView, card: UIView, animator: UIViewPropertyAnimator)?
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -52,11 +49,6 @@ struct WebViewContainer: UIViewRepresentable {
         required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
         func host(_ newWebView: WKWebView) {
-            if let expansion {
-                // The new tab's web view lands when its animation ends; anything else cuts it short.
-                if expansion.webView === newWebView { return }
-                finishExpansion()
-            }
             guard newWebView !== webView else { return }
             let committed = swipe?.isCommitted == true
             if !committed { cancelSwipe() }
@@ -85,62 +77,6 @@ struct WebViewContainer: UIViewRepresentable {
         private func clearFading() {
             fading?.tearDown()
             fading = nil
-        }
-
-        /// Grows `newWebView` (the new tab's, already showing its page at this container's size) from a
-        /// link preview's card to fill the container, like the card scaling up into the page. Call
-        /// before the tab switch reaches `host(_:)`. With Reduce Motion it fades in where it will rest.
-        func expand(_ newWebView: WKWebView, from card: LinkPreviewHandoff.Card) {
-            finishExpansion()
-            // A back swipe can't be under way (the menu was up); nothing of one is left over the page.
-            cancelSwipe()
-            clearFading()
-            guard let window, bounds.width > 0 else {
-                host(newWebView)
-                return
-            }
-            let cardView = UIView(frame: convert(card.frame, from: window))
-            cardView.clipsToBounds = true
-            cardView.layer.cornerRadius = card.cornerRadius
-            cardView.layer.cornerCurve = .continuous
-            cardView.backgroundColor = newWebView.underPageBackgroundColor
-            // The page at full size, shrunk to the card as the preview showed it.
-            newWebView.autoresizingMask = []
-            newWebView.transform = .identity
-            newWebView.bounds = CGRect(origin: .zero, size: bounds.size)
-            newWebView.transform = CGAffineTransform(scaleX: card.scale, y: card.scale)
-            newWebView.center = CGPoint(x: bounds.width * card.scale / 2, y: bounds.height * card.scale / 2)
-            cardView.addSubview(newWebView)
-            addSubview(cardView)
-            let rest = { [bounds] in
-                cardView.frame = bounds
-                cardView.layer.cornerRadius = 0
-                newWebView.transform = .identity
-                newWebView.center = CGPoint(x: bounds.midX, y: bounds.midY)
-            }
-            let animator: UIViewPropertyAnimator
-            if UIAccessibility.isReduceMotionEnabled {
-                rest()
-                cardView.alpha = 0
-                animator = UIViewPropertyAnimator(duration: 0.25, curve: .easeOut) { cardView.alpha = 1 }
-            } else {
-                // No bounce, like the switcher's card growing into a page: it lands exactly on the page.
-                animator = UIViewPropertyAnimator(duration: 0.4, dampingRatio: 1, animations: rest)
-            }
-            animator.addCompletion { [weak self] _ in self?.finishExpansion() }
-            expansion = (newWebView, cardView, animator)
-            animator.startAnimation()
-        }
-
-        /// Ends an expansion where it is (or where it ended) and hosts its web view.
-        private func finishExpansion() {
-            guard let expansion else { return }
-            self.expansion = nil
-            if expansion.animator.state == .active { expansion.animator.stopAnimation(true) }
-            // Moved straight into this view (never out of the window, which WebKit would treat as the
-            // page being hidden), then the empty card goes.
-            host(expansion.webView)
-            expansion.card.removeFromSuperview()
         }
 
         override func layoutSubviews() {
@@ -176,7 +112,7 @@ struct WebViewContainer: UIViewRepresentable {
 
         /// Only from the first page: with history, WebKit's own back swipe takes the edge.
         private var canBackSwipeClose: Bool {
-            backSwipeClose != nil && webView?.canGoBack == false && swipe == nil && expansion == nil
+            backSwipeClose != nil && webView?.canGoBack == false && swipe == nil
         }
 
         /// UIView's own, which is also the delegate method.

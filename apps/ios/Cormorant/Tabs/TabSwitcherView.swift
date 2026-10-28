@@ -92,14 +92,17 @@ struct TabSwitcherView: View {
         .overlay {
             if let opening {
                 GeometryReader { geometry in
-                    OpeningCard(
-                        opening: opening,
+                    CardExpansion(
+                        // The card's header covers the preview's top corners; only the bottom ones are round.
+                        card: CardExpansion.Card(frame: opening.from, tilt: opening.tilt, bottomRadius: 22),
+                        snapshot: opening.snapshot,
+                        host: opening.host,
                         // Where the browser draws the page: inside the safe area but down to the bottom
                         // edge, under the bar (see BrowserView's WebViewContainer).
                         page: CGRect(x: geometry.safeAreaInsets.leading, y: geometry.safeAreaInsets.top,
                                      width: geometry.size.width,
                                      height: geometry.size.height + geometry.safeAreaInsets.bottom),
-                        backdrop: store.activeSession?.themeColor ?? Color(.systemBackground),
+                        backdrop: CardExpansion.backdrop(themeColor: store.activeSession?.themeColor),
                         onFinished: {
                             // The snapshot now covers the page's place in the browser: swap without a slide.
                             var transaction = Transaction()
@@ -180,45 +183,4 @@ private struct Opening {
     let tilt: Double
     /// The stack's order when the card was tapped.
     let order: [UUID: Int]
-}
-
-/// The tapped card's preview growing from its place in the stack to where the browser draws the page,
-/// over a backdrop that fades in to hide the rest of the switcher. In global coordinates.
-private struct OpeningCard: View {
-    let opening: Opening
-    let page: CGRect
-    let backdrop: Color
-    let onFinished: () -> Void
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var expanded = false
-
-    var body: some View {
-        // Reduce Motion (or a card never laid out): no growing, just a quick fade to the page.
-        let fades = reduceMotion || opening.from.isEmpty
-        let frame = expanded || fades ? page : opening.from
-        let radius: CGFloat = expanded ? 0 : 22
-        ZStack(alignment: .topLeading) {
-            backdrop.opacity(expanded ? 1 : 0)
-            TabPreview(snapshot: opening.snapshot, host: opening.host, width: frame.width)
-                .frame(width: frame.width, height: frame.height)
-                .background(Color(.secondarySystemGroupedBackground))
-                // The card's header covers the preview's top corners; only the bottom ones are round.
-                .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: radius, bottomTrailingRadius: radius, style: .continuous))
-                .rotationEffect(.degrees(expanded ? 0 : opening.tilt))
-                .opacity(fades && !expanded ? 0 : 1)
-                .position(x: frame.midX, y: frame.midY)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(.rect)
-        .accessibilityHidden(true)
-        .onAppear {
-            // No bounce: the snapshot has to come to rest exactly on the page it hands over to.
-            withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.22)) {
-                expanded = true
-            } completion: {
-                onFinished()
-            }
-        }
-    }
 }

@@ -49,18 +49,31 @@ extension TabSession {
         }
     }
 
-    /// The preview was tapped: open the link in a new tab, taking the preview's page with it. The
-    /// system pops the (frozen) preview away while the live page grows from the card's frame to fill
-    /// the screen over this one (`WebViewContainer.ContainerView.expand`).
+    /// The preview was tapped: open the link in a new tab, taking the preview's page with it. The card
+    /// grows into the page as a tapped card in the tab switcher does (`CardExpansion`), from the menu's
+    /// card, which is hidden. Without a card to start from, the system's own pop plays over the new tab.
     func commitLinkPreview(_ url: URL?, animator: any UIContextMenuInteractionCommitAnimating) {
         guard let url, Self.linkKind(for: url) == .page else { return }
+        // Only the style is set. Adding a completion or animations to this animator changed how UIKit
+        // played its own commit on iOS 27 (the menu's background and card animating over the growing
+        // card), so the card doesn't wait on it.
         animator.preferredCommitStyle = .pop
         let handoff = takeHandoff(for: url, freezingPreview: true)
-        // Read before the switch: this tab's web view leaves the container once the new one lands.
-        let container = webView.superview as? WebViewContainer.ContainerView
+        // Where the browser draws the page, read before the switch.
+        let window = webView.window
+        let page = webView.superview.flatMap { container in window.map { container.convert(container.bounds, to: $0) } }
         guard onOpenInNewTab?(url, false, handoff) == true else { return }
-        if let handoff, let card = handoff.card, let container {
-            container.expand(handoff.webView, from: card)
+        // The new tab is showing the adopted page underneath; the card grows over it, as the switcher's
+        // does, in place of the system's card.
+        if let card = handoff?.card, let window, let page {
+            card.platter?.isHidden = true
+            CardExpansionOverlay.play(
+                in: window,
+                card: CardExpansion.Card(frame: card.frame, topRadius: card.cornerRadius, bottomRadius: card.cornerRadius),
+                snapshot: card.snapshot, host: url.displayHost, page: page,
+                // A tab just opened has no theme color yet.
+                backdrop: CardExpansion.backdrop(themeColor: nil)
+            )
         }
     }
 
@@ -167,13 +180,15 @@ extension TabSession {
 /// A link preview's web view on its way to becoming a tab, with what the tab needs to carry on from
 /// where the preview got to.
 struct LinkPreviewHandoff {
-    /// Where the preview's card was on screen, for the tab to grow from.
+    /// Where the preview's card was on screen, and what it showed, for the tab to grow from.
     struct Card {
         /// In window coordinates.
         let frame: CGRect
         let cornerRadius: CGFloat
-        /// The page's scale in the card: it is laid out at the tab's size and shrunk to fit.
-        let scale: CGFloat
+        /// The page at the tab's size (the card showed its top, shrunk to the card's width).
+        let snapshot: UIImage?
+        /// The system's card, hidden while the tab grows from where it was.
+        weak var platter: UIView?
     }
 
     let webView: WKWebView
@@ -214,9 +229,6 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
     /// Main-frame navigations waiting on a policy decision (and maybe a rules update). Their rules
     /// could land on the content controller after a handoff, behind the tab's back.
     private var pendingMainFrameDecisions = 0
-    /// Where the card rested on screen once presented, in window coordinates. By the time a tap
-    /// commits, UIKit has begun moving and scaling the card, so its frame then isn't where it was seen.
-    private var restingFrame: CGRect?
 
     init(url: URL, blocking: BlockingService, settings: TabSession.ViewSettings, layout: PageLayout) {
         self.url = url
@@ -250,7 +262,9 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
         // A container, so nothing WebKit adds to its own view can cover the spinner.
         let container = UIView()
         container.backgroundColor = .systemBackground
-        container.clipsToBounds = true
+        // Not clipped: UIKit draws the card from this view (clipping it itself), and WebKit only paints
+        // what isn't clipped away; the whole page has to be painted for the card's snapshot.
+        container.clipsToBounds = false
         container.addSubview(webView)
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.startAnimating()
@@ -270,11 +284,6 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
         webView.bounds = CGRect(origin: .zero, size: pageSize)
         webView.transform = CGAffineTransform(scaleX: s, y: s)
         webView.center = CGPoint(x: pageSize.width * s / 2, y: pageSize.height * s / 2)
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        if let window = view.window { restingFrame = view.convert(view.bounds, to: window) }
     }
 
     /// Stops loading for good. The view itself goes when UIKit releases the preview.
@@ -298,8 +307,16 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
         else { return nil }
         var card: LinkPreviewHandoff.Card?
         if freezing, let window = view.window {
-            card = LinkPreviewHandoff.Card(frame: restingFrame ?? view.convert(view.bounds, to: window),
-                                           cornerRadius: platterCornerRadius, scale: scale)
+            if let (platter, frame) = onScreenPlatter(in: window) {
+                // What the menu's card showed, as it was: the page at its full size.
+                // Nil if it couldn't be drawn: the card then shows the host, not a blank page.
+                var drawn = false
+                let snapshot = UIGraphicsImageRenderer(bounds: webView.bounds).image { _ in
+                    drawn = webView.drawHierarchy(in: webView.bounds, afterScreenUpdates: false)
+                }
+                card = LinkPreviewHandoff.Card(frame: frame, cornerRadius: cornerRadius(of: platter),
+                                               snapshot: drawn ? snapshot : nil, platter: platter)
+            }
             if let frozen = webView.snapshotView(afterScreenUpdates: false) {
                 frozen.bounds = webView.bounds
                 frozen.transform = webView.transform
@@ -328,12 +345,55 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
         pageSize.width > 0 ? view.bounds.width / pageSize.width : 1
     }
 
-    /// The system's card clips the preview with rounded corners; the tab grows from the same shape.
-    private var platterCornerRadius: CGFloat {
-        var ancestor = view.superview
-        while let current = ancestor {
-            if current.layer.cornerRadius > 0 { return current.layer.cornerRadius }
-            ancestor = current.superview
+    /// The card the menu shows on screen. UIKit doesn't show this controller's view where it is: it
+    /// keeps the view in a transparent container one window-width to the left and draws it, scaled to
+    /// fit, into its own card in the menu. So the view's frame says nothing about where the card is;
+    /// the card itself has to be found, in the menu's container (iOS 26 and 27:
+    /// `_UIContextMenuContainerView`): a view with the preview's shape, on screen, that isn't this
+    /// view or inside it. UIKit's card (`_UIContentPlatterView`) is taken when it passes; otherwise the
+    /// largest such view. Only frames are read. Nil if there's none: the system's own pop plays.
+    ///
+    /// Returns the card and its rect in the window as drawn now (mid-spring, for a quick tap).
+    private func onScreenPlatter(in window: UIWindow) -> (UIView, CGRect)? {
+        let aspect = view.bounds.width / max(view.bounds.height, 1)
+        func drawnRect(of candidate: UIView) -> CGRect? {
+            let layer = candidate.layer.presentation() ?? candidate.layer
+            let rect = layer.convert(layer.bounds, to: window.layer)
+            guard rect.width > 60, rect.height > 60, window.bounds.insetBy(dx: -1, dy: -1).contains(rect),
+                  abs(rect.width / rect.height - aspect) < aspect * 0.03,
+                  candidate !== view, !candidate.isDescendant(of: view) else { return nil }
+            return rect
+        }
+        var byShape: (UIView, CGRect)?
+        func search(_ parent: UIView) -> (UIView, CGRect)? {
+            for child in parent.subviews where !child.isHidden {
+                if let rect = drawnRect(of: child) {
+                    if String(describing: type(of: child)).contains("ContentPlatter") { return (child, rect) }
+                    if rect.width > (byShape?.1.width ?? 0) { byShape = (child, rect) }
+                }
+                if let found = search(child) { return found }
+            }
+            return nil
+        }
+        for menu in window.subviews where String(describing: type(of: menu)).contains("ContextMenuContainer") {
+            if let found = search(menu) { return found }
+        }
+        return byShape
+    }
+
+    /// The card's rounded corners, so the growing card starts in the same shape: the radius of the
+    /// first layer in it (masks included) that's the card's own size.
+    private func cornerRadius(of platter: UIView) -> CGFloat {
+        let size = platter.bounds.size
+        var queue = [platter.layer]
+        while !queue.isEmpty {
+            let layer = queue.removeFirst()
+            if layer.cornerRadius > 0, abs(layer.bounds.width - size.width) < 2,
+               abs(layer.bounds.height - size.height) < 2 {
+                return layer.cornerRadius
+            }
+            if let mask = layer.mask { queue.append(mask) }
+            queue.append(contentsOf: layer.sublayers ?? [])
         }
         return 24
     }

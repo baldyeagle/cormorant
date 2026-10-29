@@ -50,12 +50,14 @@ extension XCUIElement {
     }
 }
 
-/// Checks `condition` at once, then after 0.1, 0.2 and 0.4 s, then every 0.5 s, until it holds or
-/// `timeout` passes, and returns its last value. `name` titles the activity in the test report.
+/// Checks `condition` at once, then after 0.1, 0.2, 0.4 and 0.8 s, then every second (XCTest's own
+/// rate), until it holds or `timeout` passes, and returns its last value. `name` titles the activity
+/// in the test report.
 ///
-/// Not a steady 0.1 s: every check makes the app snapshot its accessibility tree, web content
-/// included, and back-to-back snapshots on a 3-core CI runner slowed the page loads and animations
-/// being waited for (p90 of a tap went from 1.9 s to 7.1 s).
+/// No faster than XCTest once a wait has gone on: every check makes the app snapshot its
+/// accessibility tree, web content included, which slows the page load or animation being waited
+/// for. On 3-core CI runners, checks every 0.1 s made taps' p90 go from 1.9 s to 7.1 s, and every
+/// 0.5 s still took first page loads from ~5 s to 10-22 s.
 @MainActor
 func waitUntil(_ timeout: TimeInterval, _ name: String = "Waiting for a condition",
                _ condition: () -> Bool) -> Bool {
@@ -65,7 +67,7 @@ func waitUntil(_ timeout: TimeInterval, _ name: String = "Waiting for a conditio
         while !condition() {
             guard Date.now < deadline else { return condition() }
             RunLoop.current.run(until: min(.now + interval, deadline))
-            interval = min(interval * 2, 0.5)
+            interval = min(interval * 2, 1)
         }
         return true
     }

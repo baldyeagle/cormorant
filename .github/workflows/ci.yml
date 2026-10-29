@@ -49,11 +49,12 @@ jobs:
         run: scripts/check-default-browser-plist.sh
       - name: Build for testing
         # Builds the app and the UI tests once; the ui-tests shards run them without building.
+        # arm64 only: the generic destination would also build x86_64, which no Apple silicon runner uses.
         run: |
           mkdir -p build
           xcodebuild -workspace Cormorant.xcworkspace -scheme Cormorant \
             -destination 'generic/platform=iOS Simulator' -configuration Debug \
-            -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO \
+            -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO ARCHS=arm64 \
             build-for-testing | tee build/xcodebuild.log | grep -E "error:|warning:|BUILD" | grep -v appintentsmetadataprocessor || true
           grep -q "TEST BUILD SUCCEEDED" build/xcodebuild.log
       - name: Default-browser plist checklist (built app)

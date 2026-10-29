@@ -33,8 +33,8 @@ final class LinkContextMenuTests: XCTestCase {
         choose("Open Link", in: app)
 
         // The preview shows the next page too; the old one going is what proves the tab navigated.
-        XCTAssertTrue(heading("/", in: app).waitForNonExistence(timeout: 10), "Open Link didn't navigate this tab")
-        XCTAssertTrue(heading("/next", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(heading("/", in: app).disappears(within: 10), "Open Link didn't navigate this tab")
+        XCTAssertTrue(heading("/next", in: app).appears(within: 10))
         XCTAssertEqual(app.state, .runningForeground, "Open Link left Cormorant")
         XCTAssertTrue(tabsButton(count: 1, in: app).exists, "Open Link changed the tab count")
         withExtendedLifetime(server) {}
@@ -49,9 +49,9 @@ final class LinkContextMenuTests: XCTestCase {
         openMenu(on: app.webViews.links["Slow page"], in: app)
         choose("Open in New Tab", in: app)
 
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5), "no new tab")
-        XCTAssertTrue(heading("/", in: app).waitForNonExistence(timeout: 10), "didn't switch to the new tab")
-        XCTAssertTrue(heading("/slow", in: app).waitForExistence(timeout: 20), "the new tab didn't load the link")
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 5), "no new tab")
+        XCTAssertTrue(heading("/", in: app).disappears(within: 10), "didn't switch to the new tab")
+        XCTAssertTrue(heading("/slow", in: app).appears(within: 20), "the new tab didn't load the link")
         // The preview's request and the tab's own: the tab didn't adopt the preview.
         XCTAssertEqual(server.requestCount(for: "/slow"), 2)
         XCTAssertEqual(app.state, .runningForeground)
@@ -67,8 +67,8 @@ final class LinkContextMenuTests: XCTestCase {
         openMenu(on: app.webViews.links["Slow page"], in: app)
         choose("Open in Background Tab", in: app)
 
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5), "no background tab")
-        XCTAssertFalse(heading("/slow", in: app).waitForExistence(timeout: 2), "left the current page")
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 5), "no background tab")
+        XCTAssertFalse(heading("/slow", in: app).appears(within: 2), "left the current page")
         XCTAssertTrue(heading("/", in: app).exists)
 
         // A real tab: the switcher lists it, and has its page without it ever being shown.
@@ -79,10 +79,9 @@ final class LinkContextMenuTests: XCTestCase {
 
         // Back on the page: still the one on screen and usable (the background stage stays behind it).
         app.buttons["Done"].firstMatch.tap()
-        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(heading("/", in: app).appears(within: 5))
         let tabs = tabsButton(count: 2, in: app)
-        let hittable = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: tabs)
-        wait(for: [hittable], timeout: 5)
+        XCTAssertTrue(waitUntil(5) { tabs.isHittable }, "the tab button isn't usable")
         withExtendedLifetime(server) {}
     }
 
@@ -94,7 +93,7 @@ final class LinkContextMenuTests: XCTestCase {
         openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
         choose("Open in Background Tab", in: app)
 
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5), "no background tab")
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 5), "no background tab")
         XCTAssertTrue(heading("/", in: app).exists, "left the current page")
         openSwitcher(in: app, count: 2)
         assertSnapshots(2, in: app)
@@ -110,8 +109,8 @@ final class LinkContextMenuTests: XCTestCase {
         openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
         choose("Open in New Tab", in: app)
 
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5), "no new tab")
-        XCTAssertTrue(heading("/", in: app).waitForNonExistence(timeout: 10), "didn't switch to the new tab")
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 5), "no new tab")
+        XCTAssertTrue(heading("/", in: app).disappears(within: 10), "didn't switch to the new tab")
         XCTAssertTrue(heading("/next", in: app).exists)
         XCTAssertEqual(server.requestCount(for: "/next"), 1, "the page was loaded again")
         withExtendedLifetime(server) {}
@@ -125,30 +124,30 @@ final class LinkContextMenuTests: XCTestCase {
 
         openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
         choose("Open in New Tab", in: app)
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5), "no new tab")
-        XCTAssertTrue(heading("/", in: app).waitForNonExistence(timeout: 10), "didn't switch to the new tab")
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 5), "no new tab")
+        XCTAssertTrue(heading("/", in: app).disappears(within: 10), "didn't switch to the new tab")
         XCTAssertEqual(server.requestCount(for: "/next"), 1, "the page was loaded again")
         app.webViews.links["Third page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(heading("/third", in: app).waitForExistence(timeout: 30), "link didn't navigate")
+        XCTAssertTrue(heading("/third", in: app).appears(within: 30), "link didn't navigate")
 
         // Killed while open: only the save made while browsing has run.
         Thread.sleep(forTimeInterval: 2)
         app.terminate()
         app.launch()
-        XCTAssertTrue(heading("/third", in: app).waitForExistence(timeout: 60), "tab didn't come back")
+        XCTAssertTrue(heading("/third", in: app).appears(within: 60), "tab didn't come back")
         XCTAssertTrue(tabsButton(count: 2, in: app).exists)
 
         app.buttons["Page actions"].tap()
         let back = app.buttons["Back"]
-        XCTAssertTrue(back.waitForExistence(timeout: 5), "caret sheet didn't open")
-        back.tap()
-        XCTAssertTrue(heading("/next", in: app).waitForExistence(timeout: 30), "the adopted page's entry was lost")
+        XCTAssertTrue(back.appears(within: 5), "caret sheet didn't open")
+        back.tapInPresentedSheet()
+        XCTAssertTrue(heading("/next", in: app).appears(within: 30), "the adopted page's entry was lost")
         XCTAssertTrue(tabsButton(count: 2, in: app).exists, "Back closed the tab instead of going back")
 
         let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 2, dy: 0))
         edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)),
                    withVelocity: .fast, thenHoldForDuration: 0)
-        XCTAssertTrue(tabsButton(count: 1, in: app).waitForExistence(timeout: 5), "swipe didn't close the tab")
+        XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: 5), "swipe didn't close the tab")
         withExtendedLifetime(server) {}
     }
 
@@ -163,13 +162,11 @@ final class LinkContextMenuTests: XCTestCase {
         // pasteboard directly would be a cross-app paste.
         app.buttons["NewTabPill"].tap()
         let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "search panel didn't open")
-        let focused = expectation(for: NSPredicate(format: "hasKeyboardFocus == true"), evaluatedWith: field)
-        wait(for: [focused], timeout: 5)
+        XCTAssertTrue(field.appears(within: 5), "search panel didn't open")
+        XCTAssertTrue(waitUntil(5) { field.value(forKey: "hasKeyboardFocus") as? Bool == true }, "search field has no focus")
         field.typeKey("v", modifierFlags: .command)
         let expected = server.url.appending(path: "next").absoluteString
-        let pasted = expectation(for: NSPredicate(format: "value == %@", expected), evaluatedWith: field)
-        wait(for: [pasted], timeout: 5)
+        XCTAssertTrue(waitUntil(5) { field.value as? String == expected }, "the pasted text isn't the link")
         withExtendedLifetime(server) {}
     }
 
@@ -180,14 +177,14 @@ final class LinkContextMenuTests: XCTestCase {
         let app = launchOnPage(server.url)
 
         let previewHeading = openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
-        // The preview's content isn't hittable; tap where it is.
-        let frame = previewHeading.frame
+        // The preview's content isn't hittable; tap where it is, once it has stopped growing.
+        let frame = previewHeading.settledFrame()
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
 
-        XCTAssertTrue(app.buttons["Open Link"].waitForNonExistence(timeout: 5), "menu didn't close")
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5), "no new tab")
-        XCTAssertTrue(heading("/", in: app).waitForNonExistence(timeout: 5), "still on the old page")
-        XCTAssertTrue(heading("/next", in: app).waitForExistence(timeout: 5), "the new tab has no page")
+        XCTAssertTrue(app.buttons["Open Link"].disappears(within: 5), "menu didn't close")
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 5), "no new tab")
+        XCTAssertTrue(heading("/", in: app).disappears(within: 5), "still on the old page")
+        XCTAssertTrue(heading("/next", in: app).appears(within: 5), "the new tab has no page")
         XCTAssertEqual(server.requestCount(for: "/next"), 1, "the page was loaded again")
         XCTAssertEqual(app.state, .runningForeground)
         // Nothing is left over the page (the growing card is hidden from accessibility, so only a tap
@@ -204,20 +201,21 @@ final class LinkContextMenuTests: XCTestCase {
 
         openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
         choose("Open in New Tab", in: app)
-        XCTAssertTrue(heading("/", in: app).waitForNonExistence(timeout: 10), "didn't switch to the new tab")
+        XCTAssertTrue(heading("/", in: app).disappears(within: 10), "didn't switch to the new tab")
 
         openSwitcher(in: app, count: 2)
         let cards = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'TabCard'"))
-        let waited = expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: cards)
-        wait(for: [waited], timeout: 10)
+        XCTAssertTrue(waitUntil(10) { cards.count == 2 }, "the switcher doesn't show both cards")
         // The opener's card: the one that isn't selected (the new tab is the active one).
         let opener = cards.allElementsBoundByIndex.first { !$0.isSelected }
         let card = try XCTUnwrap(opener, "no card for the opener")
         // Its left part: the stack starts scrolled to the newest card, which overlaps the opener's right.
+        // Once the switcher has finished opening, or the tap is dropped.
+        card.settledFrame()
         card.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5)).tap()
-        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 10), "the card didn't open its tab")
-        XCTAssertTrue(app.staticTexts["2 Tabs"].waitForNonExistence(timeout: 5), "the switcher stayed up")
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(heading("/", in: app).appears(within: 10), "the card didn't open its tab")
+        XCTAssertTrue(app.staticTexts["2 Tabs"].disappears(within: 5), "the switcher stayed up")
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 5))
         withExtendedLifetime(server) {}
     }
 
@@ -229,8 +227,8 @@ final class LinkContextMenuTests: XCTestCase {
         openMenu(on: app.webViews.links["Blank target"], in: app)
         choose("Open Link", in: app)
 
-        XCTAssertTrue(heading("/", in: app).waitForNonExistence(timeout: 10), "the tab didn't navigate")
-        XCTAssertTrue(heading("/popup", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(heading("/", in: app).disappears(within: 10), "the tab didn't navigate")
+        XCTAssertTrue(heading("/popup", in: app).appears(within: 10))
         XCTAssertTrue(tabsButton(count: 1, in: app).exists)
         withExtendedLifetime(server) {}
     }
@@ -247,7 +245,7 @@ final class LinkContextMenuTests: XCTestCase {
         choose("Open Link", in: app)
 
         let alert = app.alerts["Open in Mail?"]
-        XCTAssertTrue(alert.waitForExistence(timeout: 5), "no confirmation before opening Mail")
+        XCTAssertTrue(alert.appears(within: 5), "no confirmation before opening Mail")
         alert.buttons["Cancel"].tap()
         XCTAssertEqual(app.state, .runningForeground)
         withExtendedLifetime(server) {}
@@ -270,7 +268,7 @@ final class LinkContextMenuTests: XCTestCase {
         let app = launchOnPage(server.url)
 
         app.webViews.links["Script link"].press(forDuration: 1.5)
-        XCTAssertFalse(app.buttons["Open Link"].waitForExistence(timeout: 2))
+        XCTAssertFalse(app.buttons["Open Link"].appears(within: 2))
         XCTAssertFalse(app.buttons["Open Link in Default Browser"].exists)
         withExtendedLifetime(server) {}
     }
@@ -287,7 +285,7 @@ final class LinkContextMenuTests: XCTestCase {
 
         let plain = app.webViews.images["Plain image"]
         plain.press(forDuration: 1.5)
-        XCTAssertFalse(app.buttons["Copy Link"].waitForExistence(timeout: 2), "a plain image got the link menu")
+        XCTAssertFalse(app.buttons["Copy Link"].appears(within: 2), "a plain image got the link menu")
         withExtendedLifetime(server) {}
     }
 
@@ -308,11 +306,11 @@ final class LinkContextMenuTests: XCTestCase {
         app.launch()
 
         let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.waitForExistence(timeout: 10), "no search panel at launch")
+        XCTAssertTrue(field.appears(within: 10), "no search panel at launch")
         field.typeText(url.absoluteString + "\n")
-        // Generous: a fresh simulator is also downloading and compiling the filter lists meanwhile.
-        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 30), "fixture page didn't load")
-        XCTAssertTrue(field.waitForNonExistence(timeout: 5), "search panel didn't close on submit")
+        // Generous: the first page load on a fresh simulator is slow.
+        XCTAssertTrue(heading("/", in: app).appears(within: 30), "fixture page didn't load")
+        XCTAssertTrue(field.disappears(within: 5), "search panel didn't close on submit")
         return app
     }
 
@@ -325,9 +323,9 @@ final class LinkContextMenuTests: XCTestCase {
     }
 
     private func openMenu(on element: XCUIElement, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(element.waitForExistence(timeout: 5), "nothing to long-press", file: file, line: line)
+        XCTAssertTrue(element.appears(within: 5), "nothing to long-press", file: file, line: line)
         element.press(forDuration: 1.5)
-        XCTAssertTrue(app.buttons["Copy Link"].waitForExistence(timeout: 5), "no link menu", file: file, line: line)
+        XCTAssertTrue(app.buttons["Copy Link"].appears(within: 5), "no link menu", file: file, line: line)
         // The system menu offered this; ours never does.
         XCTAssertFalse(app.buttons["Add to Reading List"].exists, "the system link menu came up", file: file, line: line)
     }
@@ -338,45 +336,37 @@ final class LinkContextMenuTests: XCTestCase {
                                            file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         openMenu(on: app.webViews.links[link], in: app, file: file, line: line)
         let previewHeading = heading(path, in: app)
-        XCTAssertTrue(previewHeading.waitForExistence(timeout: 10), "the preview didn't load the page", file: file, line: line)
+        XCTAssertTrue(previewHeading.appears(within: 10), "the preview didn't load the page", file: file, line: line)
         return previewHeading
     }
 
     private func openSwitcher(in app: XCUIApplication, count: Int, file: StaticString = #filePath, line: UInt = #line) {
         tabsButton(count: count, in: app).tap()
-        XCTAssertTrue(app.staticTexts["\(count) Tabs"].waitForExistence(timeout: 5), "switcher didn't open", file: file, line: line)
+        XCTAssertTrue(app.staticTexts["\(count) Tabs"].appears(within: 5), "switcher didn't open", file: file, line: line)
     }
 
     /// Waits for `count` switcher cards to show their page rather than a placeholder.
     private func assertSnapshots(_ count: Int, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let snapshots = app.descendants(matching: .any).matching(identifier: "TabCard.snapshot")
-        let all = expectation(for: NSPredicate(format: "count == \(count)"), evaluatedWith: snapshots)
-        if XCTWaiter.wait(for: [all], timeout: 25) != .completed {
+        let shown = waitUntil(25) { snapshots.count == count }
+        if !shown {
             XCTFail("\(snapshots.count) of \(count) tabs have a snapshot", file: file, line: line)
         }
     }
 
     private func choose(_ title: String, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let item = app.buttons[title]
-        XCTAssertTrue(item.waitForExistence(timeout: 5), "no \(title) item", file: file, line: line)
-        let hittable = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: item)
-        wait(for: [hittable], timeout: 5)
+        XCTAssertTrue(item.appears(within: 5), "no \(title) item", file: file, line: line)
+        XCTAssertTrue(waitUntil(5) { item.isHittable }, "\(title) isn't hittable", file: file, line: line)
         // Hittable while the menu is still springing open, when UIKit takes a tap as a dismissal (no
         // action); wait for the item to stop moving.
-        var frame = item.frame
-        for _ in 0..<20 {
-            Thread.sleep(forTimeInterval: 0.15)
-            let now = item.frame
-            if now == frame { break }
-            frame = now
-        }
-        item.tap()
-        XCTAssertTrue(item.waitForNonExistence(timeout: 5), "menu didn't close after \(title)", file: file, line: line)
+        item.tapWhenSettled()
+        XCTAssertTrue(item.disappears(within: 5), "menu didn't close after \(title)", file: file, line: line)
     }
 
     /// Taps outside the menu, near the top of the screen.
     private func dismissMenu(in app: XCUIApplication) {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tap()
-        XCTAssertTrue(app.buttons["Copy Link"].waitForNonExistence(timeout: 5), "menu didn't close")
+        XCTAssertTrue(app.buttons["Copy Link"].disappears(within: 5), "menu didn't close")
     }
 }

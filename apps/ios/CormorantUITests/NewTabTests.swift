@@ -23,8 +23,8 @@ final class NewTabTests: XCTestCase {
 
         app.buttons["Tabs, 1 open"].tap()
         let newTab = app.toolbars.buttons["New Tab"]
-        XCTAssertTrue(newTab.waitForExistence(timeout: 5))
-        newTab.tap()
+        XCTAssertTrue(newTab.appears(within: 5))
+        newTab.tapWhenSettled()
 
         assertSearchPanelStaysUp(in: app)
         withExtendedLifetime(server) {}
@@ -41,13 +41,13 @@ final class NewTabTests: XCTestCase {
         // so choose it the other way a finger can: hold the button, slide onto the item, lift. Open
         // the menu once to find where the item sits, then close it with a tap on the page.
         tabs.press(forDuration: 1)
-        XCTAssertTrue(item.waitForExistence(timeout: 5), "long-press didn't open the menu")
+        XCTAssertTrue(item.appears(within: 5), "long-press didn't open the menu")
         // Measured once it has settled, not while the menu is still springing open.
-        let settled = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: item)
-        wait(for: [settled], timeout: 5)
-        let itemCenter = CGPoint(x: item.frame.midX, y: item.frame.midY)
+        XCTAssertTrue(waitUntil(5) { item.isHittable }, "the menu didn't settle")
+        let itemFrame = item.settledFrame()
+        let itemCenter = CGPoint(x: itemFrame.midX, y: itemFrame.midY)
         app.webViews.staticTexts["Fixture page"].tap()
-        XCTAssertTrue(item.waitForNonExistence(timeout: 5), "menu didn't close")
+        XCTAssertTrue(item.disappears(within: 5), "menu didn't close")
 
         let origin = app.coordinate(withNormalizedOffset: .zero)
         let start = tabs.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
@@ -68,8 +68,8 @@ final class NewTabTests: XCTestCase {
         XCTAssertEqual(field.value as? String, field.placeholderValue, "a new tab's field isn't empty")
         field.typeText(server.url.appending(path: "next").absoluteString + "\n")
 
-        XCTAssertTrue(app.buttons["Tabs, 2 open"].waitForExistence(timeout: 10), "+ didn't open a new tab")
-        XCTAssertTrue(app.webViews.staticTexts["Path /next"].waitForExistence(timeout: 10), "the new tab didn't load")
+        XCTAssertTrue(app.buttons["Tabs, 2 open"].appears(within: 10), "+ didn't open a new tab")
+        XCTAssertTrue(app.webViews.staticTexts["Path /next"].appears(within: 10), "the new tab didn't load")
         withExtendedLifetime(server) {}
     }
 
@@ -80,21 +80,20 @@ final class NewTabTests: XCTestCase {
         app.buttons["NewTabPill"].tap()
         assertSearchPanelStaysUp(in: app)
         let row = app.buttons["Edit address: Fixture"]
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "no row for the current tab")
-        row.tap()
+        XCTAssertTrue(row.appears(within: 5), "no row for the current tab")
+        row.tapWhenSettled()
 
         // The panel stays up with this tab's address in the field, selected, so typing replaces it.
         let field = searchField(in: app)
-        let filled = expectation(for: NSPredicate(format: "value == %@", server.url.absoluteString), evaluatedWith: field)
-        wait(for: [filled], timeout: 5)
+        XCTAssertTrue(waitUntil(5) { field.value as? String == server.url.absoluteString }, "the field doesn't have the tab's address")
         XCTAssertEqual(field.value(forKey: "hasKeyboardFocus") as? Bool, true, "search field lost focus")
         let next = server.url.appending(path: "next").absoluteString
         field.typeText(next)
         XCTAssertEqual(field.value as? String, next, "the address wasn't selected, so typing didn't replace it")
         field.typeText("\n")
 
-        XCTAssertTrue(app.webViews.staticTexts["Path /next"].waitForExistence(timeout: 10), "the tab didn't navigate")
-        XCTAssertFalse(app.buttons["Tabs, 2 open"].waitForExistence(timeout: 2), "editing opened a new tab")
+        XCTAssertTrue(app.webViews.staticTexts["Path /next"].appears(within: 10), "the tab didn't navigate")
+        XCTAssertFalse(app.buttons["Tabs, 2 open"].appears(within: 2), "editing opened a new tab")
         XCTAssertTrue(app.buttons["Tabs, 1 open"].exists)
         withExtendedLifetime(server) {}
     }
@@ -112,22 +111,22 @@ final class NewTabTests: XCTestCase {
         app.launch()
 
         let field = searchField(in: app)
-        XCTAssertTrue(field.waitForExistence(timeout: 10), "no search panel at launch")
+        XCTAssertTrue(field.appears(within: 10), "no search panel at launch")
         field.typeText(url.absoluteString + "\n")
 
         let paragraph = app.webViews.staticTexts["Tap this paragraph so the web view becomes first responder."]
-        // Generous: a fresh simulator is also downloading and compiling the filter lists meanwhile.
-        XCTAssertTrue(paragraph.waitForExistence(timeout: 30), "fixture page didn't load")
-        XCTAssertTrue(field.waitForNonExistence(timeout: 5), "search panel didn't close on submit")
+        // Generous: the first page load on a fresh simulator is slow.
+        XCTAssertTrue(paragraph.appears(within: 30), "fixture page didn't load")
+        XCTAssertTrue(field.disappears(within: 5), "search panel didn't close on submit")
         paragraph.tap()
         return app
     }
 
     private func assertSearchPanelStaysUp(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let field = searchField(in: app)
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "New Tab didn't open the search panel", file: file, line: line)
+        XCTAssertTrue(field.appears(within: 5), "New Tab didn't open the search panel", file: file, line: line)
         // The bug closed it within a moment of opening; hold well past that.
-        XCTAssertFalse(field.waitForNonExistence(timeout: 2), "search panel closed by itself", file: file, line: line)
+        XCTAssertFalse(field.disappears(within: 2), "search panel closed by itself", file: file, line: line)
         XCTAssertEqual(field.value(forKey: "hasKeyboardFocus") as? Bool, true,
                        "search field lost focus", file: file, line: line)
     }

@@ -26,32 +26,31 @@ final class BackSwipeCloseTests: XCTestCase {
         let app = launchOnPage(server.url)
 
         let link = app.webViews.links["Next page"]
-        XCTAssertTrue(link.waitForExistence(timeout: 5))
+        XCTAssertTrue(link.appears(within: 5))
         link.press(forDuration: 1.5)
         let item = app.buttons["Open in New Tab"]
-        XCTAssertTrue(item.waitForExistence(timeout: 5), "no link menu")
-        let settled = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: item)
-        wait(for: [settled], timeout: 5)
-        item.tap()
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5), "no new tab")
-        XCTAssertTrue(heading("/next", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(item.appears(within: 5), "no link menu")
+        XCTAssertTrue(waitUntil(5) { item.isHittable }, "link menu didn't settle")
+        item.tapWhenSettled()
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 5), "no new tab")
+        XCTAssertTrue(heading("/next", in: app).appears(within: 10))
 
         app.webViews.links["Third page"].tap()
-        XCTAssertTrue(heading("/third", in: app).waitForExistence(timeout: 10), "link didn't navigate")
+        XCTAssertTrue(heading("/third", in: app).appears(within: 10), "link didn't navigate")
 
         swipeBackFromLeftEdge(in: app)
-        XCTAssertFalse(tabsButton(count: 2, in: app).waitForNonExistence(timeout: 2), "closed a tab that can go back")
+        XCTAssertFalse(tabsButton(count: 2, in: app).disappears(within: 2), "closed a tab that can go back")
 
         app.buttons["Page actions"].tap()
         let back = app.buttons["Back"]
-        XCTAssertTrue(back.waitForExistence(timeout: 5), "caret sheet didn't open")
-        back.tap()
-        XCTAssertTrue(heading("/next", in: app).waitForExistence(timeout: 10), "Back didn't go back")
+        XCTAssertTrue(back.appears(within: 5), "caret sheet didn't open")
+        back.tapInPresentedSheet()
+        XCTAssertTrue(heading("/next", in: app).appears(within: 10), "Back didn't go back")
         XCTAssertTrue(tabsButton(count: 2, in: app).exists, "Back closed the tab instead of going back")
 
         swipeBackFromLeftEdge(in: app)
-        XCTAssertTrue(tabsButton(count: 1, in: app).waitForExistence(timeout: 5), "swipe didn't close the tab")
-        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 10), "didn't return to the previous tab")
+        XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: 5), "swipe didn't close the tab")
+        XCTAssertTrue(heading("/", in: app).appears(within: 10), "didn't return to the previous tab")
         withExtendedLifetime(server) {}
     }
 
@@ -60,12 +59,12 @@ final class BackSwipeCloseTests: XCTestCase {
         let app = launchOnPage(server.url)
 
         app.webViews.links["Blank target"].tap()
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5), "no new tab")
-        XCTAssertTrue(heading("/popup", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 5), "no new tab")
+        XCTAssertTrue(heading("/popup", in: app).appears(within: 10))
 
         swipeBackFromLeftEdge(in: app)
-        XCTAssertTrue(tabsButton(count: 1, in: app).waitForExistence(timeout: 5), "swipe didn't close the tab")
-        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 10), "didn't return to the previous tab")
+        XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: 5), "swipe didn't close the tab")
+        XCTAssertTrue(heading("/", in: app).appears(within: 10), "didn't return to the previous tab")
         withExtendedLifetime(server) {}
     }
 
@@ -77,30 +76,30 @@ final class BackSwipeCloseTests: XCTestCase {
         let app = launchOnPage(server.url, session: UUID().uuidString)
 
         app.webViews.links["Blank target"].tap()
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 15), "no new tab")
-        XCTAssertTrue(heading("/popup", in: app).waitForExistence(timeout: 30))
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 15), "no new tab")
+        XCTAssertTrue(heading("/popup", in: app).appears(within: 30))
         // By position: on the iOS 27.1 simulator XCUITest reported this link as not hittable at rest.
         app.webViews.links["Third page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(heading("/third", in: app).waitForExistence(timeout: 30), "link didn't navigate")
+        XCTAssertTrue(heading("/third", in: app).appears(within: 30), "link didn't navigate")
 
         // Killed while open, the harder case: only the save made while browsing (once a page has
         // loaded) has run, not the one when the app goes away (swiped away from the app switcher).
         Thread.sleep(forTimeInterval: 2)
         app.terminate()
         app.launch()
-        XCTAssertTrue(heading("/third", in: app).waitForExistence(timeout: 60), "tab didn't come back")
+        XCTAssertTrue(heading("/third", in: app).appears(within: 60), "tab didn't come back")
         XCTAssertTrue(tabsButton(count: 2, in: app).exists)
 
         app.buttons["Page actions"].tap()
         let back = app.buttons["Back"]
-        XCTAssertTrue(back.waitForExistence(timeout: 5), "caret sheet didn't open")
-        back.tap()
-        XCTAssertTrue(heading("/popup", in: app).waitForExistence(timeout: 30), "history was lost on relaunch")
+        XCTAssertTrue(back.appears(within: 5), "caret sheet didn't open")
+        back.tapInPresentedSheet()
+        XCTAssertTrue(heading("/popup", in: app).appears(within: 30), "history was lost on relaunch")
         XCTAssertTrue(tabsButton(count: 2, in: app).exists, "Back closed the tab instead of going back")
 
         swipeBackFromLeftEdge(in: app)
-        XCTAssertTrue(tabsButton(count: 1, in: app).waitForExistence(timeout: 5), "swipe didn't close the tab")
-        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 30), "didn't return to the previous tab")
+        XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: 5), "swipe didn't close the tab")
+        XCTAssertTrue(heading("/", in: app).appears(within: 30), "didn't return to the previous tab")
         withExtendedLifetime(server) {}
     }
 
@@ -110,13 +109,13 @@ final class BackSwipeCloseTests: XCTestCase {
         let app = launchOnPage(server.url)
 
         app.webViews.links["Blank target"].tap()
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5), "no new tab")
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 5), "no new tab")
         let popup = heading("/popup", in: app)
-        XCTAssertTrue(popup.waitForExistence(timeout: 10))
-        let resting = popup.frame
+        XCTAssertTrue(popup.appears(within: 10))
+        let resting = popup.settledFrame()
 
         swipeBackFromLeftEdge(to: 0.2, velocity: .slow, in: app)
-        XCTAssertFalse(tabsButton(count: 2, in: app).waitForNonExistence(timeout: 2), "a short swipe closed the tab")
+        XCTAssertFalse(tabsButton(count: 2, in: app).disappears(within: 2), "a short swipe closed the tab")
         // Not `isHittable`: web content near the top of the page reports false even at rest.
         XCTAssertEqual(popup.frame, resting, "the page didn't spring back")
         withExtendedLifetime(server) {}
@@ -128,7 +127,7 @@ final class BackSwipeCloseTests: XCTestCase {
         let app = launchOnPage(server.url)
 
         swipeBackFromLeftEdge(in: app)
-        XCTAssertFalse(tabsButton(count: 1, in: app).waitForNonExistence(timeout: 2), "the tab closed")
+        XCTAssertFalse(tabsButton(count: 1, in: app).disappears(within: 2), "the tab closed")
         XCTAssertTrue(heading("/", in: app).exists)
         withExtendedLifetime(server) {}
     }
@@ -138,17 +137,17 @@ final class BackSwipeCloseTests: XCTestCase {
         let app = launchOnPage(server.url)
 
         app.webViews.links["Blank target"].tap()
-        XCTAssertTrue(tabsButton(count: 2, in: app).waitForExistence(timeout: 5), "no new tab")
-        XCTAssertTrue(heading("/popup", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: 5), "no new tab")
+        XCTAssertTrue(heading("/popup", in: app).appears(within: 10))
 
         app.buttons["Page actions"].tap()
         let back = app.buttons["Back"]
-        XCTAssertTrue(back.waitForExistence(timeout: 5), "caret sheet didn't open")
+        XCTAssertTrue(back.appears(within: 5), "caret sheet didn't open")
         XCTAssertTrue(back.isEnabled, "Back is disabled on a link-opened tab's first page")
-        back.tap()
+        back.tapInPresentedSheet()
 
-        XCTAssertTrue(tabsButton(count: 1, in: app).waitForExistence(timeout: 5), "Back didn't close the tab")
-        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 10), "didn't return to the previous tab")
+        XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: 5), "Back didn't close the tab")
+        XCTAssertTrue(heading("/", in: app).appears(within: 10), "didn't return to the previous tab")
         withExtendedLifetime(server) {}
     }
 
@@ -166,11 +165,11 @@ final class BackSwipeCloseTests: XCTestCase {
         app.launch()
 
         let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.waitForExistence(timeout: 10), "no search panel at launch")
+        XCTAssertTrue(field.appears(within: 10), "no search panel at launch")
         field.typeText(url.absoluteString + "\n")
-        // Generous: a fresh simulator is also downloading and compiling the filter lists meanwhile.
-        XCTAssertTrue(heading("/", in: app).waitForExistence(timeout: 60), "fixture page didn't load")
-        XCTAssertTrue(field.waitForNonExistence(timeout: 5), "search panel didn't close on submit")
+        // Generous: the first page load on a fresh simulator is slow.
+        XCTAssertTrue(heading("/", in: app).appears(within: 60), "fixture page didn't load")
+        XCTAssertTrue(field.disappears(within: 5), "search panel didn't close on submit")
         return app
     }
 

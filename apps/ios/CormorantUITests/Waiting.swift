@@ -1,8 +1,8 @@
 import XCTest
 
-/// Waits that check every 0.1 s. XCTest's `waitForExistence`, `waitForNonExistence` and predicate
-/// expectations check about once a second, so a wait on an element already on screen still cost a
-/// second, and those seconds were a third of the suite's run time. Use these instead.
+/// Waits that check at once, then back off. XCTest's `waitForExistence`, `waitForNonExistence` and
+/// predicate expectations first check about a second in, so a wait on an element already on screen
+/// still cost a second, and those seconds were a third of the suite's run time. Use these instead.
 @MainActor
 extension XCUIElement {
     /// True as soon as the element exists; false if it doesn't within `timeout`.
@@ -50,16 +50,22 @@ extension XCUIElement {
     }
 }
 
-/// Checks `condition` every 0.1 s until it holds or `timeout` passes, and returns its last value.
-/// `name` titles the activity in the test report.
+/// Checks `condition` at once, then after 0.1, 0.2 and 0.4 s, then every 0.5 s, until it holds or
+/// `timeout` passes, and returns its last value. `name` titles the activity in the test report.
+///
+/// Not a steady 0.1 s: every check makes the app snapshot its accessibility tree, web content
+/// included, and back-to-back snapshots on a 3-core CI runner slowed the page loads and animations
+/// being waited for (p90 of a tap went from 1.9 s to 7.1 s).
 @MainActor
 func waitUntil(_ timeout: TimeInterval, _ name: String = "Waiting for a condition",
                _ condition: () -> Bool) -> Bool {
     XCTContext.runActivity(named: name) { _ in
         let deadline = Date.now + timeout
+        var interval: TimeInterval = 0.1
         while !condition() {
             guard Date.now < deadline else { return condition() }
-            RunLoop.current.run(until: min(.now + 0.1, deadline))
+            RunLoop.current.run(until: min(.now + interval, deadline))
+            interval = min(interval * 2, 0.5)
         }
         return true
     }

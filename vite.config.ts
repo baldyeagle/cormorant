@@ -23,6 +23,8 @@ const xcodebuild = (action: 'build' | 'test', destination: string) =>
     `-destination "${destination}"`,
     '-configuration Debug',
     'CODE_SIGNING_ALLOWED=NO',
+    // A failing UI test otherwise spends up to 10 minutes collecting a sysdiagnose.
+    ...(action === 'test' ? ['-collect-test-diagnostics never'] : []),
     action,
   ].join(' ');
 

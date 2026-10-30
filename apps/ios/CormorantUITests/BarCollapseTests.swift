@@ -3,6 +3,13 @@ import XCTest
 /// Scrolling down shrinks the bar to the host capsule; the page must keep taking touches after that.
 @MainActor
 final class BarCollapseTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        // Stop at the first failure: what follows would only wait out its ceilings, or 60 s per
+        // query if a link menu was left up with the animation wait off.
+        continueAfterFailure = false
+    }
+
     private static let page = """
         <!doctype html>
         <meta name="viewport" content="width=device-width">
@@ -21,14 +28,14 @@ final class BarCollapseTests: XCTestCase {
         app.launchArguments = ["-uiTesting"]
         app.launch()
         let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.appears(within: 10), "no search panel at launch")
+        XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
         field.typeText(server.url.absoluteString + "\n")
-        XCTAssertTrue(app.webViews.staticTexts["Scrolled 0"].appears(within: 30), "fixture page didn't load")
+        XCTAssertTrue(app.webViews.staticTexts["Scrolled 0"].appears(within: Ceiling.load), "fixture page didn't load")
 
         // One continuous drag that collapses the bar partway through.
         drag(in: app, from: 0.8, to: 0.3)
         let capsule = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Show toolbar'")).firstMatch
-        XCTAssertTrue(capsule.appears(within: 5), "the bar didn't collapse")
+        XCTAssertTrue(capsule.appears(within: Ceiling.ui), "the bar didn't collapse")
         let afterFirst = scrollY(in: app)
         XCTAssertGreaterThan(afterFirst, 0, "the first drag didn't scroll")
 
@@ -36,7 +43,7 @@ final class BarCollapseTests: XCTestCase {
         for _ in 0..<2 {
             let before = scrollY(in: app)
             drag(in: app, from: 0.8, to: 0.4)
-            XCTAssertTrue(waitUntil(5) { self.scrollY(in: app) > before }, "the page stopped scrolling after the bar collapsed")
+            XCTAssertTrue(waitUntil(Ceiling.ui) { self.scrollY(in: app) > before }, "the page stopped scrolling after the bar collapsed")
         }
         withExtendedLifetime(server) {}
     }

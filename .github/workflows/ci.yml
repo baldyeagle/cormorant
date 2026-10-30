@@ -2,8 +2,15 @@ name: CI
 
 on:
   pull_request:
+    # `labeled`: adding the ui-stress label runs the UI tests several times over (see ui-tests).
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Times to run each UI test; every run must pass
+        default: '5'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -78,7 +85,9 @@ jobs:
     name: UI tests (shard ${{ matrix.shard }})
     needs: ios
     runs-on: xcode-27
-    timeout-minutes: 30
+    # The slowest single run of a shard seen took 21 minutes; a stress run (see ITERATIONS below)
+    # gets a hosted runner's maximum. Expressions have no arithmetic, so it can't scale.
+    timeout-minutes: ${{ (inputs.iterations || contains(github.event.pull_request.labels.*.name, 'ui-stress')) && 360 || 30 }}
     strategy:
       fail-fast: false
       matrix:
@@ -112,19 +121,26 @@ jobs:
           xcrun simctl bootstatus "$UDID" -b
           echo "UDID=$UDID" >> "$GITHUB_ENV"
       - name: UI tests
+        env:
+          # Once normally. To look for flaky tests, run the workflow by hand or add the ui-stress
+          # label to the PR: each test runs that many times and every run must pass. Nothing is
+          # retried, so a flaky test fails CI rather than hiding behind a second try.
+          ITERATIONS: ${{ inputs.iterations || (contains(github.event.pull_request.labels.*.name, 'ui-stress') && '5') || '1' }}
         run: |
           ONLY_TESTING=$(scripts/ui-test-shard.py ${{ strategy.job-index }} ${{ strategy.job-total }})
           XCTESTRUN=$(ls build/Products/*.xctestrun)
-          # One retry covers the remaining launch flakes; the regression fails every time.
+          # No sysdiagnose on failure: collecting one hung a run for 10 minutes and the result
+          # bundle's recording and log say what failed.
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "platform=iOS Simulator,id=$UDID" \
             -resultBundlePath build/UITests.xcresult \
-            -retry-tests-on-failure -test-iterations 2 \
+            -test-iterations "$ITERATIONS" -collect-test-diagnostics never \
             $ONLY_TESTING \
             | tee build/xcodebuild-test.log | grep -E "error:|Test Case .*(passed|failed)|TEST" || true
           grep -q "TEST EXECUTE SUCCEEDED" build/xcodebuild-test.log
       - name: Upload UI test results
-        if: failure()
+        # Cancelled too: a shard that hits its timeout is cancelled, not failed.
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: ui-test-results-${{ matrix.shard }}

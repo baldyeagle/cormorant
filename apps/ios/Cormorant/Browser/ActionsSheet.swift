@@ -232,6 +232,9 @@ private struct NavigationRow: View {
     private var copy: some View {
         Button(copied ? "Link Copied" : "Copy Link", systemImage: copied ? "checkmark" : "link") {
             UIPasteboard.general.url = url
+            #if DEBUG
+            OwnPasteboardWrite.record()
+            #endif
             AccessibilityNotification.Announcement("Link copied").post()
             copied = true
             resetCopied?.cancel()

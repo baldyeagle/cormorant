@@ -2,7 +2,8 @@ import Foundation
 import Network
 
 /// Serves one fixed HTML page on 127.0.0.1 so the tests need no network. The app and the test
-/// runner share the simulator's loopback. Every path gets the same page; `delays` holds some back.
+/// runner share the simulator's loopback. Every path gets the same page; `delays` holds back the
+/// first request for some.
 /// Counts requests by path, so a test can tell a page that was loaded again from one that wasn't.
 final class FixtureServer {
     struct StartFailed: Error {}
@@ -11,7 +12,9 @@ final class FixtureServer {
     private let listener: NWListener
     private let counts: Counts
 
-    /// - Parameter delays: seconds to wait before answering, by path (`/slow`).
+    /// - Parameter delays: seconds to wait before answering the first request for a path (`/slow`).
+    ///   Later ones are answered at once, so a test can hold a link preview's load back for longer than
+    ///   a slow simulator takes to pick a menu item, without the tab's own load waiting too.
     init(html: String, delays: [String: Double] = [:]) throws {
         let body = Data(html.utf8)
         let header = [
@@ -32,11 +35,11 @@ final class FixtureServer {
             // Answer once the request starts arriving; only its path matters.
             connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, _, _ in
                 let path = data.flatMap(Self.path(of:))
-                if let path { counts.add(path) }
+                let nth = path.map { counts.add($0) }
                 let send: @Sendable () -> Void = {
                     connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
                 }
-                if let delay = path.flatMap({ delays[$0] }) {
+                if nth == 1, let delay = path.flatMap({ delays[$0] }) {
                     queue.asyncAfter(deadline: .now() + delay, execute: send)
                 } else {
                     send()
@@ -66,6 +69,9 @@ final class FixtureServer {
     /// Requests received so far for `path` (`/next`).
     func requestCount(for path: String) -> Int { counts.count(for: path) }
 
+    /// Every request so far, one per line with seconds since the server started, for failure messages.
+    var requestLog: String { counts.log }
+
     /// `GET /next HTTP/1.1` → `/next`.
     private static func path(of request: Data) -> String? {
         guard let line = String(decoding: request, as: UTF8.self).split(separator: "\r\n").first else { return nil }
@@ -75,9 +81,20 @@ final class FixtureServer {
 
     private final class Counts: @unchecked Sendable {
         private let lock = NSLock()
+        private let start = Date.now
         private var byPath: [String: Int] = [:]
+        private var lines: [String] = []
 
-        func add(_ path: String) { lock.withLock { byPath[path, default: 0] += 1 } }
+        /// Counts a request for `path`; returns how many there have been, this one included.
+        func add(_ path: String) -> Int {
+            lock.withLock {
+                byPath[path, default: 0] += 1
+                lines.append(String(format: "+%.2fs GET %@", Date.now.timeIntervalSince(start), path))
+                return byPath[path, default: 0]
+            }
+        }
+
+        var log: String { lock.withLock { "requests:\n" + lines.joined(separator: "\n") } }
         func count(for path: String) -> Int { lock.withLock { byPath[path, default: 0] } }
     }
 

@@ -34,19 +34,52 @@ extension XCUIElement {
         }
     }
 
-    /// Taps once the element has stopped moving: a tap on a switcher or menu that's still
-    /// presenting is dropped.
+    /// Taps once the element has stopped moving. For when XCTest's own animation wait can't help: a
+    /// context menu's items (the wait is off while a menu is up), or a bar moved by the keyboard
+    /// (another process's animation).
     func tapWhenSettled() {
         settledFrame()
         tap()
     }
 
-    /// Taps a control in a sheet that just started presenting, once it has slid in. A tap meanwhile is
-    /// dropped, and neither `settledFrame()` nor `isHittable` can tell: on the iOS 27.1 simulator a
-    /// sheet's elements report their final frames from the start of the slide.
-    func tapInPresentedSheet() {
-        Thread.sleep(forTimeInterval: 0.75)
-        tap()
+}
+
+/// Ceilings for waits on something that should happen, by what's being waited for. A ceiling only
+/// matters when a test is about to fail, so each is far above the slowest CI runner seen (a 3-core
+/// runner's first page load took up to 22 s; a single query, up to 10 s), not near typical times:
+/// a test passes the moment its condition holds. Checks that something *stays* for N seconds keep
+/// their own N.
+enum Ceiling {
+    /// The app launching, or relaunching with its saved tabs, to its first screen.
+    static let launch: TimeInterval = 60
+    /// Anything that needs a page to load: a tab's page, a preview's, a reload, a switcher snapshot.
+    static let load: TimeInterval = 60
+    /// The app's own UI answering an action: a menu, sheet, tab count, focus or scroll.
+    static let ui: TimeInterval = 20
+}
+
+@MainActor
+extension XCUIApplication {
+    /// True once the app reports (`UITestingProbes`, `-uiTesting` only) that everything it writes
+    /// while browsing is on disk, so a test that kills it knows what the relaunch should find.
+    func savesSettle() -> Bool {
+        let probe = descendants(matching: .any)["UITesting.saves"].firstMatch
+        return waitUntil(Ceiling.ui, "Waiting for the app's saves to land") { probe.value as? String == "settled" }
+    }
+
+    /// Whether XCTest waits for the app's animations to finish before each action (its default), so a
+    /// tap never lands mid-transition, where UIKit drops it. Off only while a link context menu is up:
+    /// on the iOS 27.1 simulator one never reports its animations finished, and every query waited out
+    /// a 60-second timeout. Private API; always true, and setting it a no-op, if XCTest drops it.
+    var waitsForAnimations: Bool {
+        get {
+            guard responds(to: NSSelectorFromString("idleAnimationWaitEnabled")) else { return true }
+            return value(forKey: "idleAnimationWaitEnabled") as? Bool ?? true
+        }
+        set {
+            guard responds(to: NSSelectorFromString("setIdleAnimationWaitEnabled:")) else { return }
+            setValue(newValue, forKey: "idleAnimationWaitEnabled")
+        }
     }
 }
 

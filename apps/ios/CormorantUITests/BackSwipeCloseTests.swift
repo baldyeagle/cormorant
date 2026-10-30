@@ -15,6 +15,7 @@ final class BackSwipeCloseTests: UITestCase {
         <a href="/next">Next page</a>
         <a href="/third">Third page</a>
         <a href="/popup" target="_blank">Blank target</a>
+        \(selectionReport)
         """
 
     /// Open in New Tab, follow a link there, back, back: the second back closes the tab.
@@ -27,11 +28,8 @@ final class BackSwipeCloseTests: UITestCase {
 
         let link = app.webViews.links["Next page"]
         XCTAssertTrue(link.appears(within: Ceiling.load))
-        // XCTest's animation wait off while the menu is up (see `XCUIApplication.waitsForAnimations`).
-        app.waitsForAnimations = false
-        link.press(forDuration: 1.5)
         let item = app.buttons["Open in New Tab"]
-        XCTAssertTrue(item.appears(within: Ceiling.ui), "no link menu")
+        XCTAssertTrue(pressForLinkMenu(link, until: item, in: app), "no link menu")
         XCTAssertTrue(waitUntil(Ceiling.ui) { item.isHittable }, "link menu didn't settle")
         item.tapWhenSettled()
         XCTAssertTrue(item.disappears(within: Ceiling.ui), "menu didn't close")
@@ -54,7 +52,7 @@ final class BackSwipeCloseTests: UITestCase {
 
         swipeBackFromLeftEdge(in: app)
         XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "swipe didn't close the tab")
-        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab")
+        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab; \(server.requestLog)")
         withExtendedLifetime(server) {}
     }
 
@@ -68,7 +66,7 @@ final class BackSwipeCloseTests: UITestCase {
 
         swipeBackFromLeftEdge(in: app)
         XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "swipe didn't close the tab")
-        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab")
+        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab; \(server.requestLog)")
         withExtendedLifetime(server) {}
     }
 
@@ -104,7 +102,7 @@ final class BackSwipeCloseTests: UITestCase {
 
         swipeBackFromLeftEdge(in: app)
         XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "swipe didn't close the tab")
-        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab")
+        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab; \(server.requestLog)")
         withExtendedLifetime(server) {}
     }
 
@@ -155,7 +153,7 @@ final class BackSwipeCloseTests: UITestCase {
         back.tap()
 
         XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "Back didn't close the tab")
-        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab")
+        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab; \(server.requestLog)")
         withExtendedLifetime(server) {}
     }
 
@@ -185,8 +183,12 @@ final class BackSwipeCloseTests: UITestCase {
         app.buttons["Tabs, \(count) open"]
     }
 
+    /// Once the app reports every tab done loading (`savesSettle`): whether the swipe closes the tab
+    /// depends on the tab's back history, which a navigation still under way may not have settled (on
+    /// a loaded CI runner, a swipe made as soon as a slow Back's page showed didn't close the tab).
     private func swipeBackFromLeftEdge(to fraction: CGFloat = 0.8, velocity: XCUIGestureVelocity = .fast,
-                                       in app: XCUIApplication) {
+                                       in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(app.savesSettle(), "the page was still loading", file: file, line: line)
         let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 2, dy: 0))
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: fraction, dy: 0.5))
         edge.press(forDuration: 0.05, thenDragTo: end, withVelocity: velocity, thenHoldForDuration: 0)

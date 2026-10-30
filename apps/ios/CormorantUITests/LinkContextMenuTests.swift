@@ -21,6 +21,7 @@ final class LinkContextMenuTests: UITestCase {
         <a href="data:text/html,<h1>Data page</h1>">Data link</a>
         <a href="/pictured"><img alt="Linked image" width="160" height="90" src="\(pixel)"></a>
         <p><img alt="Plain image" width="160" height="90" src="\(pixel)"></p>
+        \(selectionReport)
         """
     private static let pixel = "data:image/png;base64,"
         + "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
@@ -318,8 +319,8 @@ final class LinkContextMenuTests: UITestCase {
 
     private func openMenu(on element: XCUIElement, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertTrue(element.appears(within: Ceiling.load), "nothing to long-press", file: file, line: line)
-        longPressForMenu(element, in: app)
-        XCTAssertTrue(app.buttons["Copy Link"].appears(within: Ceiling.ui), "no link menu", file: file, line: line)
+        XCTAssertTrue(pressForLinkMenu(element, until: app.buttons["Copy Link"], in: app), "no link menu",
+                      file: file, line: line)
         // The system menu offered this; ours never does.
         XCTAssertFalse(app.buttons["Add to Reading List"].exists, "the system link menu came up", file: file, line: line)
     }
@@ -373,7 +374,8 @@ final class LinkContextMenuTests: UITestCase {
         app.waitsForAnimations = true
     }
 
-    /// Long-presses `element`, with XCTest's animation wait off until the menu has closed again (see
+    /// Long-presses `element` once, for checks that no menu comes up (`openMenu` waits for one), with
+    /// XCTest's animation wait off until the menu has closed again (see
     /// `XCUIApplication.waitsForAnimations`); `choose` and `dismissMenu` turn it back on.
     private func longPressForMenu(_ element: XCUIElement, in app: XCUIApplication) {
         app.waitsForAnimations = false

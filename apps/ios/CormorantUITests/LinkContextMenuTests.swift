@@ -3,14 +3,7 @@ import XCTest
 /// The long-press link menu. Open Link used to go through the system's link menu, which handed the
 /// URL to the default browser; every action here must stay in Cormorant.
 @MainActor
-final class LinkContextMenuTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        // Stop at the first failure: what follows would only wait out its ceilings, or 60 s per
-        // query if a link menu was left up with the animation wait off.
-        continueAfterFailure = false
-    }
-
+final class LinkContextMenuTests: UITestCase {
     /// Every path serves this page; its heading names the path it was loaded at.
     private static let page = """
         <!doctype html>

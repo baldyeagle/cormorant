@@ -4,14 +4,7 @@ import XCTest
 /// Each fixture counts its loads in `sessionStorage`, which survives a reload of the tab, and counts
 /// touch moves, so a test that expects no reload can tell the drag reached the page.
 @MainActor
-final class PullToRefreshTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        // Stop at the first failure: what follows would only wait out its ceilings, or 60 s per
-        // query if a link menu was left up with the animation wait off.
-        continueAfterFailure = false
-    }
-
+final class PullToRefreshTests: UITestCase {
     private static func page(style: String = "", body: String) -> String {
         """
         <!doctype html>

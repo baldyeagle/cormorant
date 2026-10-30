@@ -3,14 +3,7 @@ import XCTest
 /// Arc's back-to-close: swiping in from the left edge on the first page of a tab a link opened
 /// closes it and returns to the tab viewed before it. Before that, the swipe is WebKit's back.
 @MainActor
-final class BackSwipeCloseTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        // Stop at the first failure: what follows would only wait out its ceilings, or 60 s per
-        // query if a link menu was left up with the animation wait off.
-        continueAfterFailure = false
-    }
-
+final class BackSwipeCloseTests: UITestCase {
     /// Every path serves this page; its heading names the path it was loaded at.
     private static let page = """
         <!doctype html>
@@ -124,12 +117,15 @@ final class BackSwipeCloseTests: XCTestCase {
         XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
         let popup = heading("/popup", in: app)
         XCTAssertTrue(popup.appears(within: Ceiling.load))
-        let resting = popup.settledFrame()
+        // The web view's frame, not the heading's: the swipe moves the web view with a transform,
+        // which UIKit reports as it is, while WebKit's frames for the page's own elements can lag it.
+        let page = app.webViews.containing(NSPredicate(format: "label == %@", "Path /popup")).firstMatch
+        let resting = page.settledFrame()
 
         swipeBackFromLeftEdge(to: 0.2, velocity: .slow, in: app)
         XCTAssertFalse(tabsButton(count: 2, in: app).disappears(within: 2), "a short swipe closed the tab")
-        // Not `isHittable`: web content near the top of the page reports false even at rest.
-        XCTAssertEqual(popup.frame, resting, "the page didn't spring back")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { page.frame == resting },
+                      "the page didn't spring back: \(page.frame), at rest \(resting)")
         withExtendedLifetime(server) {}
     }
 

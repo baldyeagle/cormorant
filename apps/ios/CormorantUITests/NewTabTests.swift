@@ -6,14 +6,7 @@ import XCTest
 ///
 /// The bar's + composes a new tab; the panel's row for the tab it came from edits that tab instead.
 @MainActor
-final class NewTabTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        // Stop at the first failure: what follows would only wait out its ceilings, or 60 s per
-        // query if a link menu was left up with the animation wait off.
-        continueAfterFailure = false
-    }
-
+final class NewTabTests: UITestCase {
     private static let page = """
         <!doctype html>
         <meta name="viewport" content="width=device-width">

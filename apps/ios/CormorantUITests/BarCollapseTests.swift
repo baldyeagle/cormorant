@@ -2,14 +2,7 @@ import XCTest
 
 /// Scrolling down shrinks the bar to the host capsule; the page must keep taking touches after that.
 @MainActor
-final class BarCollapseTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        // Stop at the first failure: what follows would only wait out its ceilings, or 60 s per
-        // query if a link menu was left up with the animation wait off.
-        continueAfterFailure = false
-    }
-
+final class BarCollapseTests: UITestCase {
     private static let page = """
         <!doctype html>
         <meta name="viewport" content="width=device-width">

@@ -138,6 +138,15 @@ jobs:
             $ONLY_TESTING \
             | tee build/xcodebuild-test.log | grep -E "error:|Test Case .*(passed|failed)|TEST" || true
           grep -q "TEST EXECUTE SUCCEEDED" build/xcodebuild-test.log
+      - name: Save the simulator's log
+        # The system's side of a failure: XCTest sometimes couldn't terminate the app, and why is
+        # only in the launch and termination services' logs.
+        if: failure() || cancelled()
+        timeout-minutes: 5
+        run: |
+          xcrun simctl spawn "$UDID" log show --last 6h --info --style compact --predicate \
+            'process IN {"Cormorant", "SpringBoard", "runningboardd", "testmanagerd", "backboardd", "launchd_sim"}' \
+            | gzip > build/simulator-log.txt.gz || true
       - name: Upload UI test results
         # Cancelled too: a shard that hits its timeout is cancelled, not failed.
         if: failure() || cancelled()
@@ -147,6 +156,7 @@ jobs:
           path: |
             build/UITests.xcresult
             build/xcodebuild-test.log
+            build/simulator-log.txt.gz
 
   site:
     name: Site (Astro build, check, lint, format)

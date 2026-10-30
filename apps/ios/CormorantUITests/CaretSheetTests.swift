@@ -3,14 +3,7 @@ import XCTest
 /// The caret sheet's handoffs: the host opens the search panel, and Settings stacks on the sheet
 /// rather than replacing it.
 @MainActor
-final class CaretSheetTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        // Stop at the first failure: what follows would only wait out its ceilings, or 60 s per
-        // query if a link menu was left up with the animation wait off.
-        continueAfterFailure = false
-    }
-
+final class CaretSheetTests: UITestCase {
     private static let page = """
         <!doctype html>
         <meta name="viewport" content="width=device-width">

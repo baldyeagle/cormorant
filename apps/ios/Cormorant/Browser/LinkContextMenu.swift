@@ -71,8 +71,11 @@ extension TabSession {
                 in: window,
                 card: CardExpansion.Card(frame: card.frame, topRadius: card.cornerRadius, bottomRadius: card.cornerRadius),
                 snapshot: card.snapshot, host: url.displayHost, page: page,
-                // A tab just opened has no theme color yet.
-                backdrop: CardExpansion.backdrop(themeColor: nil)
+                // The new tab's strip color, known now (its colors came with the preview's page) and
+                // followed should they be re-read while the card grows.
+                backdrop: { [weak self, style = window.traitCollection.userInterfaceStyle] in
+                    CardExpansion.backdrop(stripColor: self?.activeStripColor?(style))
+                }
             )
         }
     }

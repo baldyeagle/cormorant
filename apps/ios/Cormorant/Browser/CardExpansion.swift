@@ -28,15 +28,18 @@ struct CardExpansion: View {
     /// Where the browser draws the page: inside the safe area at the top, down to the bottom edge under
     /// the bar (see BrowserView's WebViewContainer).
     let page: CGRect
-    let backdrop: Color
+    /// Fades in behind the card: what the browser's status-bar strip shows for the tab, so the page
+    /// lands with no seam (`BrowserStore.stripColor(in:)`). Read as it draws, so it follows the strip
+    /// should the tab's colors be re-read while the card grows.
+    let backdrop: () -> Color
     let onFinished: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
 
-    /// What's behind the growing card: the tab's own chrome color, or the system background.
-    static func backdrop(themeColor: Color?) -> Color {
-        themeColor ?? Color(.systemBackground)
+    /// The backdrop for a UIKit caller: the strip's color, or the default strip's without one.
+    static func backdrop(stripColor: UIColor?) -> Color {
+        Color(uiColor: stripColor ?? UIColor(resource: .launchBackground))
     }
 
     var body: some View {
@@ -45,7 +48,7 @@ struct CardExpansion: View {
         let top: CGFloat = expanded ? 0 : card.topRadius
         let bottom: CGFloat = expanded ? 0 : card.bottomRadius
         ZStack(alignment: .topLeading) {
-            backdrop.opacity(expanded ? 1 : 0)
+            backdrop().opacity(expanded ? 1 : 0)
             TabPreview(snapshot: snapshot, host: host, width: frame.width)
                 .frame(width: frame.width, height: frame.height)
                 .background(Color(.secondarySystemGroupedBackground))
@@ -75,7 +78,7 @@ struct CardExpansion: View {
 @MainActor
 enum CardExpansionOverlay {
     static func play(in window: UIWindow, card: CardExpansion.Card, snapshot: UIImage?, host: String,
-                     page: CGRect, backdrop: Color) {
+                     page: CGRect, backdrop: @escaping () -> Color) {
         let ending = Ending()
         let controller = UIHostingController(rootView: CardExpansion(
             card: card, snapshot: snapshot, host: host, page: page, backdrop: backdrop,

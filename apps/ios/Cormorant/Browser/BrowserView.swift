@@ -7,6 +7,7 @@ struct BrowserView: View {
     @Environment(BrowserStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showSwitcher = false
     @State private var showActions = false
     @State private var isSearching = false
@@ -49,9 +50,10 @@ struct BrowserView: View {
         }
         .animation(.snappy, value: store.activeSession?.blockedDownloadURL)
         .background {
-            // Fills the status-bar strip; site-tinted once tabs report a theme color.
-            (store.activeSession?.themeColor ?? Color(.systemBackground))
-                .ignoresSafeArea()
+            // Fills the status-bar strip.
+            StatusBarStrip(tint: chromeTint, tabID: store.activeTab?.id,
+                           fades: store.activeSession?.pageColors.fades ?? false,
+                           isStale: chromeTintIsStale, colorScheme: colorScheme)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
@@ -155,6 +157,11 @@ struct BrowserView: View {
             // In case a hide never arrives. A keyboard still up on return reports its frame again.
             if phase == .background { keyboardCoversBar = false }
         }
+        // Nothing is sampled or tracked while tinting is off; catch up when it comes back on.
+        .onChange(of: store.settings.tintsChrome) {
+            store.activeSession?.updatePageTopTracking()
+            store.activeSession?.schedulePageColorsRefresh()
+        }
         .onChange(of: store.addressFocusRequest) {
             // From the switcher's "+": present once the cover is gone, or focus can't land.
             if !showSwitcher { presentSearch() }
@@ -195,6 +202,15 @@ struct BrowserView: View {
         guard store.closesOnBackSwipe(tabID), !session.isRestoringHistory else { return nil }
         return .init(destinationSnapshot: { store.backSwipeSnapshot(for: tabID) },
                      close: { store.close(tabID) })
+    }
+
+    /// The site's color for the status-bar strip, or nil for the default.
+    private var chromeTint: ChromeTint? { store.stripTint(in: colorScheme) }
+
+    /// The tab's colors are from the appearance before; the strip waits for them rather than fading
+    /// to the default and back.
+    private var chromeTintIsStale: Bool {
+        store.settings.tintsChrome && store.activeSession?.pageColorsAreStale(in: colorScheme) == true
     }
 
     /// Dismissed only by its action, which clears the failure.
@@ -290,5 +306,105 @@ struct BrowserView: View {
 
     private func switcherDidDismiss() {
         if store.isComposingNewTab { presentSearch() } else { searchIfBlank() }
+    }
+}
+
+/// The strip behind the status bar, in the site's color with a status bar that reads on it.
+///
+/// A new tab's color cuts in with the tab (and a page's with a back or forward navigation that
+/// restores it): fading would trail the page by most of a second. A change on the page itself
+/// (a scroll past a banner, a theme-color update, the appearance) fades, through OKLab so red to
+/// green doesn't pass through olive, and the status bar changes style halfway through.
+private struct StatusBarStrip: View {
+    let tint: ChromeTint?
+    let tabID: UUID?
+    let fades: Bool
+    /// `tint` is being re-read for a new appearance; hold the current color until it arrives.
+    let isStale: Bool
+    let colorScheme: ColorScheme
+
+    @State private var shown: StripPaint
+    /// When the tab last changed. Changes soon after (its colors arriving as it's shown, or as the
+    /// switcher's card grows into it) cut too, so the strip matches what the switcher showed.
+    @State private var tabChangedAt = Date.distantPast
+
+    init(tint: ChromeTint?, tabID: UUID?, fades: Bool, isStale: Bool, colorScheme: ColorScheme) {
+        self.tint = tint
+        self.tabID = tabID
+        self.fades = fades
+        self.isStale = isStale
+        self.colorScheme = colorScheme
+        _shown = State(initialValue: StripPaint(tint: tint, colorScheme: colorScheme))
+    }
+
+    private struct Target: Equatable {
+        let tabID: UUID?
+        let paint: StripPaint
+        /// Part of the key so the arrival of the re-read colors is a change even if they equal the
+        /// placeholder computed while stale.
+        let isStale: Bool
+    }
+
+    var body: some View {
+        let target = Target(tabID: tabID, paint: StripPaint(tint: tint, colorScheme: colorScheme),
+                            isStale: isStale)
+        StripFill(paint: shown)
+            .ignoresSafeArea()
+            .onChange(of: target) { old, new in
+                if old.tabID == new.tabID, new.isStale { return }
+                if old.tabID != new.tabID { tabChangedAt = .now }
+                if old.tabID == new.tabID, fades, Date.now.timeIntervalSince(tabChangedAt) > 0.5 {
+                    withAnimation(.easeOut(duration: 0.25)) { shown = new.paint }
+                } else {
+                    var cut = Transaction(animation: nil)
+                    cut.disablesAnimations = true
+                    withTransaction(cut) { shown = new.paint }
+                }
+            }
+    }
+}
+
+/// What the strip draws: a color in OKLab, so animating it interpolates there, and the status-bar
+/// style as a number that crosses 0.5 at the fade's midpoint.
+private struct StripPaint: Equatable {
+    var color: OKLab
+    /// 0: dark status-bar text (light scheme); 1: light text (dark scheme).
+    var statusBarStyle: Double
+    /// The default strip, which leaves the status bar to the system once it's settled.
+    var isDefault: Bool
+    /// `statusBarStyle` for the system's own style in this appearance.
+    var systemStatusBarStyle: Double
+
+    init(tint: ChromeTint?, colorScheme: ColorScheme) {
+        color = (tint?.background ?? .launchBackground(in: colorScheme)).oklab
+        systemStatusBarStyle = colorScheme == .dark ? 1 : 0
+        statusBarStyle = tint.map { $0.colorScheme == .dark ? 1 : 0 } ?? systemStatusBarStyle
+        isDefault = tint == nil
+    }
+}
+
+private struct StripFill: View, Animatable {
+    var paint: StripPaint
+
+    var animatableData: AnimatablePair<AnimatablePair<Double, Double>, AnimatablePair<Double, Double>> {
+        get {
+            AnimatablePair(AnimatablePair(paint.color.l, paint.color.a), AnimatablePair(paint.color.b, paint.statusBarStyle))
+        }
+        set {
+            paint.color = OKLab(l: newValue.first.first, a: newValue.first.second, b: newValue.second.first)
+            paint.statusBarStyle = newValue.second.second
+        }
+    }
+
+    var body: some View {
+        let fill = Color(paint.color.rgb)
+        if #available(iOS 27, *) {
+            // Back to the system's style only once the fade to the default has arrived there.
+            let settled = paint.isDefault && paint.statusBarStyle == paint.systemStatusBarStyle
+            let scheme: ColorScheme? = settled ? nil : (paint.statusBarStyle < 0.5 ? .light : .dark)
+            fill.toolbarColorScheme(scheme, for: .statusBar)
+        } else {
+            fill
+        }
     }
 }

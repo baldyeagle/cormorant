@@ -129,13 +129,16 @@ jobs:
         run: |
           ONLY_TESTING=$(scripts/ui-test-shard.py ${{ strategy.job-index }} ${{ strategy.job-total }})
           XCTESTRUN=$(ls build/Products/*.xctestrun)
+          # Only when repeating: xcodebuild rejects `-test-iterations 1`.
+          REPEAT=""
+          if [ "$ITERATIONS" -gt 1 ]; then REPEAT="-test-iterations $ITERATIONS"; fi
           # No sysdiagnose on failure: collecting one hung a run for 10 minutes and the result
           # bundle's recording and log say what failed.
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "platform=iOS Simulator,id=$UDID" \
             -resultBundlePath build/UITests.xcresult \
-            -test-iterations "$ITERATIONS" -collect-test-diagnostics never \
-            $ONLY_TESTING \
+            -collect-test-diagnostics never \
+            $REPEAT $ONLY_TESTING \
             | tee build/xcodebuild-test.log | grep -E "error:|Test Case .*(passed|failed)|TEST" || true
           grep -q "TEST EXECUTE SUCCEEDED" build/xcodebuild-test.log
       - name: Save the simulator's log

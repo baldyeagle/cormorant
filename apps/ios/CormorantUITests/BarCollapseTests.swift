@@ -2,7 +2,7 @@ import XCTest
 
 /// Scrolling down shrinks the bar to the host capsule; the page must keep taking touches after that.
 @MainActor
-final class BarCollapseTests: XCTestCase {
+final class BarCollapseTests: UITestCase {
     private static let page = """
         <!doctype html>
         <meta name="viewport" content="width=device-width">
@@ -21,14 +21,14 @@ final class BarCollapseTests: XCTestCase {
         app.launchArguments = ["-uiTesting"]
         app.launch()
         let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.waitForExistence(timeout: 10), "no search panel at launch")
+        XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
         field.typeText(server.url.absoluteString + "\n")
-        XCTAssertTrue(app.webViews.staticTexts["Scrolled 0"].waitForExistence(timeout: 30), "fixture page didn't load")
+        XCTAssertTrue(app.webViews.staticTexts["Scrolled 0"].appears(within: Ceiling.load), "fixture page didn't load")
 
         // One continuous drag that collapses the bar partway through.
         drag(in: app, from: 0.8, to: 0.3)
         let capsule = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Show toolbar'")).firstMatch
-        XCTAssertTrue(capsule.waitForExistence(timeout: 5), "the bar didn't collapse")
+        XCTAssertTrue(capsule.appears(within: Ceiling.ui), "the bar didn't collapse")
         let afterFirst = scrollY(in: app)
         XCTAssertGreaterThan(afterFirst, 0, "the first drag didn't scroll")
 
@@ -36,8 +36,7 @@ final class BarCollapseTests: XCTestCase {
         for _ in 0..<2 {
             let before = scrollY(in: app)
             drag(in: app, from: 0.8, to: 0.4)
-            let moved = expectation(for: NSPredicate { _, _ in self.scrollY(in: app) > before }, evaluatedWith: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 5), .completed, "the page stopped scrolling after the bar collapsed")
+            XCTAssertTrue(waitUntil(Ceiling.ui) { self.scrollY(in: app) > before }, "the page stopped scrolling after the bar collapsed")
         }
         withExtendedLifetime(server) {}
     }

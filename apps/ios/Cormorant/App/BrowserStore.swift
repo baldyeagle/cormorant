@@ -78,6 +78,8 @@ final class BrowserStore {
     @ObservationIgnored private var saveChain: Task<Void, Never>?
     @ObservationIgnored private var saveSequence = 0
     @ObservationIgnored private var lastWrittenSequence = 0
+    /// Tab-list and history writes queued or running.
+    @ObservationIgnored private var writesInFlight = 0
     /// What the file holds once the save chain drains: the loaded state, then each queued write.
     /// Nil when unknown (load failed, a write failed), so the next save writes.
     @ObservationIgnored private var lastSavedState: BrowserState?
@@ -715,7 +717,9 @@ final class BrowserStore {
         for tabID in closed { savedHistories[tabID] = nil }
 
         let previous = historySaveChain
+        writesInFlight += 1
         let save = Task { [historyStore] in
+            defer { writesInFlight -= 1 }
             await previous?.value
             let failed = await historyStore.save(changed, live: live)
             // Written again at the next save, unless a newer history has been queued meanwhile.
@@ -738,7 +742,9 @@ final class BrowserStore {
         // back while one is in flight still gets its own write after it.
         lastSavedState = snapshot
         let previous = saveChain
+        writesInFlight += 1
         let task = Task { [stateStore] in
+            defer { self.writesInFlight -= 1 }
             await previous?.value
             // The chain already orders writes; this keeps the invariant explicit.
             guard sequence > self.lastWrittenSequence else { return }
@@ -753,6 +759,16 @@ final class BrowserStore {
         saveChain = task
         return task
     }
+
+    #if DEBUG
+    /// For UI tests (`UITestingProbes`): whether something the app writes while browsing isn't on
+    /// disk yet: a debounced save still waiting, a write queued or running, a tab whose new page's
+    /// history hasn't been queued, or a page still loading (its history is saved once it has).
+    var hasUnsavedWork: Bool {
+        debouncedSave != nil || writesInFlight > 0 || !navigatedTabIDs.isEmpty
+            || sessions.values.contains { $0.isLoading }
+    }
+    #endif
 
     /// For load errors other than `unreadable` the store didn't move the file; copy it aside so
     /// Start Fresh can't destroy the only copy. Returns the copy's file name.

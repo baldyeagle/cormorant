@@ -116,6 +116,9 @@ extension TabSession {
         let pass: [UIMenuElement] = [
             UIAction(title: "Copy Link", image: UIImage(systemName: "link")) { _ in
                 UIPasteboard.general.url = url
+                #if DEBUG
+                OwnPasteboardWrite.record()
+                #endif
             },
             UIAction(title: "Share Link", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
                 self?.share(url)

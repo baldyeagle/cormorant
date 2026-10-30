@@ -22,8 +22,12 @@ final class BlockingService {
     /// (`window.open`) can get rules before its first load.
     @ObservationIgnored private var lastAppliedLists: [WKContentRuleList] = []
     @ObservationIgnored private var lastAppliedVersion = 0
+    @ObservationIgnored private let usesFilterLists: Bool
 
-    init() {
+    /// - Parameter usesFilterLists: false for UI tests: nothing is fetched, compiled or installed, so
+    ///   no launch waits on the network or competes with a multi-second compile, and pages load unblocked.
+    init(usesFilterLists: Bool = true) {
+        self.usesFilterLists = usesFilterLists
         let preferences = AppGroupStorage.load(BlockingPreferences.self, key: Self.preferencesKey) ?? .default
         let cacheDirectory = AppGroupStorage.blockingCacheDirectory
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
@@ -42,6 +46,7 @@ final class BlockingService {
     /// Re-fetches and recompiles lists. Non-forced calls respect the engine's max age.
     /// Errors end up in `status`.
     func refresh(force: Bool = false) async {
+        guard usesFilterLists else { return }
         status = .updating
         do {
             try await engine.refresh(force: force)
@@ -56,6 +61,8 @@ final class BlockingService {
     /// Installs the right rule lists for `host`. Returns the lists version that was applied, or nil
     /// when the lists couldn't be loaded (the controller is left as it was; the page loads unblocked).
     func apply(to controller: WKUserContentController, host: String?) async -> Int? {
+        // Not even the engine's cached lists: with none cached it would start a refresh itself.
+        guard usesFilterLists else { return engine.listsVersion }
         do {
             let lists = try await engine.ruleLists(for: host)
             let version = engine.listsVersion

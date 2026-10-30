@@ -4,7 +4,7 @@ import XCTest
 /// Each fixture counts its loads in `sessionStorage`, which survives a reload of the tab, and counts
 /// touch moves, so a test that expects no reload can tell the drag reached the page.
 @MainActor
-final class PullToRefreshTests: XCTestCase {
+final class PullToRefreshTests: UITestCase {
     private static func page(style: String = "", body: String) -> String {
         """
         <!doctype html>
@@ -35,17 +35,17 @@ final class PullToRefreshTests: XCTestCase {
         let server = try FixtureServer(html: Self.page(body: Self.filler))
         let app = launchOnPage(server.url)
         let heading = app.webViews.staticTexts["Load 1"]
-        let restingTop = heading.frame.minY
+        let restingTop = heading.settledFrame().minY
 
         pull(in: app)
 
         let reloaded = app.webViews.staticTexts["Load 2"]
         // Right after a fresh install the simulator can drop a synthesized drag entirely (the touch
         // begins and ends without moving). Only then, try once more.
-        if !reloaded.waitForExistence(timeout: 8), heading.exists, touchMoves(in: app) == 0 {
+        if !reloaded.appears(within: 8), heading.exists, touchMoves(in: app) == 0 {
             pull(in: app)
         }
-        XCTAssertTrue(reloaded.waitForExistence(timeout: 15), "pulling at the top didn't reload")
+        XCTAssertTrue(reloaded.appears(within: Ceiling.load), "pulling at the top didn't reload")
         // The spinner holds the page down by its own height until it ends.
         assertSettles(reloaded, at: restingTop, "the page didn't settle after the reload")
         // WebKit can put the page back at the top on reload whether or not the spinner is still
@@ -53,7 +53,7 @@ final class PullToRefreshTests: XCTestCase {
         // ended would hold it its own height lower.
         drag(in: app, from: 0.3, to: 0.36)
         assertSettles(reloaded, at: restingTop, "the spinner didn't end")
-        XCTAssertFalse(app.webViews.staticTexts["Load 3"].waitForExistence(timeout: 2), "the tug reloaded")
+        XCTAssertFalse(app.webViews.staticTexts["Load 3"].appears(within: 2), "the tug reloaded")
         XCTAssertTrue(app.buttons["Page actions"].isHittable, "the bar didn't stay expanded")
         withExtendedLifetime(server) {}
     }
@@ -64,14 +64,13 @@ final class PullToRefreshTests: XCTestCase {
         let server = try FixtureServer(html: Self.page(body: body))
         let app = launchOnPage(server.url)
         let heading = app.webViews.staticTexts["Load 1"]
-        let scrolled = expectation(for: NSPredicate(format: "isHittable == false"), evaluatedWith: heading)
-        wait(for: [scrolled], timeout: 5)
+        XCTAssertTrue(waitUntil(Ceiling.load) { !heading.isHittable }, "the page didn't scroll down")
         let moves = touchMoves(in: app)
 
         pull(in: app)
 
         assertDragReachedPage(in: app, after: moves)
-        XCTAssertFalse(app.webViews.staticTexts["Load 2"].waitForExistence(timeout: 4), "a pull mid-page reloaded")
+        XCTAssertFalse(app.webViews.staticTexts["Load 2"].appears(within: 4), "a pull mid-page reloaded")
         withExtendedLifetime(server) {}
     }
 
@@ -92,20 +91,20 @@ final class PullToRefreshTests: XCTestCase {
         let server = try FixtureServer(html: Self.page(style: style, body: body))
         let app = launchOnPage(server.url)
         let start = app.webViews.staticTexts["Scroller at 1200"]
-        XCTAssertTrue(start.waitForExistence(timeout: 5), "the scroller didn't start mid-way")
+        XCTAssertTrue(start.appears(within: Ceiling.load), "the scroller didn't start mid-way")
 
         // Within the scroller, and shorter than its 1200pt of travel back to its top.
         drag(in: app, from: 0.35, to: 0.75)
 
-        XCTAssertTrue(start.waitForNonExistence(timeout: 3), "the pull didn't scroll the element")
-        XCTAssertFalse(app.webViews.staticTexts["Load 2"].waitForExistence(timeout: 4),
+        XCTAssertTrue(start.disappears(within: Ceiling.ui), "the pull didn't scroll the element")
+        XCTAssertFalse(app.webViews.staticTexts["Load 2"].appears(within: 4),
                        "a pull inside a scrolled element reloaded")
 
         // The page itself can still be pulled, from outside the element; otherwise the above proves nothing.
         let heading = app.webViews.staticTexts["Load 1"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         heading.press(forDuration: 0.05, thenDragTo: heading.withOffset(CGVector(dx: 0, dy: 300)),
                       withVelocity: .slow, thenHoldForDuration: 0.3)
-        XCTAssertTrue(app.webViews.staticTexts["Load 2"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.webViews.staticTexts["Load 2"].appears(within: Ceiling.load),
                       "the page couldn't be pulled from outside the element")
         withExtendedLifetime(server) {}
     }
@@ -119,7 +118,7 @@ final class PullToRefreshTests: XCTestCase {
         pull(in: app)
 
         assertDragReachedPage(in: app)
-        XCTAssertFalse(app.webViews.staticTexts["Load 2"].waitForExistence(timeout: 4),
+        XCTAssertFalse(app.webViews.staticTexts["Load 2"].appears(within: 4),
                        "a page with overscroll-behavior: none reloaded")
         withExtendedLifetime(server) {}
     }
@@ -136,15 +135,13 @@ final class PullToRefreshTests: XCTestCase {
     /// Without this, a dropped drag would pass every "doesn't reload" test.
     private func assertDragReachedPage(in app: XCUIApplication, after moves: Int = 0,
                                        file: StaticString = #filePath, line: UInt = #line) {
-        let counted = expectation(for: NSPredicate { _, _ in self.touchMoves(in: app) > moves }, evaluatedWith: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [counted], timeout: 3), .completed,
-                       "the drag never reached the page", file: file, line: line)
+        XCTAssertTrue(waitUntil(Ceiling.ui) { self.touchMoves(in: app) > moves },
+                      "the drag never reached the page", file: file, line: line)
     }
 
     private func assertSettles(_ element: XCUIElement, at minY: CGFloat, _ message: String,
                                file: StaticString = #filePath, line: UInt = #line) {
-        let settled = expectation(for: NSPredicate { _, _ in abs(element.frame.minY - minY) < 2 }, evaluatedWith: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed, message, file: file, line: line)
+        XCTAssertTrue(waitUntil(Ceiling.load) { abs(element.frame.minY - minY) < 2 }, message, file: file, line: line)
     }
 
     /// A slow drag from near the top of the page to past the middle, held, then released.
@@ -167,12 +164,12 @@ final class PullToRefreshTests: XCTestCase {
         app.launch()
 
         let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.waitForExistence(timeout: 10), "no search panel at launch")
+        XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
         field.typeText(url.absoluteString + "\n")
 
-        // Generous: a fresh simulator is also downloading and compiling the filter lists meanwhile.
-        XCTAssertTrue(app.webViews.staticTexts["Load 1"].waitForExistence(timeout: 30), "fixture page didn't load")
-        XCTAssertTrue(field.waitForNonExistence(timeout: 5), "search panel didn't close on submit")
+        // Generous: the first page load on a fresh simulator is slow.
+        XCTAssertTrue(app.webViews.staticTexts["Load 1"].appears(within: Ceiling.load), "fixture page didn't load")
+        XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
         return app
     }
 }

@@ -44,6 +44,7 @@ final class BrowserStore {
     let blocking: BlockingService
     let settings: AppSettings
     let favicons: FaviconStore
+    let defaultBrowser: DefaultBrowserStatus
 
     @ObservationIgnored private let stateStore: any BrowserStateStore
     @ObservationIgnored private let historyStore: TabHistoryStore
@@ -90,6 +91,7 @@ final class BrowserStore {
         blocking: BlockingService = BlockingService(),
         settings: AppSettings = AppSettings(),
         favicons: FaviconStore = FaviconStore(),
+        defaultBrowser: DefaultBrowserStatus = DefaultBrowserStatus(),
         receivesSharedLinks: Bool = true
     ) {
         var usesFallbackStorage = false
@@ -114,6 +116,7 @@ final class BrowserStore {
         self.blocking = blocking
         self.settings = settings
         self.favicons = favicons
+        self.defaultBrowser = defaultBrowser
         showsStorageFallbackWarning = usesFallbackStorage
             && !UserDefaults.standard.bool(forKey: Self.warnedStorageFallbackKey)
         blocking.onListsChanged = { [weak self] in self?.reapplyBlockingEverywhere() }
@@ -165,6 +168,7 @@ final class BrowserStore {
     /// Archives idle tabs, then opens anything handed to us while we were away.
     func didBecomeActive() {
         sceneIsActive = true
+        defaultBrowser.didBecomeActive()
         guard isLoaded else { return }
         stampActiveTab()
         state.runArchive(policy: Self.archivePolicy)
@@ -204,6 +208,7 @@ final class BrowserStore {
                 }
             }
         case "http", "https":
+            defaultBrowser.didReceiveWebURL()
             pendingURLs.append(url)
         default:
             return

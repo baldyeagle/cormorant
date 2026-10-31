@@ -52,7 +52,7 @@ Apple's requirements (developer.apple.com/documentation/xcode/preparing-your-app
 - Navigate straight to the requested URL; no interstitials or redirects. Safe-browsing warnings and native sign-in UI are allowed.
 - Never add these Info.plist keys to any target: `NSPhotoLibraryUsageDescription` (use `NSPhotoLibraryAddUsageDescription` / `PHPickerViewController`), `NSLocationAlwaysUsageDescription`, `NSLocationAlwaysAndWhenInUseUsageDescription` (when-in-use is fine), `NSHomeKitUsageDescription`, `NSBluetoothAlwaysUsageDescription` (while-in-use is fine), `NSHealthShareUsageDescription`, `NSHealthUpdateUsageDescription`.
 - Don't claim Universal Links for specific domains; the system ignores them for browsers.
-- The `com.apple.developer.web-browser` entitlement is requested from Apple and added to the entitlements file only once granted.
+- The `com.apple.developer.web-browser` entitlement was granted for `dev.baldyeagle.cormorant` (2026-10-28) and lives in `Cormorant.entitlements` (app target only, not the share extension); the checklist script fails if it goes missing.
 
 ## Process
 

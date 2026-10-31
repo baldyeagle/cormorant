@@ -7,6 +7,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                DefaultBrowserSettings(status: store.defaultBrowser)
                 SearchEngineSettings(settings: store.settings)
                 BlockingSettings()
             }

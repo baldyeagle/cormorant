@@ -4,6 +4,7 @@
 #   - http and https are declared in CFBundleURLTypes
 #   - none of the forbidden usage-description keys appear in any Info.plist or entitlements file
 #   - UIWebView is not referenced anywhere in app source
+#   - the app's entitlements file grants com.apple.developer.web-browser (granted by Apple 2026-10-28)
 # Usage: scripts/check-default-browser-plist.sh [path/to/built/Cormorant.app]
 # With no argument it checks the source plists under apps/ios.
 set -euo pipefail
@@ -41,6 +42,12 @@ for p in "${PLISTS[@]}"; do
     if grep -q "$k" "$p"; then echo "FAIL: forbidden key $k in $p"; fail=1; fi
   done
 done
+
+ENTITLEMENTS=apps/ios/Cormorant/Cormorant.entitlements
+# JSON keeps the type: a <string>true</string> would print as "true", not true.
+if ! plutil -convert json -o - "$ENTITLEMENTS" | grep -q '"com\.apple\.developer\.web-browser":true'; then
+  echo "FAIL: com.apple.developer.web-browser is not true in $ENTITLEMENTS"; fail=1
+fi
 
 if grep -rn "UIWebView" apps/ios --include='*.swift' | grep -v "^.*//" ; then
   echo "FAIL: UIWebView referenced in app source"; fail=1

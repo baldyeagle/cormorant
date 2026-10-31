@@ -21,8 +21,13 @@ struct DefaultBrowserSettings: View {
             LabeledContent("Status") {
                 switch status.answer?.isDefault {
                 case true?:
-                    Label("Default Browser", systemImage: "checkmark")
-                        .foregroundStyle(.green)
+                    // Not a `Label`: as a Form row's value it took the row's icon layout, and the row
+                    // grew hundreds of points tall.
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark").accessibilityHidden(true)
+                        Text("Default Browser")
+                    }
+                    .foregroundStyle(.green)
                 case false?: Text("Not Default")
                 case nil: Text("Unknown")
                 }

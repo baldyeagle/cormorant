@@ -11,6 +11,8 @@ import UIKit
 ///   it (`OwnPasteboardWrite`). The test runner reading the pasteboard itself would be a cross-app
 ///   paste, which asks for permission, and so would the app reading anything another app (or the
 ///   Mac's clipboard, synced into the Simulator) put there.
+/// - `UITesting.pull`: how the last drag on a page went (`PullToRefresh.lastPullOutcome`): "moving",
+///   then "committed" or "dropped <moves>"; "none" before any drag.
 struct UITestingProbes: View {
     @Environment(BrowserStore.self) private var store
 
@@ -23,6 +25,7 @@ struct UITestingProbes: View {
                 guard pasteboard.changeCount == OwnPasteboardWrite.changeCount else { return nil }
                 return pasteboard.url?.absoluteString ?? pasteboard.string
             }
+            Probe(identifier: "UITesting.pull") { PullToRefresh.lastPull?.lastPullOutcome ?? "none" }
         }
         .allowsHitTesting(false)
     }

@@ -33,8 +33,9 @@ struct CormorantApp: App {
     private static func makeStore() -> BrowserStore {
         #if DEBUG
         // `-uiTesting` launch argument (CormorantUITests): tabs, their history and icons are saved to
-        // throwaway files instead of the app group's, the share extension's inbox is left alone, and
-        // no filter lists are downloaded, compiled or installed.
+        // throwaway files instead of the app group's, the share extension's inbox is left alone, no
+        // filter lists are downloaded, compiled or installed, and the default-browser status never asks
+        // the system (it answers only a few times a year).
         // Each launch starts with no tabs and no icons, unless `CORMORANT_UI_TESTING_SESSION=<name>` in
         // the environment names files to reuse (relaunch tests).
         if isUITesting {
@@ -45,6 +46,7 @@ struct CormorantApp: App {
                 historyStore: TabHistoryStore(directory: run.appending(path: "History")),
                 blocking: BlockingService(usesFilterLists: false),
                 favicons: FaviconStore(directory: run.appending(path: "Favicons")),
+                defaultBrowser: DefaultBrowserStatus(isLive: false),
                 receivesSharedLinks: false
             )
         }

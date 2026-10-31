@@ -129,12 +129,20 @@ jobs:
         run: |
           ONLY_TESTING=$(scripts/ui-test-shard.py ${{ strategy.job-index }} ${{ strategy.job-total }})
           XCTESTRUN=$(ls build/Products/*.xctestrun)
+          # A mistyped manual stress run must fail, not quietly run each test once.
+          case "$ITERATIONS" in
+            '' | *[!0-9]* | 0 | 0*) echo "::error::iterations must be a positive integer, got '$ITERATIONS'"; exit 1 ;;
+          esac
+          # xcodebuild rejects -test-iterations 1 ("Must specify -test-iterations with more than 1
+          # iteration"), so a single run leaves the flag off.
+          ITERATION_ARGS=()
+          if [ "$ITERATIONS" -gt 1 ]; then ITERATION_ARGS=(-test-iterations "$ITERATIONS"); fi
           # No sysdiagnose on failure: collecting one hung a run for 10 minutes and the result
           # bundle's recording and log say what failed.
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "platform=iOS Simulator,id=$UDID" \
             -resultBundlePath build/UITests.xcresult \
-            -test-iterations "$ITERATIONS" -collect-test-diagnostics never \
+            "${ITERATION_ARGS[@]}" -collect-test-diagnostics never \
             $ONLY_TESTING \
             | tee build/xcodebuild-test.log | grep -E "error:|Test Case .*(passed|failed)|TEST" || true
           grep -q "TEST EXECUTE SUCCEEDED" build/xcodebuild-test.log

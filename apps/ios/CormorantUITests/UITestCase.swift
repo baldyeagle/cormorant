@@ -1,8 +1,8 @@
 import XCTest
 
-/// Base for the UI tests: stops at the first failure, and attaches what was on screen to it. CI runs
-/// with `-collect-test-diagnostics never` (no screen recording), so this is all a failed run has to
-/// show what the app was doing.
+/// Base for the UI tests: stops at the first failure, and attaches what was on screen to it. CI turns
+/// off XCTest's own screen capture (no recording, no automatic screenshots), so this is all a failed
+/// run has to show what the app was doing.
 @MainActor
 class UITestCase: XCTestCase {
     /// Main thread only (`record` checks).

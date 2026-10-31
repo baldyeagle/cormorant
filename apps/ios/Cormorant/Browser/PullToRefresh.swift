@@ -72,6 +72,26 @@ final class PullToRefresh: NSObject {
     /// already under way carries on.
     func cancel() { end() }
 
+    #if DEBUG
+    /// For UI tests (`UITestingProbes`): the page whose last drag began with no pull under way, on
+    /// any tab. A drag that begins while a pull's reload is loading leaves it as it was.
+    private(set) static weak var lastPull: PullToRefresh?
+    private var lastPullCommitted = false
+    private var lastPullMoves = 0
+
+    /// How this page's last drag went: "moving" while the finger is down or the page is still
+    /// springing back, then "committed" or "dropped <n>", n being how many times the drag moved (a
+    /// healthy slow pull moves dozens of times). A commit can come after the finger lifts, but not
+    /// once the page is back at rest.
+    var lastPullOutcome: String {
+        if lastPullCommitted { return "committed" }
+        guard let scrollView = webView?.scrollView else { return "dropped \(lastPullMoves)" }
+        let pulledDown = scrollView.contentOffset.y < -scrollView.adjustedContentInset.top - 0.5
+        let moving = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating || pulledDown
+        return moving ? "moving" : "dropped \(lastPullMoves)"
+    }
+    #endif
+
     // MARK: Private
 
     @objc private func didPan(_ pan: UIPanGestureRecognizer) {
@@ -79,8 +99,17 @@ final class PullToRefresh: NSObject {
         case .began:
             if state == .idle, let scrollView = webView?.scrollView {
                 restingInsetTop = scrollView.adjustedContentInset.top
+                #if DEBUG
+                Self.lastPull = self
+                lastPullCommitted = false
+                lastPullMoves = 0
+                #endif
             }
             matchSpinnerToPage()
+        case .changed:
+            #if DEBUG
+            lastPullMoves += 1
+            #endif
         case .ended:
             guard state == .armed, let scrollView = webView?.scrollView else { return }
             // Measured against the inset from before the spinner appeared, so it doesn't matter
@@ -105,6 +134,9 @@ final class PullToRefresh: NSObject {
     }
 
     private func refresh() {
+        #if DEBUG
+        lastPullCommitted = true
+        #endif
         guard let onRefresh, let webView else {
             end()
             return

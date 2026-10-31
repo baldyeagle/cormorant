@@ -37,14 +37,18 @@ final class PullToRefreshTests: UITestCase {
         let heading = app.webViews.staticTexts["Load 1"]
         let restingTop = heading.settledFrame().minY
 
+        // The simulator can drop a synthesized drag entirely (right after a fresh install the touch
+        // begins and ends without moving), or on a starved runner deliver it in a couple of jumps the
+        // refresh control never sees cross its threshold. Only when the app says the drag barely
+        // reached it, try once more: retrying any pull that didn't commit would pass a pull to
+        // refresh that only works some of the time.
         pull(in: app)
-
-        let reloaded = app.webViews.staticTexts["Load 2"]
-        // Right after a fresh install the simulator can drop a synthesized drag entirely (the touch
-        // begins and ends without moving). Only then, try once more.
-        if !reloaded.appears(within: 8), heading.exists, touchMoves(in: app) == 0 {
+        if let moves = movesOfDroppedPull(in: app), moves < 10 {
             pull(in: app)
         }
+        XCTAssertEqual(pullOutcome(in: app), "committed", "pulling at the top didn't commit a reload")
+
+        let reloaded = app.webViews.staticTexts["Load 2"]
         XCTAssertTrue(reloaded.appears(within: Ceiling.load), "pulling at the top didn't reload")
         // The spinner holds the page down by its own height until it ends.
         assertSettles(reloaded, at: restingTop, "the page didn't settle after the reload")
@@ -130,6 +134,24 @@ final class PullToRefreshTests: UITestCase {
         let label = app.webViews.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Touch moves: '"))
             .firstMatch.label
         return Int(label.dropFirst("Touch moves: ".count)) ?? 0
+    }
+
+    /// How the app says the last drag went (`UITesting.pull`) once it's over: "committed",
+    /// "dropped <moves>", or "none" if no drag has reached the page.
+    private func pullOutcome(in app: XCUIApplication) -> String? {
+        let probe = app.descendants(matching: .any)["UITesting.pull"].firstMatch
+        _ = waitUntil(Ceiling.ui, "Waiting for the pull to end") { probe.value as? String != "moving" }
+        let outcome = probe.value as? String
+        XCTContext.runActivity(named: "The pull ended: \(outcome ?? "no probe")") { _ in }
+        return outcome
+    }
+
+    /// How many times the last drag moved, if it ended without committing a reload; 0 if it never
+    /// reached the page.
+    private func movesOfDroppedPull(in app: XCUIApplication) -> Int? {
+        let outcome = pullOutcome(in: app)
+        if outcome == "committed" { return nil }
+        return outcome.flatMap { Int($0.dropFirst("dropped ".count)) } ?? 0
     }
 
     /// Without this, a dropped drag would pass every "doesn't reload" test.

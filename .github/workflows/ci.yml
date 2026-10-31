@@ -119,6 +119,21 @@ jobs:
           # process ID").
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
+          # A fresh simulator renders its whole wallpaper gallery (PosterBoard) and its widgets
+          # (chronod): 100+ extension launches in bursts that took this 3-core runner from the tests
+          # and timed them out. Disable both, then boot again so neither starts; the setting lasts
+          # for the simulator's life. `disable` succeeds even for a label that doesn't exist, so
+          # check afterwards: a runtime that renames either gets a warning, not a failed run.
+          PRIVATE_SERVICES="user/$(id -u)/com.apple.PosterBoard system/com.apple.chronod"
+          for service in $PRIVATE_SERVICES; do xcrun simctl spawn "$UDID" launchctl disable "$service"; done
+          xcrun simctl shutdown "$UDID"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          for service in $PRIVATE_SERVICES; do
+            if xcrun simctl spawn "$UDID" launchctl print "$service" > /dev/null 2>&1; then
+              echo "::warning::$service is still running; the simulator may take the runner from the tests"
+            fi
+          done
           echo "UDID=$UDID" >> "$GITHUB_ENV"
       - name: UI tests
         env:
@@ -129,6 +144,12 @@ jobs:
         run: |
           ONLY_TESTING=$(scripts/ui-test-shard.py ${{ strategy.job-index }} ${{ strategy.job-total }})
           XCTESTRUN=$(ls build/Products/*.xctestrun)
+          # No screen recording: XCTest encodes video of every test in software (on a 3-core VM, with
+          # no GPU) and keeps it only on failure, and automatic screenshots would cost an image per
+          # action. UITestCase attaches its own screenshot and accessibility tree at a failure.
+          [ "$(plutil -extract TestConfigurations.0.TestTargets.0.BlueprintName raw "$XCTESTRUN")" = CormorantUITests ]
+          plutil -replace TestConfigurations.0.TestTargets.0.PreferredScreenCaptureFormat -string screenshots "$XCTESTRUN"
+          plutil -replace TestConfigurations.0.TestTargets.0.SystemAttachmentLifetime -string keepNever "$XCTESTRUN"
           # A mistyped manual stress run must fail, not quietly run each test once.
           case "$ITERATIONS" in
             '' | *[!0-9]* | 0 | 0*) echo "::error::iterations must be a positive integer, got '$ITERATIONS'"; exit 1 ;;
@@ -137,8 +158,8 @@ jobs:
           # iteration"), so a single run leaves the flag off.
           ITERATION_ARGS=()
           if [ "$ITERATIONS" -gt 1 ]; then ITERATION_ARGS=(-test-iterations "$ITERATIONS"); fi
-          # No sysdiagnose on failure: collecting one hung a run for 10 minutes and the result
-          # bundle's recording and log say what failed.
+          # No sysdiagnose on failure: collecting one hung a run for 10 minutes, and the result
+          # bundle's attachments and the simulator's log say what failed.
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "platform=iOS Simulator,id=$UDID" \
             -resultBundlePath build/UITests.xcresult \

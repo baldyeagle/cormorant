@@ -24,9 +24,13 @@ final class TabSession {
     private(set) var progress = 0.0
     /// Set while the user scrolls down a page; the bottom bar shrinks to a strip.
     var isBarCollapsed = false
-    /// Chrome tint for the status-bar strip. Always nil in build one; a later build can fill it
-    /// from `<meta name="theme-color">` (it also needs a matching status-bar style).
-    private(set) var themeColor: Color?
+    /// The color WebKit paints under the page, which is what shows behind the status bar above the
+    /// page's top (`BrowserStore.statusBarTint(in:)`). Nil until a page has committed: before that it's
+    /// only the web view's own background. Settled: see `pageBackgroundDidChange()`.
+    private(set) var pageBackground: UIColor?
+    /// The appearance `pageBackground` was read in. A page's colors can follow it, and a tab off screen
+    /// only restyles once it's shown, so a color from the other appearance is out of date.
+    private(set) var pageBackgroundStyle = UIUserInterfaceStyle.unspecified
     private(set) var loadError: LoadError?
     /// A main-frame response WebKit can't display (a download). Downloads come in build two.
     var blockedDownloadURL: URL?
@@ -75,6 +79,12 @@ final class TabSession {
     @ObservationIgnored private var lastRequestedURL: URL?
     @ObservationIgnored private var lastScrollY: CGFloat = 0
     @ObservationIgnored private var lastInsetTop: CGFloat = 0
+    @ObservationIgnored private var hasCommittedPage = false
+    @ObservationIgnored private var pageBackgroundTask: Task<Void, Never>?
+    @ObservationIgnored private var traitRegistration: (any UITraitChangeRegistration)?
+    /// The color behind the status bar for whichever tab is on screen, for an animation that hands
+    /// over to it (the link preview's card growing into its new tab).
+    @ObservationIgnored var activeStripColor: ((UIUserInterfaceStyle) -> UIColor?)?
     /// Asked of WebKit for every navigation in this tab. Per tab, not persisted.
     @ObservationIgnored private(set) var requestedContentMode: WKWebpagePreferences.ContentMode = .recommended
     @ObservationIgnored private var scrollTravel: CGFloat = 0
@@ -131,6 +141,12 @@ final class TabSession {
         pullToRefresh.pageDidChange(webView.url)
         // Suspended while it was a preview; a tab plays media under the usual rules.
         webView.setAllMediaPlaybackSuspended(false)
+        // Already committed, so no commit will say so; its color is the page's own already.
+        hasCommittedPage = webView.url != nil
+        if hasCommittedPage {
+            pageBackground = webView.underPageBackgroundColor
+            pageBackgroundStyle = webView.traitCollection.userInterfaceStyle
+        }
     }
 
     private init(tabID: UUID, blocking: BlockingService, webView: WKWebView, contentController: WKUserContentController) {
@@ -150,6 +166,12 @@ final class TabSession {
         webView.uiDelegate = coordinator
         pullToRefresh.onRefresh = { [weak self] in self?.reload() }
         observe()
+        // A page restyles for the new appearance without always changing its under-page color (a
+        // light-only page stays white), so re-read it then too.
+        traitRegistration = webView.registerForTraitChanges([UITraitUserInterfaceStyle.self]) {
+            [weak self] (_: WKWebView, _: UITraitCollection) in
+            self?.pageBackgroundDidChange()
+        }
     }
 
     /// Installs blocking rules, then performs the tab's first load: restoring saved back/forward
@@ -366,6 +388,8 @@ final class TabSession {
 
     func navigationDidCommit(_ navigation: WKNavigation) {
         effectiveContentMode = navigation.effectiveContentMode
+        hasCommittedPage = true
+        pageBackgroundDidChange()
     }
 
     func pageDidFinishLoading() { onPageLoaded?() }
@@ -473,6 +497,9 @@ final class TabSession {
                     self?.onPageChange?(web.url, web.title ?? "")
                 }
             },
+            webView.observe(\.underPageBackgroundColor, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.pageBackgroundDidChange() }
+            },
             webView.observe(\.title, options: [.new]) { [weak self] web, _ in
                 MainActor.assumeIsolated { self?.onPageChange?(web.url, web.title ?? "") }
             },
@@ -480,6 +507,21 @@ final class TabSession {
                 MainActor.assumeIsolated { self?.scrollViewDidScroll(scrollView) }
             },
         ]
+    }
+
+    /// Takes WebKit's under-page color once it has held for a moment. Around a load WebKit passes
+    /// through a placeholder (white) for ~100 ms before the page's own, which would flip the status
+    /// bar's style and flash the iPhone Duo's status-bar column.
+    private func pageBackgroundDidChange() {
+        pageBackgroundTask?.cancel()
+        pageBackgroundTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard let self, !Task.isCancelled, hasCommittedPage else { return }
+            let color = webView.underPageBackgroundColor
+            let style = webView.traitCollection.userInterfaceStyle
+            if color != pageBackground { pageBackground = color }
+            if style != pageBackgroundStyle { pageBackgroundStyle = style }
+        }
     }
 
     /// Collapses the bar after a short scroll down, expands it after a short scroll up or at the top.

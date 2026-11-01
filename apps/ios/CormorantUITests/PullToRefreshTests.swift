@@ -105,8 +105,10 @@ final class PullToRefreshTests: UITestCase {
                        "a pull inside a scrolled element reloaded")
 
         // The page itself can still be pulled, from outside the element; otherwise the above proves nothing.
+        // As long as `pull(in:)`: where the page runs under a status bar along the top, the control
+        // needs about 15 pt more pull to commit.
         let heading = app.webViews.staticTexts["Load 1"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        heading.press(forDuration: 0.05, thenDragTo: heading.withOffset(CGVector(dx: 0, dy: 300)),
+        heading.press(forDuration: 0.05, thenDragTo: heading.withOffset(CGVector(dx: 0, dy: 400)),
                       withVelocity: .slow, thenHoldForDuration: 0.3)
         XCTAssertTrue(app.webViews.staticTexts["Load 2"].appears(within: Ceiling.load),
                       "the page couldn't be pulled from outside the element")

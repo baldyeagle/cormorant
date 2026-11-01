@@ -12,7 +12,7 @@ struct WebViewContainer: UIViewRepresentable {
     /// Arc's back-to-close. Read when a swipe starts, so a swipe finishes with the tab it began on.
     struct BackSwipeClose {
         /// The tab the close lands on, shown under the page as it slides away. Nil shows a blank page.
-        let destinationSnapshot: () -> UIImage?
+        let destinationSnapshot: () -> PageSnapshot?
         let close: () -> Void
     }
 
@@ -91,17 +91,19 @@ struct WebViewContainer: UIViewRepresentable {
 
         /// Two insets, because they do different jobs:
         /// - `obscuredContentInsets` shrinks WebKit's layout viewport to the uncovered area, so
-        ///   `position: fixed` elements (bottom and top) are laid out above the bar.
+        ///   `position: fixed` elements are laid out above the bar and below the status bar. Where the
+        ///   page runs under the status bar (the top safe area), WebKit also carries a fixed header's
+        ///   color up behind it, and the soft edge effect keeps the clock legible over content.
         /// - the scroll view's content inset extends the scroll range so the end of the page can
         ///   scroll clear of the bar (UIKit adds the home-indicator safe area on top of it).
         /// The keyboard is left to WebKit.
         private func updateBarInsets() {
             guard let webView else { return }
-            let covered = barHeight + safeAreaInsets.bottom
-            if webView.obscuredContentInsets.bottom != covered {
-                webView.obscuredContentInsets = UIEdgeInsets(top: 0, left: 0, bottom: covered, right: 0)
-            }
+            let covered = UIEdgeInsets(top: safeAreaInsets.top, left: 0, bottom: barHeight + safeAreaInsets.bottom, right: 0)
+            if webView.obscuredContentInsets != covered { webView.obscuredContentInsets = covered }
             let scrollView = webView.scrollView
+            let edge: UIScrollEdgeEffect.Style = covered.top > 0 ? .soft : .automatic
+            if scrollView.topEdgeEffect.style != edge { scrollView.topEdgeEffect.style = edge }
             if scrollView.contentInset.bottom != barHeight {
                 scrollView.contentInset.bottom = barHeight
                 scrollView.verticalScrollIndicatorInsets.bottom = barHeight
@@ -195,7 +197,7 @@ private final class BackSwipe {
     let close: () -> Void
     private(set) var isCommitted = false
     private let webView: WKWebView
-    private let underlay: UIImageView
+    private let underlay = UIView()
     private let shadow = UIView()
     private let reduceMotion = UIAccessibility.isReduceMotionEnabled
 
@@ -204,14 +206,25 @@ private final class BackSwipe {
     private static let cardScale: CGFloat = 0.94
     private static let cardCornerRadius: CGFloat = 36
 
-    init(webView: WKWebView, in container: UIView, snapshot: UIImage?, close: @escaping () -> Void) {
+    init(webView: WKWebView, in container: UIView, snapshot: PageSnapshot?, close: @escaping () -> Void) {
         self.webView = webView
         self.close = close
-        underlay = UIImageView(image: snapshot)
         underlay.frame = webView.frame
-        underlay.contentMode = .scaleAspectFill
         underlay.clipsToBounds = true
         underlay.backgroundColor = .systemBackground
+        // The page below the status bar and, where it runs under it, the band behind it, as the snapshot
+        // split them (without one, the background shows there).
+        let band = min(webView.obscuredContentInsets.top, webView.bounds.height)
+        for (image, frame) in [(snapshot?.statusBand, CGRect(x: 0, y: 0, width: webView.bounds.width, height: band)),
+                               (snapshot?.content, CGRect(x: 0, y: band, width: webView.bounds.width,
+                                                          height: webView.bounds.height - band))] {
+            guard let image, frame.height > 0 else { continue }
+            let view = UIImageView(image: image)
+            view.frame = frame
+            view.contentMode = .scaleAspectFill
+            view.clipsToBounds = true
+            underlay.addSubview(view)
+        }
         container.insertSubview(underlay, belowSubview: webView)
         guard !reduceMotion else { return }
         shadow.frame = webView.frame

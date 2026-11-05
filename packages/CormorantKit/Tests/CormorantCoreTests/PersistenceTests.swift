@@ -56,7 +56,7 @@ import Testing
         let json = try String(contentsOf: fileURL, encoding: .utf8)
         // t0 is whole seconds, which JSONEncoder writes without a fraction.
         #expect(json.contains("\"createdAt\":\(Int(t0.timeIntervalSinceReferenceDate))"))
-        #expect(json.contains("\"schemaVersion\":1"))
+        #expect(json.contains("\"schemaVersion\":\(BrowserState.currentSchemaVersion)"))
     }
 
     @Test func readsLegacyISO8601Dates() async throws {
@@ -171,5 +171,33 @@ import Testing
             }
         }
         #expect(destinations.count == 2)
+    }
+
+    @Test func aFileFromANewerBuildLoadsAndIsCopiedAside() async throws {
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fileURL = dir.appending(path: "state.json")
+        let newer = BrowserState.currentSchemaVersion + 1
+        let json = "{\"schemaVersion\":\(newer),\"spaces\":[{\"id\":\"\(Space.defaultID)\",\"name\":\"Home\",\"future\":1}]}"
+        try Data(json.utf8).write(to: fileURL)
+        let store = JSONBrowserStateStore(fileURL: fileURL)
+        let state = try await store.load()
+        #expect(state.schemaVersion == newer)
+        let copies = try FileManager.default.contentsOfDirectory(atPath: dir.path(percentEncoded: false))
+            .filter { $0.hasPrefix("state.v\(newer)-") }
+        #expect(copies.count == 1)
+        let copy = try Data(contentsOf: dir.appending(path: copies[0]))
+        #expect(String(decoding: copy, as: UTF8.self) == json)
+
+        // One copy per version, however often it loads unsaved.
+        _ = try await store.load()
+        let again = try FileManager.default.contentsOfDirectory(atPath: dir.path(percentEncoded: false))
+        #expect(again.filter { $0.hasPrefix("state.v\(newer)-") }.count == 1)
+
+        // A file at this build's version gets no copy.
+        try await store.save(state)
+        _ = try await store.load()
+        let after = try FileManager.default.contentsOfDirectory(atPath: dir.path(percentEncoded: false))
+        #expect(after.count == 2)
     }
 }

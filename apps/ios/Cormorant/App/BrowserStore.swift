@@ -16,8 +16,6 @@ final class BrowserStore {
         let keptCopyName: String?
     }
 
-    /// Fixed for build one; a setting later.
-    static let archivePolicy = ArchivePolicy.oneDay
     /// Web views are kept for this many most-recently-viewed tabs; older ones are rebuilt on demand.
     static let liveWebViewLimit = 10
     /// Background tabs that load at once. Each is a full-size page painting in its own web content
@@ -189,7 +187,7 @@ final class BrowserStore {
         defaultBrowser.didBecomeActive()
         guard isLoaded else { return }
         stampActiveTab()
-        state.runArchive(policy: Self.archivePolicy)
+        state.runArchive()
         openInboxAndPending()
         if state.activeTabID == nil, let first = state.activeSpaceTabs.first {
             state.activate(tabID: first.id)
@@ -298,7 +296,7 @@ final class BrowserStore {
     }
 
     func deleteArchived(_ archivedID: UUID) {
-        state.archived.removeAll { $0.id == archivedID }
+        state.deleteArchived(archivedID)
         scheduleSave()
     }
 
@@ -374,7 +372,7 @@ final class BrowserStore {
         // An adopted page may have redirected; the tab records where it ended up. Like any tab a link
         // opens, swiping back from its first page closes it.
         let tab = state.openTab(url: handoff?.webView.url ?? url, title: handoff?.webView.title ?? "",
-                                activate: !inBackground, fromLink: true)
+                                inSpace: spaceID(of: opener), activate: !inBackground, fromLink: true)
         unvisitedTabIDs.insert(tab.id)
         // Stamped after, so the page being read stays first in the switcher, the new tab next.
         if inBackground { stampActiveTab() }
@@ -547,8 +545,8 @@ final class BrowserStore {
     /// Marks the active tab as just viewed. Call before the active tab changes (so the tab being left
     /// isn't auto-archived as if it had been idle since it was opened) and when the app goes away.
     private func stampActiveTab() {
-        guard let id = state.activeTabID, let index = state.tabs.firstIndex(where: { $0.id == id }) else { return }
-        state.tabs[index].lastViewedAt = .now
+        guard let id = state.activeTabID else { return }
+        state.markViewed(tabID: id)
     }
 
     private func openInboxAndPending() {
@@ -570,28 +568,31 @@ final class BrowserStore {
     /// Build one kept a URL-less placeholder tab alive; tabs now exist only with a page, so drop any
     /// left in saved state. An empty Space is valid and shows the search panel.
     private func dropBlankTabs() {
-        guard state.tabs.contains(where: { $0.url == nil }) else { return }
-        state.tabs.removeAll { $0.url == nil }
-        if let id = state.activeTabID, !state.tabs.contains(where: { $0.id == id }) {
-            state.activeTabID = nil
-        }
+        state.removeBlankTabs()
     }
 
     /// `window.open` / `target=_blank`: a new active Today tab whose web view WebKit will navigate.
     private func openChild(configuration: WKWebViewConfiguration, for action: WKNavigationAction,
                            from opener: TabSession?) -> WKWebView? {
-        guard isLoaded else { return nil }
+        // In the opener's Space: the web view WebKit hands over runs on the opener's website data. An
+        // archived (or gone) Space has nowhere to put it, so the popup is refused.
+        let openerSpace = spaceID(of: opener)
+        guard isLoaded, openerSpace.map({ state.space($0)?.isArchived == false }) ?? true else { return nil }
         isComposingNewTab = false
         // `window.open('')` has no URL yet; the opener navigates or writes into the new view.
         let requested = action.request.url.flatMap { $0.absoluteString.isEmpty ? nil : $0 }
         stampActiveTab()
-        let tab = state.openTab(url: requested ?? URL(string: "about:blank"), fromLink: true)
+        let tab = state.openTab(url: requested ?? URL(string: "about:blank"), inSpace: openerSpace, fromLink: true)
         let session = makeSession(for: tab, configuration: configuration)
         // Before WebKit navigates it, so a popup from a desktop-mode tab opens in desktop mode too.
         if let opener { session.apply(opener.viewSettings) }
         session.installCachedBlocking(for: requested)
         stateDidChange()
         return session.webView
+    }
+
+    private func spaceID(of session: TabSession?) -> UUID? {
+        session.flatMap { session in state.tabs.first { $0.id == session.tabID }?.spaceID }
     }
 
     private func stateDidChange() {
@@ -720,7 +721,7 @@ final class BrowserStore {
         guard let index = state.tabs.firstIndex(where: { $0.id == tabID }) else { return }
         if let url, url != state.tabs[index].url { navigatedTabIDs.insert(tabID) }
         state.update(tabID: tabID, url: url ?? state.tabs[index].url, title: title)
-        if tabID == state.activeTabID { state.tabs[index].lastViewedAt = .now }
+        if tabID == state.activeTabID { state.markViewed(tabID: tabID) }
         scheduleSave()
     }
 

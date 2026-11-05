@@ -43,6 +43,8 @@ jobs:
     timeout-minutes: 30
     outputs:
       xcode: ${{ steps.xcode.outputs.path }}
+      xcode-version: ${{ steps.xcode.outputs.version }}
+      xcode-build: ${{ steps.xcode.outputs.build }}
     steps:
       - uses: actions/checkout@v4
       - name: Select newest Xcode on the runner
@@ -52,6 +54,8 @@ jobs:
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
           echo "path=$XCODE" >> "$GITHUB_OUTPUT"
+          echo "version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$XCODE/Contents/Info.plist")" >> "$GITHUB_OUTPUT"
+          echo "build=$(/usr/libexec/PlistBuddy -c 'Print ProductBuildVersion' "$XCODE/Contents/version.plist")" >> "$GITHUB_OUTPUT"
       - name: Default-browser plist checklist (source)
         run: scripts/check-default-browser-plist.sh
       - name: Build for testing
@@ -96,9 +100,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Select the Xcode that built the tests
-        # A runner from a newer image rollout may not have it; fail rather than run with another.
+        # A runner from another image in a rollout may not have that path: it then takes the same Xcode
+        # version under another name (a release candidate replaced by the release, same SDK), and fails
+        # rather than run with a different version.
+        env:
+          XCODE: ${{ needs.ios.outputs.xcode }}
+          VERSION: ${{ needs.ios.outputs.xcode-version }}
+          BUILD: ${{ needs.ios.outputs.xcode-build }}
         run: |
-          sudo xcode-select -s "${{ needs.ios.outputs.xcode }}"
+          if [ ! -d "$XCODE" ]; then
+            XCODE=""
+            for candidate in /Applications/Xcode_*.app; do
+              if [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$candidate/Contents/Info.plist")" = "$VERSION" ]; then
+                XCODE=$candidate
+                break
+              fi
+            done
+            if [ -z "$XCODE" ]; then
+              echo "::error::No Xcode $VERSION on this runner: $(ls -d /Applications/Xcode_*.app | tr '\n' ' ')"
+              exit 1
+            fi
+            echo "::notice::Built with Xcode $VERSION ($BUILD), not on this runner; testing with $XCODE ($(/usr/libexec/PlistBuddy -c 'Print ProductBuildVersion' "$XCODE/Contents/version.plist"))"
+          fi
+          sudo xcode-select -s "$XCODE"
           xcodebuild -version
       - uses: actions/download-artifact@v4
         with:

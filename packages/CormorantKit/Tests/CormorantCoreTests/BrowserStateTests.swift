@@ -114,7 +114,7 @@ import Testing
         let fresh = state.openTab(url: url("https://fresh.com"), now: t0 + 20 * hour)
         let active = state.openTab(url: url("https://active.com"), now: t0)  // active, though idle
 
-        let archived = state.runArchive(policy: .oneDay, now: t0 + 25 * hour)
+        let archived = state.runArchive(now: t0 + 25 * hour)  // Home's default policy: one day
 
         #expect(archived.map(\.id) == [stale.id])
         #expect(state.archived.map(\.id) == [stale.id])
@@ -125,10 +125,11 @@ import Testing
 
     @Test func runArchiveWithOffPolicyDoesNothing() {
         var state = BrowserState()
+        state.updateSpace(Space.defaultID) { $0.archivePolicy = .off }
         _ = state.openTab(url: url("https://a.com"), now: t0)
         _ = state.openTab(url: url("https://b.com"), now: t0)
         let before = state
-        #expect(state.runArchive(policy: .off, now: t0 + 1_000 * hour).isEmpty)
+        #expect(state.runArchive(now: t0 + 1_000 * hour).isEmpty)
         #expect(state == before)
     }
 

@@ -1,20 +1,37 @@
 import Foundation
 
-/// A named collection of tabs, mirroring Arc's Spaces. Build one uses a single default Space.
+/// A named collection of tabs, mirroring Arc's Spaces. Each Space uses one `Profile` (its logins and
+/// website data); several Spaces can share one.
 public struct Space: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
     public var name: String
+    public var icon: SpaceIcon
+    public var color: Swatch
+    public var profileID: UUID
+    /// Idle time before this Space's Today tabs archive.
+    public var archivePolicy: ArchivePolicy
+    /// Set while the Space is archived: kept with its tabs, but out of switching.
+    public var archivedAt: Date?
     public let createdAt: Date
 
-    public init(id: UUID = UUID(), name: String, createdAt: Date = .now) {
+    public init(id: UUID = UUID(), name: String, icon: SpaceIcon = .house, color: Swatch = .teal,
+                profileID: UUID = Profile.defaultID, archivePolicy: ArchivePolicy = .oneDay,
+                archivedAt: Date? = nil, createdAt: Date = .now) {
         self.id = id
         self.name = name
+        self.icon = icon
+        self.color = color
+        self.profileID = profileID
+        self.archivePolicy = archivePolicy
+        self.archivedAt = archivedAt
         self.createdAt = createdAt
     }
 
-    /// The Space every tab lives in until Spaces ship.
+    public var isArchived: Bool { archivedAt != nil }
+
+    /// Home: always exists, can be renamed but not archived or deleted.
     public static let defaultID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-    public static var `default`: Space { Space(id: defaultID, name: "Home") }
+    public static var `default`: Space { Space(id: defaultID, name: "Home", createdAt: .distantPast) }
 }
 
 /// Where a tab lives in the sidebar.
@@ -113,6 +130,12 @@ extension Space {
         self.init(
             id: try container.decode(UUID.self, forKey: .id),
             name: try container.decodeIfPresent(String.self, forKey: .name) ?? "",
+            icon: try container.decodeIfPresent(SpaceIcon.self, forKey: .icon) ?? .house,
+            color: try container.decodeIfPresent(Swatch.self, forKey: .color) ?? .teal,
+            profileID: try container.decodeIfPresent(UUID.self, forKey: .profileID) ?? Profile.defaultID,
+            // A policy this build can't read (a newer build's shape) costs the setting, not the file.
+            archivePolicy: (try? container.decodeIfPresent(ArchivePolicy.self, forKey: .archivePolicy)) ?? .oneDay,
+            archivedAt: try container.decodeIfPresent(Date.self, forKey: .archivedAt),
             createdAt: try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .distantPast
         )
     }

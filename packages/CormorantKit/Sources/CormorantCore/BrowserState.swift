@@ -2,42 +2,57 @@ import Foundation
 
 /// Everything the browser persists about tabs. One value, saved atomically.
 public struct BrowserState: Codable, Sendable, Equatable {
-    /// Version of the on-disk shape. Bump when a change needs a migration rather than a decode default.
-    public static let currentSchemaVersion = 1
+    /// Version of the on-disk shape. Bump when an older build saving the file would drop data: the
+    /// store keeps a copy of any file newer than this build (see `JSONBrowserStateStore.load()`).
+    /// 2: profiles, and Space icon / color / profile / archive policy / archived date.
+    public static let currentSchemaVersion = 2
 
     /// Schema version this value was decoded from (or `currentSchemaVersion` for new values), for
     /// migrations. Encoding always writes `currentSchemaVersion`.
     public var schemaVersion: Int
-    public var spaces: [Space]
-    public var tabs: [Tab]
-    public var archived: [ArchivedTab]
-    public var activeSpaceID: UUID
-    public var activeTabID: UUID?
+    /// In display order. Always holds Home (`Space.defaultID`); see `normalize()`.
+    /// Change through the Space methods (`addSpace`, `updateSpace`, ...), which keep these consistent.
+    public internal(set) var spaces: [Space]
+    /// Always holds the default profile (`Profile.defaultID`).
+    public internal(set) var profiles: [Profile]
+    /// Change through the tab methods (`openTab`, `activate`, `moveTab`, ...), which keep every tab in
+    /// an existing Space.
+    public internal(set) var tabs: [Tab]
+    public internal(set) var archived: [ArchivedTab]
+    /// Never an archived Space. Change with `switchToSpace` (or `activate`, `restore`).
+    public internal(set) var activeSpaceID: UUID
+    /// A tab in the active Space, or nil.
+    public internal(set) var activeTabID: UUID?
 
-    public init(spaces: [Space] = [.default], tabs: [Tab] = [], archived: [ArchivedTab] = [],
-                activeSpaceID: UUID = Space.defaultID, activeTabID: UUID? = nil) {
+    /// Missing Home or default profile are added (see `normalize()`).
+    public init(spaces: [Space] = [.default], profiles: [Profile] = [.default], tabs: [Tab] = [],
+                archived: [ArchivedTab] = [], activeSpaceID: UUID = Space.defaultID, activeTabID: UUID? = nil) {
         self.schemaVersion = Self.currentSchemaVersion
         self.spaces = spaces
+        self.profiles = profiles
         self.tabs = tabs
         self.archived = archived
         self.activeSpaceID = activeSpaceID
         self.activeTabID = activeTabID
+        normalize()
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, spaces, tabs, archived, activeSpaceID, activeTabID
+        case schemaVersion, spaces, profiles, tabs, archived, activeSpaceID, activeTabID
     }
 
-    /// Missing fields take defaults (files from before `schemaVersion` existed are version 1).
+    /// Missing fields take defaults (files from before `schemaVersion` existed are version 1), then
+    /// `normalize()` repairs dangling references.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
-        let spaces = try container.decodeIfPresent([Space].self, forKey: .spaces) ?? []
-        self.spaces = spaces.isEmpty ? [.default] : spaces
+        spaces = try container.decodeIfPresent([Space].self, forKey: .spaces) ?? []
+        profiles = try container.decodeIfPresent([Profile].self, forKey: .profiles) ?? []
         tabs = try container.decodeIfPresent([Tab].self, forKey: .tabs) ?? []
         archived = try container.decodeIfPresent([ArchivedTab].self, forKey: .archived) ?? []
         activeSpaceID = try container.decodeIfPresent(UUID.self, forKey: .activeSpaceID) ?? Space.defaultID
         activeTabID = try container.decodeIfPresent(UUID.self, forKey: .activeTabID)
+        normalize()
     }
 
     /// Always writes `currentSchemaVersion`: the encoded shape is this build's, whatever was read.
@@ -45,6 +60,7 @@ public struct BrowserState: Codable, Sendable, Equatable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
         try container.encode(spaces, forKey: .spaces)
+        try container.encode(profiles, forKey: .profiles)
         try container.encode(tabs, forKey: .tabs)
         try container.encode(archived, forKey: .archived)
         try container.encode(activeSpaceID, forKey: .activeSpaceID)
@@ -54,9 +70,7 @@ public struct BrowserState: Codable, Sendable, Equatable {
     public static let empty = BrowserState()
 
     /// Tabs in the active Space, most recently viewed first.
-    public var activeSpaceTabs: [Tab] {
-        tabs.filter { $0.spaceID == activeSpaceID }.sorted { $0.lastViewedAt > $1.lastViewedAt }
-    }
+    public var activeSpaceTabs: [Tab] { tabs(inSpace: activeSpaceID) }
 
     /// Archived tabs grouped by calendar day of archiving, newest day first.
     public func archivedByDay(calendar: Calendar = .current) -> [(day: Date, tabs: [ArchivedTab])] {
@@ -102,7 +116,9 @@ public actor JSONBrowserStateStore: BrowserStateStore {
     /// example data protection before first unlock) propagate unchanged and leave the file alone.
     /// A file that exists but does not decode is moved aside to
     /// `<name>.corrupt-<ISO 8601 timestamp>.json` and `BrowserStateStoreError.unreadable` is thrown,
-    /// so the next `save` starts a fresh file without destroying the old one.
+    /// so the next `save` starts a fresh file without destroying the old one. A file from a newer
+    /// build (higher `schemaVersion`) loads, but is first copied to `<name>.v<version>-<timestamp>.json`,
+    /// since saving it in this build's shape drops what this build doesn't know.
     public func load() async throws -> BrowserState {
         let data: Data
         do {
@@ -110,15 +126,46 @@ public actor JSONBrowserStateStore: BrowserStateStore {
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return .empty
         }
+        let state: BrowserState
         do {
-            return try CoreJSON.decoder().decode(BrowserState.self, from: data)
+            state = try CoreJSON.decoder().decode(BrowserState.self, from: data)
         } catch {
             throw BrowserStateStoreError.unreadable(quarantinedTo: quarantine(), underlying: "\(error)")
+        }
+        if state.schemaVersion > BrowserState.currentSchemaVersion {
+            try keepNewerCopy(version: state.schemaVersion)
+        }
+        return state
+    }
+
+    /// Copies a newer build's file aside, once per version. If that fails, the file is quarantined
+    /// instead (`unreadable`), so nothing saves over the only copy.
+    private func keepNewerCopy(version: Int) throws {
+        let prefix = "\(fileURL.deletingPathExtension().lastPathComponent).v\(version)-"
+        let directory = fileURL.deletingLastPathComponent()
+        let existing = (try? FileManager.default.contentsOfDirectory(atPath: directory.path(percentEncoded: false))) ?? []
+        guard !existing.contains(where: { $0.hasPrefix(prefix) }) else { return }
+        do {
+            try FileManager.default.copyItem(at: fileURL, to: sideFile(tag: "v\(version)"))
+        } catch {
+            throw BrowserStateStoreError.unreadable(quarantinedTo: quarantine(),
+                                                    underlying: "couldn't keep a copy of a v\(version) file: \(error)")
         }
     }
 
     /// Moves the unreadable file next to itself under a timestamped name. Best effort: nil on failure.
-    private func quarantine(now: Date = .now) -> URL? {
+    private func quarantine() -> URL? {
+        let destination = sideFile(tag: "corrupt")
+        do {
+            try FileManager.default.moveItem(at: fileURL, to: destination)
+            return destination
+        } catch {
+            return nil
+        }
+    }
+
+    /// An unused path next to the file: `<name>.<tag>-<timestamp>.json`.
+    private func sideFile(tag: String, now: Date = .now) -> URL {
         let directory = fileURL.deletingLastPathComponent()
         let base = fileURL.deletingPathExtension().lastPathComponent
         let ext = fileURL.pathExtension.isEmpty ? "json" : fileURL.pathExtension
@@ -126,16 +173,9 @@ public actor JSONBrowserStateStore: BrowserStateStore {
         let stamp = now.formatted(.iso8601
             .year().month().day().dateSeparator(.omitted)
             .time(includingFractionalSeconds: true).timeSeparator(.omitted))
-        var destination = directory.appending(path: "\(base).corrupt-\(stamp).\(ext)")
-        if FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
-            destination = directory.appending(path: "\(base).corrupt-\(stamp)-\(UUID().uuidString.prefix(8)).\(ext)")
-        }
-        do {
-            try FileManager.default.moveItem(at: fileURL, to: destination)
-            return destination
-        } catch {
-            return nil
-        }
+        let destination = directory.appending(path: "\(base).\(tag)-\(stamp).\(ext)")
+        guard FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) else { return destination }
+        return directory.appending(path: "\(base).\(tag)-\(stamp)-\(UUID().uuidString.prefix(8)).\(ext)")
     }
 
     public func save(_ state: BrowserState) async throws {
@@ -147,7 +187,7 @@ public actor JSONBrowserStateStore: BrowserStateStore {
 }
 
 /// Decides which Today tabs are due for archiving.
-public struct ArchivePolicy: Sendable, Equatable, Codable {
+public struct ArchivePolicy: Sendable, Hashable, Codable {
     /// Idle time before a Today tab is archived. `nil` disables auto-archive.
     public var interval: TimeInterval?
 
@@ -158,6 +198,21 @@ public struct ArchivePolicy: Sendable, Equatable, Codable {
     public static let twelveHours = ArchivePolicy(interval: 12 * 60 * 60)
     public static let oneDay = ArchivePolicy(interval: 24 * 60 * 60)
     public static let off = ArchivePolicy(interval: nil)
+
+    private enum CodingKeys: String, CodingKey { case interval }
+
+    /// Off is written as `"interval": null`, so a shape this build doesn't know (no `interval` key)
+    /// reads as one day rather than off.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard container.contains(.interval) else { self = .oneDay; return }
+        interval = try container.decodeNil(forKey: .interval) ? nil : container.decode(TimeInterval.self, forKey: .interval)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(interval, forKey: .interval)
+    }
 
     /// Today tabs idle longer than `interval`, excluding `activeTabID`. Pinned tabs never archive.
     ///
@@ -177,14 +232,20 @@ extension BrowserState {
     /// Maximum number of archived entries kept; the oldest are dropped beyond this.
     public static let archiveCapacity = 2_000
 
-    /// Adds a Today tab in the active Space and makes it active, or leaves the active tab alone when
-    /// `activate` is false (a background tab). `fromLink` marks a tab a link opened.
-    public mutating func openTab(url: URL?, title: String = "", activate: Bool = true,
-                                 fromLink: Bool = false, now: Date = .now) -> Tab {
-        let tab = Tab(spaceID: activeSpaceID, url: url, title: title, kind: .today,
+    /// Adds a Today tab and makes it active, or leaves the active tab alone when `activate` is false
+    /// (a background tab). `fromLink` marks a tab a link opened.
+    ///
+    /// The tab goes in `spaceID` (a tab opened by another tab's page belongs with its opener, whatever
+    /// Space is showing), or the active Space when that's nil, unknown or archived. A tab opened outside
+    /// the active Space never becomes active.
+    public mutating func openTab(url: URL?, title: String = "", inSpace spaceID: UUID? = nil,
+                                 activate: Bool = true, fromLink: Bool = false, now: Date = .now) -> Tab {
+        var target = activeSpaceID
+        if let spaceID, space(spaceID)?.isArchived == false { target = spaceID }
+        let tab = Tab(spaceID: target, url: url, title: title, kind: .today,
                       openedFromLink: fromLink, createdAt: now)
         tabs.append(tab)
-        if activate { activeTabID = tab.id }
+        if activate, target == activeSpaceID { activeTabID = tab.id }
         return tab
     }
 
@@ -212,10 +273,12 @@ extension BrowserState {
         }
     }
 
-    /// Archives every tab the policy says is due.
+    /// Archives every tab its Space's `archivePolicy` says is due. Archived Spaces keep their tabs.
     @discardableResult
-    public mutating func runArchive(policy: ArchivePolicy, now: Date = .now) -> [ArchivedTab] {
-        let due = policy.tabsDue(in: tabs, activeTabID: activeTabID, now: now)
+    public mutating func runArchive(now: Date = .now) -> [ArchivedTab] {
+        let due = switchableSpaces.flatMap { space in
+            space.archivePolicy.tabsDue(in: tabs.filter { $0.spaceID == space.id }, activeTabID: activeTabID, now: now)
+        }
         guard !due.isEmpty else { return [] }
         var result: [ArchivedTab] = []
         for tab in due {
@@ -227,26 +290,43 @@ extension BrowserState {
 
     /// Reopens an archived tab as a Today tab and makes it active.
     ///
-    /// The tab returns to its original Space if that Space still exists (switching to it),
-    /// otherwise it opens in the active Space.
+    /// The tab returns to its original Space if that Space still exists and isn't archived (switching
+    /// to it), otherwise it opens in the active Space.
     @discardableResult
     public mutating func restore(archivedID: UUID, now: Date = .now) -> Tab? {
         guard let index = archived.firstIndex(where: { $0.id == archivedID }) else { return nil }
         let entry = archived.remove(at: index)
-        let spaceID = spaces.contains { $0.id == entry.spaceID } ? entry.spaceID : activeSpaceID
+        let spaceID = space(entry.spaceID)?.isArchived == false ? entry.spaceID : activeSpaceID
         let tab = Tab(spaceID: spaceID, url: entry.url, title: entry.title, kind: .today, createdAt: now)
         tabs.append(tab)
+        if spaceID != activeSpaceID, let activeTabID { markViewed(tabID: activeTabID, now: now) }
         activeSpaceID = spaceID
         activeTabID = tab.id
         return tab
     }
 
-    /// Marks a tab as viewed now and active. Switches to the tab's Space. No-op for unknown IDs.
+    /// Marks a tab as viewed now and active. Switches to the tab's Space, restoring it first if it was
+    /// archived (the user chose one of its tabs). No-op for unknown IDs.
     public mutating func activate(tabID: UUID, now: Date = .now) {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        restoreSpace(tabs[index].spaceID, now: now)
+        if tabs[index].spaceID != activeSpaceID, let activeTabID { markViewed(tabID: activeTabID, now: now) }
         tabs[index].lastViewedAt = now
         activeSpaceID = tabs[index].spaceID
         activeTabID = tabID
+    }
+
+    /// Counts the tab as viewed at `now` without changing which tab is active (so it doesn't auto-archive
+    /// as if idle since it was last activated). No-op for unknown IDs.
+    public mutating func markViewed(tabID: UUID, now: Date = .now) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        tabs[index].lastViewedAt = now
+    }
+
+    /// Drops every URL-less tab, clearing the active tab if it was one.
+    public mutating func removeBlankTabs() {
+        tabs.removeAll { $0.url == nil }
+        if let activeTabID, !tabs.contains(where: { $0.id == activeTabID }) { self.activeTabID = nil }
     }
 
     /// Sets whichever of `url` and `title` is non-nil. No-op for unknown IDs.
@@ -267,6 +347,8 @@ extension BrowserState {
         )
         archived = archived.indices.filter { !dropped.contains($0) }.map { archived[$0] }
     }
+
+    public mutating func deleteArchived(_ archivedID: UUID) { archived.removeAll { $0.id == archivedID } }
 
     public mutating func clearArchive() { archived.removeAll() }
 }

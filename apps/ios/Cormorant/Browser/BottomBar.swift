@@ -81,7 +81,7 @@ struct BottomBar: View {
             .padding(.vertical, 5)
             // Wide enough for the progress line to read under a short host like "x.com".
             .frame(minWidth: 140)
-            .overlay(alignment: .bottom) { LoadingLine(progress: progress, isLoading: isLoading) }
+            .overlay { LoadingLine(progress: progress, isLoading: isLoading) }
             .glassEffect(glass, in: .capsule)
             .contentShape(.capsule)
         }
@@ -161,7 +161,7 @@ struct BottomBar: View {
                 .font(.title3.weight(.medium))
                 // Gives way before the round buttons do (a narrow screen at the largest text size).
                 .frame(minWidth: controlSize, idealWidth: newTabWidth, maxWidth: newTabWidth, minHeight: controlSize)
-                .overlay(alignment: .bottom) { LoadingLine(progress: progress, isLoading: isLoading) }
+                .overlay { LoadingLine(progress: progress, isLoading: isLoading) }
                 .contentShape(.capsule)
         }
         .buttonStyle(.plain)
@@ -209,7 +209,8 @@ private struct TabCountGlyph: View {
     }
 }
 
-/// A hairline of page-load progress along the bottom edge of the control it overlays.
+/// A hairline of page-load progress along the bottom edge of the capsule it overlays, clipped to the
+/// capsule: that close to the bottom its rounded ends curve in further than the line's inset.
 private struct LoadingLine: View {
     let progress: Double
     let isLoading: Bool
@@ -220,6 +221,8 @@ private struct LoadingLine: View {
             .scaleEffect(x: 1, y: 0.6, anchor: .bottom)
             .padding(.horizontal, 14)
             .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .clipShape(.capsule)
             .opacity(isLoading ? 1 : 0)
             .animation(.easeOut(duration: 0.25), value: isLoading)
             .accessibilityHidden(true)

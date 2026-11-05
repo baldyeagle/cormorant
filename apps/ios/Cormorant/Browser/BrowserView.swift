@@ -172,7 +172,16 @@ struct BrowserView: View {
             // From the switcher's "+" or search: present once the cover is gone, or focus can't land.
             if !showSwitcher { presentSearch() }
         }
+        .onChange(of: store.closeSheetsRequest) {
+            dismissSearch()
+            // Settings, if stacked on the sheet, goes with it; `actionsDidDismiss` brings the panel up
+            // in an empty Space.
+            showActions = false
+        }
         .onChange(of: store.state.activeTabID) { _, _ in
+            // Archiving, deleting or switching Spaces in Settings' Manage Spaces: Settings stays.
+            // (A link from another app closes it through `closeSheetsRequest`.)
+            guard !store.isManagingSpacesInSettings else { return }
             // A tab opened from outside (share sheet, URL) must not leave the panel or sheet over the page.
             if store.activeTab?.url != nil {
                 dismissSearch()
@@ -282,6 +291,8 @@ struct BrowserView: View {
     }
 
     private func actionsDidDismiss() {
+        // Settings went with the sheet, Manage Spaces' page with it, whatever its own `onDisappear` did.
+        store.isManagingSpacesInSettings = false
         store.activeSession?.runPendingAction()
         // The last tab may have closed while the sheet was up.
         searchIfBlank()

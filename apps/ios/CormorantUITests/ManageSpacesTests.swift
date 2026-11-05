@@ -85,7 +85,7 @@ final class ManageSpacesTests: UITestCase {
         airplane.tap()
         XCTAssertTrue(waitUntil(Ceiling.ui) { airplane.isSelected }, "Airplane wasn't chosen")
         // Not in the navigation bar on every phone: the iPhone Duo's are in a column at the side.
-        app.buttons["BackButton"].tap()
+        topBackButton(in: app).tap()
         XCTAssertTrue(airplane.disappears(within: Ceiling.ui), "didn't go back to Edit Space")
 
         let save = app.buttons["Save"]
@@ -179,8 +179,9 @@ final class ManageSpacesTests: UITestCase {
 
         XCTAssertTrue(app.buttons["Save"].disappears(within: Ceiling.ui), "Edit Space didn't close")
         XCTAssertTrue(row("Work", in: app).disappears(within: Ceiling.ui), "Work is still listed")
-        app.buttons["Close"].tap()
-        XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
+        // Settings stays up through it, back in Home.
+        XCTAssertTrue(row("Home", in: app).isSelected, "Home isn't the current Space")
+        leaveSettings(in: app)
 
         // Back in Home, empty; Work's page is in the tab archive.
         XCTAssertTrue(searchField(in: app).appears(within: Ceiling.ui), "no search panel in empty Home")
@@ -246,11 +247,33 @@ final class ManageSpacesTests: UITestCase {
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.appears(within: Ceiling.ui), "caret sheet didn't open")
         settings.tap()
-        let spaces = app.buttons["Spaces"]
+        let spaces = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Spaces'")).firstMatch
         XCTAssertTrue(spaces.appears(within: Ceiling.ui), "Settings didn't open")
         spaces.tap()
+        // Pushed in Settings, like its other pages.
         XCTAssertTrue(app.navigationBars["Spaces"].appears(within: Ceiling.ui), "Manage Spaces didn't open")
-        XCTAssertTrue(app.navigationBars["Settings"].disappears(within: Ceiling.ui), "Settings is still up")
+        // Its back button (beside the bar, not in it, on CI's iPhone Duo).
+        XCTAssertTrue(topBackButton(in: app).appears(within: Ceiling.ui), "Manage Spaces isn't a page in Settings")
+    }
+
+    /// The back button of the page on top. On CI's iPhone Duo back buttons sit beside the bar, unlabeled;
+    /// with Edit Space's pages over Settings › Spaces there are two, and the one on top comes last.
+    private func topBackButton(in app: XCUIApplication) -> XCUIElement {
+        let buttons = app.buttons.matching(identifier: "BackButton")
+        return buttons.count > 1 ? buttons.element(boundBy: buttons.count - 1) : buttons.firstMatch
+    }
+
+    /// Back out of Settings › Spaces: to Settings, Done, then the caret sheet swiped away by its grabber.
+    private func leaveSettings(in app: XCUIApplication) {
+        topBackButton(in: app).tap()
+        let done = app.navigationBars["Settings"].buttons["Done"]
+        XCTAssertTrue(done.appears(within: Ceiling.ui), "didn't go back to Settings")
+        done.tap()
+        let grabber = app.descendants(matching: .any)["Sheet Grabber"].firstMatch
+        XCTAssertTrue(grabber.appears(within: Ceiling.ui), "the caret sheet isn't up")
+        grabber.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
+        XCTAssertTrue(grabber.disappears(within: Ceiling.ui), "the caret sheet didn't close")
     }
 
     /// Adds a Space with the suggested look and lands in it, with the search panel up.

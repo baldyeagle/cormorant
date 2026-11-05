@@ -89,13 +89,18 @@ struct SpaceStrip: View {
 
     private static let visibleCount = 5
 
+    /// Each icon's tap target: 44pt wide (so five still leave room for Search Tabs and New Tab at the
+    /// largest text sizes, where the disc grows to 40pt inside it) and at least 44pt high.
+    private let slot: CGFloat = 44
+    private var slotHeight: CGFloat { max(glyph + 4, 44) }
+
     var body: some View {
         let spaces = store.state.switchableSpaces
         if spaces.count > Self.visibleCount {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal) { glyphs(spaces) }
                     .scrollIndicators(.hidden)
-                    .frame(width: CGFloat(Self.visibleCount) * (glyph + 4))
+                    .frame(width: CGFloat(Self.visibleCount) * slot)
                     .onAppear { proxy.scrollTo(store.state.activeSpaceID, anchor: .center) }
                     // The title menu switches too, to a Space that may be out of sight here.
                     .onChange(of: store.state.activeSpaceID) { _, id in
@@ -108,8 +113,7 @@ struct SpaceStrip: View {
     }
 
     private func glyphs(_ spaces: [Space]) -> some View {
-        // Each button spans its slot (the disc plus the gap beside it) and 44pt high, so a tap near an
-        // icon, or between two, still lands.
+        // Each button spans its whole slot, so a tap near an icon, or between two, still lands.
         HStack(spacing: 0) {
             ForEach(spaces) { space in
                 let isActive = space.id == store.state.activeSpaceID
@@ -119,10 +123,16 @@ struct SpaceStrip: View {
                         .foregroundStyle(isActive ? Color.white : space.color.color)
                         .frame(width: glyph, height: glyph)
                         .background { if isActive { Circle().fill(space.color.color) } }
-                        .frame(width: glyph + 4, height: max(glyph, 44))
+                        .frame(width: slot, height: slotHeight)
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .contextMenu {
+                    Button("Edit \(space.name)", systemImage: "pencil") { store.showManageSpaces(editing: space.id) }
+                    Button("Manage Spaces", systemImage: "square.stack") { store.showManageSpaces() }
+                }
+                .accessibilityAction(named: "Edit \(space.name)") { store.showManageSpaces(editing: space.id) }
+                .accessibilityAction(named: "Manage Spaces") { store.showManageSpaces() }
                 .accessibilityShowsLargeContentViewer {
                     Label(space.name, systemImage: space.icon.rawValue)
                 }

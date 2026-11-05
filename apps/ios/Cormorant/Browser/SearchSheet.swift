@@ -331,7 +331,7 @@ struct SearchSheet: View {
             text: query,
             engine: store.settings.searchEngine,
             openTabs: tabCandidates,
-            archived: store.state.archived,
+            archived: closedHere,
             pages: current ? lookup.pages
                 : lookup.pages.filter { AddressSuggestions.matches(query, title: $0.title, url: $0.url) },
             pastSearches: current ? lookup.pastSearches
@@ -354,7 +354,13 @@ struct SearchSheet: View {
 
     /// Most recently closed first.
     private var recentlyClosed: [ArchivedTab] {
-        store.state.archived.sorted { $0.archivedAt > $1.archivedAt }
+        closedHere.sorted { $0.archivedAt > $1.archivedAt }
+    }
+
+    /// Closed tabs that reopen in this Space: like the open tabs, none from another Space, which
+    /// choosing would switch to.
+    private var closedHere: [ArchivedTab] {
+        store.state.archived(reopeningIn: store.state.activeSpaceID)
     }
 
     /// The typed text, without any completion, once the user has typed; nil for the untouched URL.

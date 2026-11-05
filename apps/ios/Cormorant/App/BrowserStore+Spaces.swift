@@ -8,14 +8,16 @@ extension BrowserStore {
     /// Opens Manage Spaces from the browser's root, closing whatever else is up first (the caret sheet
     /// and Settings on it, the switcher, the search panel). Settings' Spaces row calls it; so will the
     /// Space strip and the tabs button's menu.
-    func showManageSpaces() {
+    func showManageSpaces(editing spaceID: UUID? = nil) {
         guard isLoaded else { return }
+        spaceToEdit = spaceID
         showsManageSpaces = true
         manageSpacesRequest += 1
     }
 
     func dismissManageSpaces() {
         showsManageSpaces = false
+        spaceToEdit = nil
     }
 
     // MARK: Changes
@@ -30,6 +32,8 @@ extension BrowserStore {
             state.switchToSpace(space.id)
         }
         dismissManageSpaces()
+        // From Settings' page: into the new Space, past Settings and the caret sheet.
+        if isManagingSpacesInSettings { closeSheetsRequest += 1 }
     }
 
     /// Saves Edit Space's fields. A blank name (after trimming) keeps the old one.

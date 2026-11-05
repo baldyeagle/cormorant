@@ -47,6 +47,14 @@ final class BrowserStore {
     /// it. On an ask while it's meant to be up already, the browser presents it afresh, so one
     /// presentation that didn't take can't leave the way in dead (`BrowserView.presentManageSpaces`).
     var manageSpacesRequest = 0
+    /// A Space whose Edit Space opens on top of Manage Spaces once it's up (a strip icon's Edit).
+    var spaceToEdit: UUID?
+    /// Manage Spaces is showing as a page in Settings. While it is, a change of active tab (from
+    /// archiving, deleting or switching Spaces there) leaves the caret sheet and Settings up.
+    @ObservationIgnored var isManagingSpacesInSettings = false
+    /// Bumped to ask the browser to close the search panel, the caret sheet and Settings on it: a Space
+    /// just added (so you land in it) and a link from another app (straight to the page).
+    var closeSheetsRequest = 0
 
     let blocking: BlockingService
     let settings: AppSettings
@@ -607,6 +615,8 @@ final class BrowserStore {
         isComposingNewTab = false
         // Straight to the page (default-browser rule): nothing left over it.
         showsManageSpaces = false
+        spaceToEdit = nil
+        closeSheetsRequest += 1
         stampActiveTab()
         for url in urls { unvisitedTabIDs.insert(state.openTab(url: url).id) }
     }

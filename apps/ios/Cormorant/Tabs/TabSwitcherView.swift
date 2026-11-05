@@ -196,6 +196,9 @@ struct TabSwitcherView: View {
             ToolbarItem(placement: .principal) {
                 Menu {
                     SpaceMenuList(onSwitch: switchToSpace)
+                    Section {
+                        Button("Manage Spaces", systemImage: "square.stack") { store.showManageSpaces() }
+                    }
                 } label: {
                     HStack(spacing: 8) {
                         SpaceBadge(space: space)

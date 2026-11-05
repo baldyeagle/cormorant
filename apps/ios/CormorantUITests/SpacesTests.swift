@@ -80,6 +80,32 @@ final class SpacesTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
+    /// With Spaces to switch, the switcher still reaches Manage Spaces: the title menu's last item, and
+    /// a strip icon's long press, whose Edit opens that Space's Edit Space.
+    func testSwitcherReachesManageSpaces() throws {
+        let server = try FixtureServer(html: Self.page)
+        let app = launchWithSpaces(server)
+        open(server.url.appending(path: "home"), path: "/home", in: app)
+
+        openSwitcher(in: app)
+        let title = app.buttons["SpaceTitleMenu"]
+        XCTAssertTrue(title.appears(within: Ceiling.ui), "no Space title in the switcher")
+        let titleCenter = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        choose(menuItem("Manage Spaces", in: app), from: title, by: .tap, closingAt: titleCenter,
+               until: { app.navigationBars["Spaces"].exists }, in: app)
+        app.buttons["Close"].tap()
+        XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
+
+        openSwitcher(in: app)
+        let work = app.buttons.matching(identifier: "SpaceStrip")["Work"]
+        XCTAssertTrue(work.appears(within: Ceiling.ui), "Work isn't in the strip")
+        choose(menuItem("Edit Work", in: app), from: work, by: .longPress, closingAt: titleCenter,
+               until: { app.buttons["Save"].exists }, in: app)
+        XCTAssertTrue(app.textFields["Name"].appears(within: Ceiling.ui), "Edit Space didn't open")
+        XCTAssertEqual(app.textFields["Name"].value as? String, "Work", "Edit Space isn't Work's")
+        withExtendedLifetime(server) {}
+    }
+
     /// Back in a Space, its last viewed tab shows, not its newest.
     func testSwitchingBackReturnsToTheTabLeft() throws {
         let server = try FixtureServer(html: Self.page)
@@ -182,6 +208,20 @@ final class SpacesTests: UITestCase {
         spaces.tapWhenSettled()
         XCTAssertTrue(app.navigationBars["Spaces"].appears(within: Ceiling.ui), "Manage Spaces didn't open")
         XCTAssertTrue(app.navigationBars.staticTexts["1 Tab"].disappears(within: Ceiling.ui), "the switcher is still up")
+
+        // A Space added there opens, empty, with the search panel up.
+        app.buttons["New Space"].tap()
+        let name = app.textFields["Name"]
+        XCTAssertTrue(name.appears(within: Ceiling.ui), "New Space didn't open")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { name.value(forKey: "hasKeyboardFocus") as? Bool == true },
+                      "the name field didn't take focus")
+        name.typeText("Work")
+        app.buttons["Add"].tap()
+        XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
+        let field = app.textFields["Search or enter address"]
+        XCTAssertTrue(field.appears(within: Ceiling.ui), "no search panel in the new Space")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { field.value(forKey: "hasKeyboardFocus") as? Bool == true },
+                      "the search field has no focus")
         withExtendedLifetime(server) {}
     }
 

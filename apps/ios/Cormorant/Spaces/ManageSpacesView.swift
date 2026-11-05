@@ -14,42 +14,62 @@ struct ManageSpacesView: View {
     /// The dialog's title, kept after `deleting` clears so it doesn't go blank as the dialog leaves.
     @State private var deletingTitle = ""
 
+    /// Pushed in Settings (Settings › Spaces) rather than presented on its own, with a Close button.
+    var isPage = false
+
     var body: some View {
-        NavigationStack {
-            List {
-                spacesSection
-                archivedSection
-                // Profiles (step 5): a section here listing each profile and the Spaces using it, with
-                // New Profile.
-            }
-            .environment(\.editMode, $editMode)
-            // An archived Space swiped to Delete. On the list, not its section: from inside the section
-            // the dialog took the sheet down with it.
-            .confirmationDialog(deletingTitle, isPresented: isConfirmingDelete,
-                                titleVisibility: .visible, presenting: deleting) { space in
-                Button("Delete \(space.name)", role: .destructive) { store.deleteSpace(space.id) }
-            } message: { space in
-                Text(SpaceEditor.deleteMessage(tabCount: store.state.tabCount(inSpace: space.id)))
-            }
-            .navigationTitle("Spaces")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
+        if isPage {
+            list
+                .onAppear { store.isManagingSpacesInSettings = true }
+                .onDisappear { store.isManagingSpacesInSettings = false }
+        } else {
+            NavigationStack { list }
+        }
+    }
+
+    private var list: some View {
+        List {
+            spacesSection
+            archivedSection
+            // Profiles (step 5): a section here listing each profile and the Spaces using it, with
+            // New Profile.
+        }
+        .environment(\.editMode, $editMode)
+        // An archived Space swiped to Delete. On the list, not its section: from inside the section
+        // the dialog took the sheet down with it.
+        .confirmationDialog(deletingTitle, isPresented: isConfirmingDelete,
+                            titleVisibility: .visible, presenting: deleting) { space in
+            Button("Delete \(space.name)", role: .destructive) { store.deleteSpace(space.id) }
+        } message: { space in
+            Text(SpaceEditor.deleteMessage(tabCount: store.state.tabCount(inSpace: space.id)))
+        }
+        .navigationTitle("Spaces")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !isPage {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close", systemImage: "xmark", role: .close) { store.dismissManageSpaces() }
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Button(editMode.isEditing ? "Done" : "Edit") {
-                        withAnimation { editMode = editMode.isEditing ? .inactive : .active }
-                    }
-                    .disabled(!editMode.isEditing && store.state.switchableSpaces.count < 2)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button(editMode.isEditing ? "Done" : "Edit") {
+                    withAnimation { editMode = editMode.isEditing ? .inactive : .active }
                 }
+                .disabled(!editMode.isEditing && store.state.switchableSpaces.count < 2)
             }
-            .sheet(item: $editing) { space in
-                SpaceEditor(editing: space)
+        }
+        .onAppear {
+            // Asked for with a Space to edit (a strip icon's Edit): straight into its Edit Space.
+            if !isPage, let id = store.spaceToEdit {
+                store.spaceToEdit = nil
+                editing = store.state.space(id)
             }
-            .sheet(isPresented: $creating) {
-                SpaceEditor(newWith: store.state.suggestedNewSpaceLook)
-            }
+        }
+        .sheet(item: $editing) { space in
+            SpaceEditor(editing: space)
+        }
+        .sheet(isPresented: $creating) {
+            SpaceEditor(newWith: store.state.suggestedNewSpaceLook)
         }
     }
 

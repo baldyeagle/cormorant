@@ -57,4 +57,23 @@ import Testing
         state.archiveSpace(work.id, now: t0)
         #expect(state.tabsDue(inSpace: work.id, policy: .twelveHours, now: t0).isEmpty)
     }
+
+    @Test func closedTabsReopeningHereLeaveOutOtherSpaces() {
+        var state = BrowserState()
+        let work = state.addSpace(name: "Work")
+        let trip = state.addSpace(name: "Trip")
+        let gone = state.addSpace(name: "Gone")
+        let home = state.openTab(url: url("https://home.com"))
+        state.archive(tabID: home.id)
+        for (space, host) in [(work, "work.com"), (trip, "trip.com"), (gone, "gone.com")] {
+            state.switchToSpace(space.id)
+            let tab = state.openTab(url: url("https://\(host)"))
+            state.archive(tabID: tab.id)
+        }
+        state.switchToSpace(Space.defaultID)
+        state.archiveSpace(trip.id)
+        state.deleteSpace(gone.id)
+        let hosts = Set(state.archived(reopeningIn: Space.defaultID).map { $0.url.host() ?? "" })
+        #expect(hosts == ["home.com", "trip.com", "gone.com"])
+    }
 }

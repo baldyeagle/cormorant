@@ -177,6 +177,14 @@ struct TabSwitcherView: View {
             Button("Done") { dismiss() }
         }
         ToolbarItem(placement: .bottomBar) {
+            // Searches in the search panel once the switcher is gone, like New Tab.
+            Button("Search Tabs", systemImage: "magnifyingglass") {
+                store.searchTabs()
+                dismiss()
+            }
+            .disabled(store.tabs.isEmpty)
+        }
+        ToolbarItem(placement: .bottomBar) {
             // Composes in the search panel once the switcher is gone; no tab exists until Go.
             Button("New Tab", systemImage: "plus") {
                 store.newTab()

@@ -192,31 +192,3 @@ private struct SwipeUpGesture: UIGestureRecognizerRepresentable {
         }
     }
 }
-
-/// A site's icon, or its initial on the host's tint until one arrives. Reads the store itself, so an
-/// icon landing re-renders just this view.
-private struct FaviconView: View {
-    let favicons: FaviconStore
-    let url: URL?
-    let host: String
-
-    var body: some View {
-        Group {
-            if let image = favicons.icon(for: url) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-            } else {
-                HostTint.color(for: host)
-                    .overlay {
-                        Text(host.first.map { String($0).uppercased() } ?? "")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.white)
-                    }
-            }
-        }
-        .frame(width: 18, height: 18)
-        .clipShape(.rect(cornerRadius: 4, style: .continuous))
-        .accessibilityHidden(true)
-    }
-}

@@ -1,4 +1,5 @@
 import CormorantBlocking
+import CormorantCore
 import Observation
 import OSLog
 import SwiftUI
@@ -46,6 +47,22 @@ final class TabSession {
     var isRestoringHistory: Bool { pendingHistory != nil }
 
     @ObservationIgnored var onPageChange: ((URL?, String) -> Void)?
+    /// A page arrived: a main-frame navigation committed, or the page changed its own address
+    /// (`pushState`, a fragment). Not repeated for the same page twice in a row (reloads, fragments).
+    /// `typed`: the page a load marked with `nextLoadIsTyped` brought.
+    @ObservationIgnored var onVisit: ((_ url: URL, _ title: String, _ typed: Bool) -> Void)?
+    /// The current page's title changed to something non-empty.
+    @ObservationIgnored var onTitleChange: ((URL, String) -> Void)?
+    /// The next `load(_:)` comes from the address field (for a new tab, its first load).
+    @ObservationIgnored var nextLoadIsTyped = false
+    /// That load's navigation, until it commits or fails. Tied to the navigation itself, so an older
+    /// load's late cancellation doesn't clear it, and a load that never starts one (a fragment on
+    /// the page already showing) doesn't hand it to the next link.
+    @ObservationIgnored private var typedNavigation: WKNavigation?
+    /// The last page `onVisit` reported (or `assumeVisited` took as read), by `BrowsingHistory.key(for:)`.
+    @ObservationIgnored private var lastVisitKey: String?
+    /// That page's address as it was reported, for its title.
+    @ObservationIgnored private var lastVisitURL: URL?
     @ObservationIgnored var onPageLoaded: (() -> Void)?
     /// `window.open` / `target=_blank`: return a web view built from the configuration, or nil.
     @ObservationIgnored var onCreateWebView: ((WKWebViewConfiguration, WKNavigationAction) -> WKWebView?)?
@@ -209,7 +226,9 @@ final class TabSession {
 
     func load(_ url: URL) {
         lastRequestedURL = url
-        webView.load(URLRequest(url: url))
+        let navigation = webView.load(URLRequest(url: url))
+        typedNavigation = nextLoadIsTyped ? navigation : nil
+        nextLoadIsTyped = false
     }
 
     func goBack() { webView.goBack() }
@@ -376,7 +395,8 @@ final class TabSession {
         blockedDownloadURL = nil
     }
 
-    func navigationDidFail(_ error: any Error) {
+    func navigationDidFail(_ navigation: WKNavigation?, error: any Error) {
+        if let navigation, navigation === typedNavigation { typedNavigation = nil }
         let error = error as NSError
         // Cancelled (a newer navigation replaced this one) and "frame load interrupted" (we cancelled
         // it ourselves: downloads, other apps) aren't failures the user needs to see.
@@ -390,6 +410,25 @@ final class TabSession {
         effectiveContentMode = navigation.effectiveContentMode
         hasCommittedPage = true
         pageBackgroundDidChange()
+        // Consumed even when the page doesn't count as a new visit (the address of the page already
+        // showing), so it doesn't carry over to the next link.
+        let typed = navigation === typedNavigation
+        if typed { typedNavigation = nil }
+        reportVisit(typed: typed)
+    }
+
+    private func reportVisit(typed: Bool = false) {
+        guard let url = webView.url, let key = BrowsingHistory.key(for: url), key != lastVisitKey else { return }
+        lastVisitKey = key
+        lastVisitURL = url
+        onVisit?(url, webView.title ?? "", typed)
+    }
+
+    /// `url` was already counted (or is a page coming back, not a visit: a tab restored at launch or
+    /// rebuilt after its web view was let go), so its arrival isn't reported again.
+    func assumeVisited(_ url: URL?) {
+        lastVisitKey = url.flatMap(BrowsingHistory.key(for:))
+        lastVisitURL = url
     }
 
     func pageDidFinishLoading() { onPageLoaded?() }
@@ -495,13 +534,30 @@ final class TabSession {
                     self?.setBarCollapsed(false)
                     self?.pullToRefresh.pageDidChange(web.url)
                     self?.onPageChange?(web.url, web.title ?? "")
+                    // The address also changes when a navigation starts, before anything has loaded;
+                    // that one reports at commit. One that changes with nothing loading by the next
+                    // turn is the page moving itself (`pushState`).
+                    let url = web.url
+                    Task { [weak self] in
+                        guard let self, !self.webView.isLoading, self.webView.url == url else { return }
+                        self.reportVisit()
+                    }
                 }
             },
             webView.observe(\.underPageBackgroundColor, options: [.new]) { [weak self] _, _ in
                 MainActor.assumeIsolated { self?.pageBackgroundDidChange() }
             },
             webView.observe(\.title, options: [.new]) { [weak self] web, _ in
-                MainActor.assumeIsolated { self?.onPageChange?(web.url, web.title ?? "") }
+                MainActor.assumeIsolated {
+                    self?.onPageChange?(web.url, web.title ?? "")
+                    // For the page last counted, not `web.url`: mid-navigation that's already the next
+                    // page's address while the title is still this one's.
+                    if let self, let url = self.lastVisitURL,
+                       web.url.flatMap(BrowsingHistory.key(for:)) == self.lastVisitKey,
+                       let title = web.title, !title.isEmpty {
+                        self.onTitleChange?(url, title)
+                    }
+                }
             },
             webView.scrollView.observe(\.contentOffset, options: [.new]) { [weak self] scrollView, _ in
                 MainActor.assumeIsolated { self?.scrollViewDidScroll(scrollView) }

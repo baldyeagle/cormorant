@@ -98,7 +98,7 @@ struct BrowserView: View {
         // After the bar inset, so the panel sits directly on the keyboard rather than above the bar.
         .overlay {
             if isSearching {
-                SearchSheet(url: store.isComposingNewTab ? nil : store.activeTab?.url,
+                SearchSheet(url: store.isComposingNewTab || store.isSearchingTabs ? nil : store.activeTab?.url,
                             isFocused: $searchFocused, onDismiss: dismissSearch,
                             dimsPage: store.activeTab?.url != nil,
                             // Not from a panel still animating out after a dismiss.
@@ -160,7 +160,7 @@ struct BrowserView: View {
             if phase == .background { keyboardCoversBar = false }
         }
         .onChange(of: store.addressFocusRequest) {
-            // From the switcher's "+": present once the cover is gone, or focus can't land.
+            // From the switcher's "+" or search: present once the cover is gone, or focus can't land.
             if !showSwitcher { presentSearch() }
         }
         .onChange(of: store.state.activeTabID) { _, _ in
@@ -293,6 +293,6 @@ struct BrowserView: View {
     }
 
     private func switcherDidDismiss() {
-        if store.isComposingNewTab { presentSearch() } else { searchIfBlank() }
+        if store.isComposingNewTab || store.isSearchingTabs { presentSearch() } else { searchIfBlank() }
     }
 }

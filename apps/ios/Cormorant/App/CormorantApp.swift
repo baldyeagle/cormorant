@@ -48,7 +48,8 @@ struct CormorantApp: App {
         // `-uiTesting` launch argument (CormorantUITests): tabs, their history and icons are saved to
         // throwaway files instead of the app group's, settings to a throwaway defaults suite, the share
         // extension's inbox is left alone, no filter lists are downloaded, compiled or installed, and
-        // the default-browser status never asks the system (it answers only a few times a year).
+        // the default-browser status never asks the system (it answers only a few times a year), and
+        // search engines aren't asked for suggestions unless `-uiTestingSearchSuggestions` says to.
         // Each launch starts with no tabs, no icons and default settings, unless
         // `CORMORANT_UI_TESTING_SESSION=<name>` in the environment names files to reuse (relaunch tests).
         if isUITesting {
@@ -64,6 +65,8 @@ struct CormorantApp: App {
                 settings: AppSettings(defaults: UserDefaults(suiteName: suite) ?? .standard),
                 favicons: FaviconStore(directory: run.appending(path: "Favicons")),
                 defaultBrowser: DefaultBrowserStatus(isLive: false),
+                browsingHistory: BrowserStore.openBrowsingHistory(at: run.appending(path: "browsing-history.sqlite")),
+                searchSuggestions: ProcessInfo.processInfo.arguments.contains("-uiTestingSearchSuggestions") ? SearchSuggestionClient() : nil,
                 receivesSharedLinks: false
             )
         }

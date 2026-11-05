@@ -10,6 +10,7 @@ final class AppSettings {
         static let searchEngine = "searchEngine"
         static let customSearchEngine = "customSearchEngine"
         static let pageUnderStatusBar = "pageUnderStatusBar"
+        static let searchSuggestions = "searchSuggestions"
     }
 
     static let customEngineID = "custom"
@@ -29,6 +30,12 @@ final class AppSettings {
         didSet { AppGroupStorage.save(pageUnderStatusBar, key: Key.pageUnderStatusBar, to: defaults) }
     }
 
+    /// While typing a search, ask the search engine what to suggest (it sees each keystroke). Only
+    /// for engines that offer suggestions, and never for text that's an address. On by default.
+    var searchSuggestions: Bool {
+        didSet { AppGroupStorage.save(searchSuggestions, key: Key.searchSuggestions, to: defaults) }
+    }
+
     @ObservationIgnored private let defaults: UserDefaults
 
     init(defaults: UserDefaults = AppGroupStorage.defaults) {
@@ -36,5 +43,6 @@ final class AppSettings {
         searchEngine = AppGroupStorage.load(SearchEngine.self, key: Key.searchEngine, from: defaults) ?? .default
         customSearchEngine = AppGroupStorage.load(SearchEngine.self, key: Key.customSearchEngine, from: defaults)
         pageUnderStatusBar = AppGroupStorage.load(Bool.self, key: Key.pageUnderStatusBar, from: defaults) ?? true
+        searchSuggestions = AppGroupStorage.load(Bool.self, key: Key.searchSuggestions, from: defaults) ?? true
     }
 }

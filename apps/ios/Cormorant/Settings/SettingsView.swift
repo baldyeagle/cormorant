@@ -8,6 +8,8 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 DefaultBrowserSettings(status: store.defaultBrowser)
+                SpacesSettings()
+                TabsSettings()
                 SearchEngineSettings(settings: store.settings)
                 HistorySettings()
                 AppearanceSettings(settings: store.settings)

@@ -99,6 +99,9 @@ extension BrowserState {
         spaces.filter(\.isArchived).sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
     }
 
+    /// More than one Space to switch between. With only Home, Spaces stay out of sight.
+    public var hasSpacesToSwitch: Bool { switchableSpaces.count > 1 }
+
     public var activeSpace: Space { space(activeSpaceID) ?? .default }
 
     public func space(_ id: UUID) -> Space? { spaces.first { $0.id == id } }
@@ -113,6 +116,11 @@ extension BrowserState {
     /// Tabs in `spaceID`, most recently viewed first.
     public func tabs(inSpace spaceID: UUID) -> [Tab] {
         tabs.filter { $0.spaceID == spaceID }.sorted { $0.lastViewedAt > $1.lastViewedAt }
+    }
+
+    /// How many tabs are open in `spaceID`.
+    public func tabCount(inSpace spaceID: UUID) -> Int {
+        tabs.count { $0.spaceID == spaceID }
     }
 
     /// Spaces that use `profileID`, in order.
@@ -169,12 +177,18 @@ extension BrowserState {
     }
 
     /// Adds a Space at the end of the list. Does not switch to it. An unknown `profileID` falls back to
-    /// the default profile.
+    /// the default profile. While no Space archives idle tabs (`archivesIdleTabs`), the new one doesn't
+    /// either, until `resumeArchivingIdleTabs` gives it 24 hours.
     @discardableResult
     public mutating func addSpace(name: String, icon: SpaceIcon = .house, color: Swatch = .teal,
                                   profileID: UUID = Profile.defaultID, now: Date = .now) -> Space {
-        let space = Space(name: name, icon: icon, color: color,
+        var space = Space(name: name, icon: icon, color: color,
                           profileID: profile(profileID) == nil ? Profile.defaultID : profileID, createdAt: now)
+        // With Archive Idle Tabs off, a new Space is off too, and gets the default when it's turned back on.
+        if !archivesIdleTabs {
+            space.archivePolicy = .off
+            space.archivePolicyBeforeOff = .oneDay
+        }
         spaces.append(space)
         return space
     }
@@ -189,7 +203,12 @@ extension BrowserState {
     }
 
     /// Applies `change` to the Space. `id` can't change; an unknown profile falls back to the default.
-    /// `archivedAt` can't change here either: use `archiveSpace` / `restoreSpace`. No-op for an unknown Space.
+    /// `archivedAt` can't change here either: use `archiveSpace` / `restoreSpace`. A new archive policy
+    /// replaces any remembered by `stopArchivingIdleTabs`, and keeps Settings' Archive Idle Tabs
+    /// switch (`archivesIdleTabs`) honest: a time picked while it's off turns it on for this Space
+    /// alone, forgetting every other Space's remembered time (which would otherwise come back on its
+    /// own later); turning off the last Space with a time turns the switch off, remembering that
+    /// time as the switch would. No-op for an unknown Space.
     ///
     /// Returns whether the Space's profile changed, in which case its tabs must reload in the new
     /// profile's data store.
@@ -197,9 +216,18 @@ extension BrowserState {
     public mutating func updateSpace(_ spaceID: UUID, _ change: (inout Space) -> Void) -> Bool {
         guard let index = spaces.firstIndex(where: { $0.id == spaceID }) else { return false }
         let before = profile(forSpace: spaceID).id
-        let archivedAt = spaces[index].archivedAt
+        let archivedAt = spaces[index].archivedAt, policy = spaces[index].archivePolicy
+        let wasArchiving = archivesIdleTabs
         change(&spaces[index])
         spaces[index].archivedAt = archivedAt
+        if spaces[index].archivePolicy != policy {
+            spaces[index].archivePolicyBeforeOff = nil
+            if !wasArchiving, archivesIdleTabs {
+                for other in spaces.indices { spaces[other].archivePolicyBeforeOff = nil }
+            } else if wasArchiving, !archivesIdleTabs, policy.interval != nil {
+                spaces[index].archivePolicyBeforeOff = policy
+            }
+        }
         normalize()
         return profile(forSpace: spaceID).id != before
     }

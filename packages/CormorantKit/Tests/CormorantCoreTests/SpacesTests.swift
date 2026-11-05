@@ -507,4 +507,30 @@ import Testing
         let picked = BrowserState(spaces: [.default, trip], tabs: [older, newer], activeSpaceID: trip.id)
         #expect(picked.activeTabID == newer.id)
     }
+
+    @Test func spacesToSwitchCountOnlySwitchableOnes() {
+        var state = BrowserState()
+        #expect(!state.hasSpacesToSwitch)
+        let trip = state.addSpace(name: "Trip")
+        #expect(state.hasSpacesToSwitch)
+        state.archiveSpace(trip.id, now: t0)
+        #expect(!state.hasSpacesToSwitch)
+        state.restoreSpace(trip.id, now: t0)
+        #expect(state.hasSpacesToSwitch)
+        state.deleteSpace(trip.id, now: t0)
+        #expect(!state.hasSpacesToSwitch)
+    }
+
+    @Test func tabCountCountsEachSpacesOpenTabs() {
+        var state = BrowserState()
+        let work = state.addSpace(name: "Work")
+        _ = state.openTab(url: url("https://a.com"))
+        _ = state.openTab(url: url("https://b.com"))
+        let moved = state.openTab(url: url("https://c.com"), inSpace: work.id)
+        #expect(state.tabCount(inSpace: Space.defaultID) == 2)
+        #expect(state.tabCount(inSpace: work.id) == 1)
+        #expect(state.tabCount(inSpace: UUID()) == 0)
+        state.archive(tabID: moved.id, now: t0)
+        #expect(state.tabCount(inSpace: work.id) == 0)
+    }
 }

@@ -10,6 +10,7 @@ struct BrowserView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var showSwitcher = false
     @State private var showActions = false
+    @State private var showManageSpaces = false
     @State private var isSearching = false
     @State private var barHeight: CGFloat = 0
     /// The search panel's top edge in global coordinates, once it has laid out; the empty state keeps
@@ -124,6 +125,14 @@ struct BrowserView: View {
                 presentSearch()
             })
         }
+        // Asked for through the store (`showManageSpaces()`), from Settings and wherever else.
+        .sheet(isPresented: manageSpacesPresented) {
+            ManageSpacesView()
+        }
+        .onChange(of: store.manageSpacesRequest) { presentManageSpaces() }
+        .onChange(of: store.showsManageSpaces) { _, shows in
+            if !shows { manageSpacesDidClose() }
+        }
         .alert("Couldn't read saved tabs.", isPresented: loadFailurePresented) {
             Button("Start Fresh") { store.startFresh() }
         } message: {
@@ -176,6 +185,10 @@ struct BrowserView: View {
                 // The last tab closed (e.g. by the page's script): back to the empty state.
                 searchIfBlank()
             }
+        }
+        // Into an empty Space from another empty one: no tab change above to bring the panel up.
+        .onChange(of: store.state.activeSpaceID) {
+            if !showSwitcher { searchIfBlank() }
         }
         // The keyboard going away (interactive scroll, hardware dismiss) closes the panel with it.
         .onChange(of: searchFocused) { wasFocused, focused in
@@ -285,14 +298,60 @@ struct BrowserView: View {
         showSwitcher = true
     }
 
+    /// Swiped away, or closed by the store (its Close button, a Space added and switched to, a link
+    /// from another app).
+    private var manageSpacesPresented: Binding<Bool> {
+        Binding(get: { showManageSpaces }, set: { if !$0 { store.dismissManageSpaces() } })
+    }
+
+    /// In place of whatever is up: the caret sheet (and Settings stacked on it) and the search panel go
+    /// in the same update, which SwiftUI sequences before Manage Spaces comes up. The switcher, a
+    /// full-screen cover, goes first and Manage Spaces follows from `switcherDidDismiss`: presented
+    /// while the cover was still leaving, the sheet could be dropped.
+    private func presentManageSpaces() {
+        guard store.showsManageSpaces else { return }
+        if showSwitcher {
+            showSwitcher = false
+            return
+        }
+        dismissSearch()
+        showActions = false
+        // As for the caret sheet: nothing for the sheet to hand first responder back to when it goes,
+        // so the search panel can take focus as it slides away.
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        guard showManageSpaces else {
+            showManageSpaces = true
+            return
+        }
+        // Asked again while it should be up: a presentation that didn't take (the switcher still going,
+        // say) left the flag true with no sheet, and setting it true again changes nothing. Off, then
+        // on next turn, presents it afresh; a sheet already up just goes and comes back.
+        showManageSpaces = false
+        Task { @MainActor in
+            if store.showsManageSpaces { showManageSpaces = true } else { manageSpacesDidClose() }
+        }
+    }
+
+    /// Not deferred to the sheet's `onDismiss`, a second or more after it has gone: in an empty Space
+    /// (a new one) the search panel comes up while the sheet slides away.
+    private func manageSpacesDidClose() {
+        showManageSpaces = false
+        searchIfBlank()
+    }
+
     /// With no page to show, the search field is always up (default-browser requirement).
     private func searchIfBlank() {
-        guard store.isLoaded, !alertIsUp, !showSwitcher, !showActions,
+        guard store.isLoaded, !alertIsUp, !showSwitcher, !showActions, !showManageSpaces,
               store.activeTab?.url == nil else { return }
         presentSearch()
     }
 
     private func switcherDidDismiss() {
+        // Asked for from the switcher (its Spaces button): now that it's gone.
+        if store.showsManageSpaces {
+            presentManageSpaces()
+            return
+        }
         if store.isComposingNewTab || store.isSearchingTabs { presentSearch() } else { searchIfBlank() }
     }
 }

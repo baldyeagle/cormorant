@@ -5,7 +5,8 @@ public struct BrowserState: Codable, Sendable, Equatable {
     /// Version of the on-disk shape. Bump when an older build saving the file would drop data: the
     /// store keeps a copy of any file newer than this build (see `JSONBrowserStateStore.load()`).
     /// 2: profiles, and Space icon / color / profile / archive policy / archived date.
-    public static let currentSchemaVersion = 2
+    /// 3: the archive time a Space gets back when Archive Idle Tabs is turned on (`archivePolicyBeforeOff`).
+    public static let currentSchemaVersion = 3
 
     /// Schema version this value was decoded from (or `currentSchemaVersion` for new values), for
     /// migrations. Encoding always writes `currentSchemaVersion`.
@@ -186,9 +187,9 @@ public actor JSONBrowserStateStore: BrowserStateStore {
     }
 }
 
-/// Decides which Today tabs are due for archiving.
+/// Decides which tabs are due for archiving.
 public struct ArchivePolicy: Sendable, Hashable, Codable {
-    /// Idle time before a Today tab is archived. `nil` disables auto-archive.
+    /// Idle time before a tab is archived. `nil` disables auto-archive.
     public var interval: TimeInterval?
 
     public init(interval: TimeInterval? = 24 * 60 * 60) {
@@ -202,19 +203,28 @@ public struct ArchivePolicy: Sendable, Hashable, Codable {
     private enum CodingKeys: String, CodingKey { case interval }
 
     /// Off is written as `"interval": null`, so a shape this build doesn't know (no `interval` key)
-    /// reads as one day rather than off.
+    /// reads as 24 hours rather than off. A time that isn't positive, or is longer than a century, is
+    /// unreadable (the archiver would take every tab at once, or the label couldn't show it): the Space
+    /// decoder then falls back to 24 hours.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         guard container.contains(.interval) else { self = .oneDay; return }
         interval = try container.decodeNil(forKey: .interval) ? nil : container.decode(TimeInterval.self, forKey: .interval)
+        if let interval, !(interval > 0 && interval <= Self.longest) {
+            throw DecodingError.dataCorruptedError(forKey: .interval, in: container,
+                                                   debugDescription: "archive interval \(interval) out of range")
+        }
     }
+
+    /// The longest time a file may hold: a century.
+    static let longest: TimeInterval = 100 * 365 * 24 * 60 * 60
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(interval, forKey: .interval)
     }
 
-    /// Today tabs idle longer than `interval`, excluding `activeTabID`. Pinned tabs never archive.
+    /// Tabs idle at least `interval`, excluding `activeTabID` and any tab whose `kind` keeps it open.
     ///
     /// Blank (URL-less) tabs are returned too, so the archiver drops them.
     public func tabsDue(in tabs: [Tab], activeTabID: UUID?, now: Date = .now) -> [Tab] {

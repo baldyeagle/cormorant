@@ -23,6 +23,18 @@ struct SearchEngineSettings: View {
                 CustomSearchEngineForm(settings: settings)
             }
         }
+        Section {
+            Toggle("Search Suggestions", isOn: $settings.searchSuggestions)
+                .disabled(!settings.searchEngine.offersSuggestions)
+        } footer: {
+            Text(suggestionsFooter)
+        }
+    }
+
+    private var suggestionsFooter: String {
+        let name = settings.searchEngine.name
+        guard settings.searchEngine.offersSuggestions else { return "\(name) doesn't offer suggestions." }
+        return "\(name) suggests searches as you type one. It sees each search as you type it, never anything that could be an address."
     }
 }
 

@@ -40,11 +40,18 @@ final class BrowserStore {
     /// New Tab was chosen and the search panel is composing it. No tab exists until a submit;
     /// dismissing the panel, switching tabs or an external open drops the intent.
     private(set) var isComposingNewTab = false
+    /// The search panel is open to search open tabs only (Search Tabs). Dropped with the panel.
+    private(set) var isSearchingTabs = false
 
     let blocking: BlockingService
     let settings: AppSettings
     let favicons: FaviconStore
     let defaultBrowser: DefaultBrowserStatus
+    /// Pages visited, for the search panel. Nil if the database couldn't be opened; browsing goes on
+    /// without it.
+    let browsingHistory: BrowsingHistory?
+    /// Asks the search engine for suggestions; nil never asks (UI tests).
+    let searchSuggestions: SearchSuggestionClient?
 
     @ObservationIgnored private let stateStore: any BrowserStateStore
     @ObservationIgnored private let historyStore: TabHistoryStore
@@ -60,6 +67,11 @@ final class BrowserStore {
     @ObservationIgnored private var navigatedTabIDs: Set<UUID> = []
     /// Tail of the history save chain, like `saveChain`.
     @ObservationIgnored private var historySaveChain: Task<Void, Never>?
+    /// Tail of the browsing-history write chain, so a page's title never lands before its visit.
+    @ObservationIgnored private var browsingHistoryChain: Task<Void, Never>?
+    /// Tabs opened for a page not yet shown, whose first load is a visit. Any other tab's first load
+    /// (restored at launch, rebuilt after its web view was let go) brings back a page already counted.
+    @ObservationIgnored private var unvisitedTabIDs: Set<UUID> = []
     /// Zoom and desktop mode to give a tab's web view when it's next built: an evicted tab's own, or
     /// those a link-menu tab inherits from its opener. Memory only.
     @ObservationIgnored private var pendingViewSettings: [UUID: TabSession.ViewSettings] = [:]
@@ -92,6 +104,8 @@ final class BrowserStore {
         settings: AppSettings = AppSettings(),
         favicons: FaviconStore = FaviconStore(),
         defaultBrowser: DefaultBrowserStatus = DefaultBrowserStatus(),
+        browsingHistory: BrowsingHistory? = BrowserStore.openBrowsingHistory(),
+        searchSuggestions: SearchSuggestionClient? = SearchSuggestionClient(),
         receivesSharedLinks: Bool = true
     ) {
         var usesFallbackStorage = false
@@ -117,6 +131,8 @@ final class BrowserStore {
         self.settings = settings
         self.favicons = favicons
         self.defaultBrowser = defaultBrowser
+        self.browsingHistory = browsingHistory
+        self.searchSuggestions = searchSuggestions
         showsStorageFallbackWarning = usesFallbackStorage
             && !UserDefaults.standard.bool(forKey: Self.warnedStorageFallbackKey)
         blocking.onListsChanged = { [weak self] in self?.reapplyBlockingEverywhere() }
@@ -150,6 +166,8 @@ final class BrowserStore {
         }
         dropBlankTabs()
         isLoaded = true
+        writeBrowsingHistory { await $0.prune() }
+        forgetFavicons()
         Task { await blocking.refresh() }
         didBecomeActive()
     }
@@ -228,13 +246,28 @@ final class BrowserStore {
         addressFocusRequest += 1
     }
 
+    /// Opens the search panel to search open tabs only.
+    func searchTabs() {
+        guard isLoaded else { return }
+        isComposingNewTab = false
+        isSearchingTabs = true
+        addressFocusRequest += 1
+    }
+
+    /// The search panel's Tabs token was removed: back to searching everything, editing this tab.
+    func stopSearchingTabs() {
+        isSearchingTabs = false
+    }
+
     /// The search panel closed without submitting.
     func cancelComposing() {
         isComposingNewTab = false
+        isSearchingTabs = false
     }
 
     func activate(_ tabID: UUID) {
         isComposingNewTab = false
+        isSearchingTabs = false
         stampActiveTab()
         state.activate(tabID: tabID)
         stateDidChange()
@@ -271,26 +304,56 @@ final class BrowserStore {
 
     func clearArchive() {
         state.clearArchive()
-        // The icon cache is named by host: keep only what open tabs still show.
-        favicons.forgetSites(except: state.tabs.compactMap(\.url))
         scheduleSave()
+        forgetFavicons()
+    }
+
+    /// Forgets pages visited since `date`, or all of them.
+    func clearHistory(since date: Date?) {
+        writeBrowsingHistory { history in
+            if let date { await history.removePages(visitedSince: date) } else { await history.removeAll() }
+        }
+        forgetFavicons()
     }
 
     /// Runs address-bar text through the resolver and loads the result: in a new tab when composing
-    /// one (or when there is no tab at all), otherwise in the active tab.
-    func submit(_ input: String) {
+    /// one, asked to, or when there is no tab at all; otherwise in the active tab.
+    func submit(_ input: String, inNewTab: Bool = false) {
         guard isLoaded, let resolution = AddressResolver.resolve(input, engine: settings.searchEngine) else { return }
-        let url: URL
+        if inNewTab { isComposingNewTab = true }
         switch resolution {
-        case .navigate(let target), .search(let target, _):
-            url = target
+        case .navigate(let url): go(to: url, typed: true)
+        case .search(let url, _): go(to: url, typed: false)
         }
+    }
+
+    /// Searches for `query` as written, even if it looks like an address (a search suggestion).
+    func search(_ query: String) {
+        guard isLoaded, let url = settings.searchEngine.url(for: query) ?? SearchEngine.default.url(for: query)
+        else { return }
+        go(to: url, typed: false)
+    }
+
+    /// A page from the search panel's history rows, loaded as `submit(_:)` loads an address.
+    func open(historyPage url: URL) {
+        guard isLoaded, Self.isWeb(url) else { return }
+        go(to: url, typed: true)
+    }
+
+    /// Loads `url` in a new tab when composing one (or when there is no tab at all), otherwise in the
+    /// active tab. `typed`: the user chose this page itself, not a search for it.
+    private func go(to url: URL, typed: Bool) {
+        isSearchingTabs = false
+        // Counted where the load lands, after any redirect, and only if it does.
         if isComposingNewTab || activeSession == nil {
             isComposingNewTab = false
             stampActiveTab()
-            _ = state.openTab(url: url)
+            unvisitedTabIDs.insert(state.openTab(url: url).id)
             stateDidChange()
+            // Its first load, once its blocking rules are in.
+            activeSession?.nextLoadIsTyped = typed
         } else {
+            activeSession?.nextLoadIsTyped = typed
             activeSession?.load(url)
         }
     }
@@ -305,16 +368,27 @@ final class BrowserStore {
         guard isLoaded, Self.isWeb(url) else { return false }
         if !inBackground {
             isComposingNewTab = false
+            isSearchingTabs = false
             stampActiveTab()
         }
         // An adopted page may have redirected; the tab records where it ended up. Like any tab a link
         // opens, swiping back from its first page closes it.
         let tab = state.openTab(url: handoff?.webView.url ?? url, title: handoff?.webView.title ?? "",
                                 activate: !inBackground, fromLink: true)
+        unvisitedTabIDs.insert(tab.id)
         // Stamped after, so the page being read stays first in the switcher, the new tab next.
         if inBackground { stampActiveTab() }
         if let handoff {
             let session = makeSession(for: tab, adopting: handoff)
+            // Visited in the preview, and recorded below: a rebuilt web view brings it back, not a visit.
+            unvisitedTabIDs.remove(tab.id)
+            // The page arrived in the preview, so this tab may never see it arrive. The committed one:
+            // `url` may already be a page still on its way (a redirect page's target), which the tab
+            // records itself if it lands.
+            if let pageURL = handoff.webView.backForwardList.currentItem?.url {
+                recordVisit(to: pageURL, title: handoff.webView.title ?? "", typed: false)
+                session.assumeVisited(pageURL)
+            }
             // Its page may be in already, so no `didFinish` will say so: its one-entry history is
             // saved and its icon fetched now (a page still loading gets both again when it finishes).
             navigatedTabIDs.insert(tab.id)
@@ -490,7 +564,7 @@ final class BrowserStore {
         guard !urls.isEmpty else { return }
         isComposingNewTab = false
         stampActiveTab()
-        for url in urls { _ = state.openTab(url: url) }
+        for url in urls { unvisitedTabIDs.insert(state.openTab(url: url).id) }
     }
 
     /// Build one kept a URL-less placeholder tab alive; tabs now exist only with a page, so drop any
@@ -572,6 +646,7 @@ final class BrowserStore {
         if let existing = sessions[tab.id] { return existing }
         let session = makeSession(for: tab)
         if let settings = pendingViewSettings.removeValue(forKey: tab.id) { session.apply(settings) }
+        if unvisitedTabIDs.remove(tab.id) == nil { session.assumeVisited(tab.url) }
         session.start(loading: tab.url, restoring: interactionStates.removeValue(forKey: tab.id))
         return session
     }
@@ -584,6 +659,10 @@ final class BrowserStore {
         session.activeStripColor = { [weak self] in self?.stripUIColor(for: $0) }
         let tabID = tab.id
         session.onPageChange = { [weak self] url, title in self?.pageDidChange(tabID: tabID, url: url, title: title) }
+        session.onVisit = { [weak self] url, title, typed in self?.recordVisit(to: url, title: title, typed: typed) }
+        session.onTitleChange = { [weak self] url, title in
+            self?.writeBrowsingHistory { await $0.updateTitle(title, for: url) }
+        }
         session.onPageLoaded = { [weak self, weak session] in
             guard let self, let session else { return }
             if session === self.activeSession {
@@ -629,6 +708,7 @@ final class BrowserStore {
         interactionStates = interactionStates.filter { live.contains($0.key) }
         pendingViewSettings = pendingViewSettings.filter { live.contains($0.key) }
         recentTabIDs.removeAll { !live.contains($0) }
+        unvisitedTabIDs.formIntersection(live)
         if snapshots.keys.contains(where: { !live.contains($0) }) {
             snapshots = snapshots.filter { live.contains($0.key) }
         }
@@ -642,6 +722,64 @@ final class BrowserStore {
         state.update(tabID: tabID, url: url ?? state.tabs[index].url, title: title)
         if tabID == state.activeTabID { state.tabs[index].lastViewedAt = .now }
         scheduleSave()
+    }
+
+    // MARK: Browsing history
+
+    /// The default database, in Application Support (not the app group: see `BrowsingHistory`).
+    /// Kept out of backups, like tab histories: it never leaves the device.
+    static func openBrowsingHistory(
+        at file: URL = .applicationSupportDirectory.appending(path: "History/browsing-history.sqlite")
+    ) -> BrowsingHistory? {
+        do {
+            let history = try BrowsingHistory(fileURL: file)
+            var directory = file.deletingLastPathComponent()
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? directory.setResourceValues(values)
+            return history
+        } catch {
+            Logger.app.error("Browsing history unavailable: \(String(describing: error), privacy: .public)")
+            return nil
+        }
+    }
+
+    private func recordVisit(to url: URL, title: String, typed: Bool) {
+        let query = searchQuery(in: url)
+        writeBrowsingHistory { await $0.recordVisit(to: url, title: title, searchQuery: query, typed: typed) }
+    }
+
+    /// The query `url` shows results for, if it's a results page of the current, a built-in, or the
+    /// custom engine.
+    private func searchQuery(in url: URL) -> String? {
+        let engines = [settings.searchEngine] + SearchEngine.builtIn + (settings.customSearchEngine.map { [$0] } ?? [])
+        return engines.lazy.compactMap { $0.query(in: url) }.first
+    }
+
+    /// Queues a write after the ones before it.
+    private func writeBrowsingHistory(_ write: @escaping @Sendable (BrowsingHistory) async -> Void) {
+        guard let browsingHistory else { return }
+        let previous = browsingHistoryChain
+        browsingHistoryChain = Task {
+            await previous?.value
+            await write(browsingHistory)
+        }
+    }
+
+    /// The icon cache is named by host: keep only sites that open tabs, the archive or history still
+    /// show. After any queued history change, so a cleared site's icon goes with it.
+    private func forgetFavicons() {
+        guard let browsingHistory else {
+            favicons.forgetSites(except: state.tabs.compactMap(\.url) + state.archived.map(\.url))
+            return
+        }
+        let previous = browsingHistoryChain
+        browsingHistoryChain = Task {
+            await previous?.value
+            let sites = await browsingHistory.sites()
+            // Tabs and archive as they are now, not as they were when this was queued.
+            favicons.forgetSites(except: state.tabs.compactMap(\.url) + state.archived.map(\.url) + sites)
+        }
     }
 
     // MARK: Saving

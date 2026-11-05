@@ -36,11 +36,11 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
-        session?.navigationDidFail(error)
+        session?.navigationDidFail(navigation, error: error)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
-        session?.navigationDidFail(error)
+        session?.navigationDidFail(navigation, error: error)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

@@ -27,15 +27,45 @@ public struct SearchEngine: Identifiable, Hashable, Codable, Sendable {
     /// Search URL for `query`, or nil if the template is unusable. Only `http` and `https` results are
     /// returned, so a custom template such as `javascript:...{query}` can never run script.
     public func url(for query: String) -> URL? {
+        Self.fill(queryTemplate, with: query)
+    }
+
+    /// `template` with the trimmed, percent-encoded `query` in place of `{query}`, if that's an
+    /// http(s) URL with a host.
+    static func fill(_ template: String, with query: String) -> URL? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, queryTemplate.contains(Self.placeholder),
-              let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: Self.queryValueAllowed)
+        guard !trimmed.isEmpty, template.contains(placeholder),
+              let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: queryValueAllowed)
         else { return nil }
-        let url = URL(string: queryTemplate.replacingOccurrences(of: Self.placeholder, with: encoded))
-        guard let url, let scheme = url.scheme?.lowercased(), Self.allowedSchemes.contains(scheme),
+        let url = URL(string: template.replacingOccurrences(of: placeholder, with: encoded))
+        guard let url, let scheme = url.scheme?.lowercased(), allowedSchemes.contains(scheme),
               let host = url.host(), !host.isEmpty
         else { return nil }
         return url
+    }
+
+    /// The query `url` is a results page for, or nil if it isn't one of this engine's. Matches the
+    /// template's host (ignoring `www.`) and path, and reads the query item that holds `{query}`
+    /// (`+` as a space). Templates with `{query}` outside the query string never match.
+    public func query(in url: URL) -> String? {
+        let marker = "cormorant-query-marker"
+        guard let template = URLComponents(string: queryTemplate.replacingOccurrences(of: Self.placeholder, with: marker)),
+              let name = template.queryItems?.first(where: { $0.value == marker })?.name,
+              let page = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = page.scheme?.lowercased(), Self.allowedSchemes.contains(scheme),
+              let host = page.host.map(Self.siteHost), let templateHost = template.host.map(Self.siteHost),
+              host == templateHost,
+              (page.path.isEmpty ? "/" : page.path) == (template.path.isEmpty ? "/" : template.path),
+              let raw = page.percentEncodedQueryItems?.first(where: { $0.name == name })?.value,
+              let value = raw.replacingOccurrences(of: "+", with: "%20").removingPercentEncoding
+        else { return nil }
+        let query = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty ? nil : query
+    }
+
+    private static func siteHost(_ host: String) -> String {
+        let host = host.lowercased()
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
     static let allowedSchemes: Set<String> = ["http", "https"]

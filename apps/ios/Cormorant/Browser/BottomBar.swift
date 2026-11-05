@@ -92,9 +92,11 @@ struct BottomBar: View {
         .padding(.bottom, 4)
     }
 
-    /// Tap opens the switcher; long-press offers New Tab.
+    /// Tap opens the switcher; long-press offers Search Tabs and New Tab.
     private var tabsButton: some View {
         Menu {
+            Button("Search Tabs", systemImage: "magnifyingglass") { store.searchTabs() }
+                .labelStyle(.titleAndIcon)
             Button("New Tab", systemImage: "plus") { store.newTab() }
                 .labelStyle(.titleAndIcon)
         } label: {
@@ -109,6 +111,7 @@ struct BottomBar: View {
         .glassEffect(glass, in: .circle)
         .accessibilityLabel("Tabs, \(store.tabs.count) open")
         .accessibilityHint("Shows open tabs")
+        .accessibilityAction(named: "Search Tabs") { store.searchTabs() }
         .accessibilityAction(named: "New Tab") { store.newTab() }
     }
 

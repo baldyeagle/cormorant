@@ -117,7 +117,13 @@ struct SpaceStrip: View {
         HStack(spacing: 0) {
             ForEach(spaces) { space in
                 let isActive = space.id == store.state.activeSpaceID
-                Button { onSwitch(space.id) } label: {
+                // A tap switches; a long press opens the menu, anchored to the icon as the tabs button's
+                // is. Not a context menu: that lifts the icon out of the strip (and on a device slid it
+                // toward the strip's middle) for its preview.
+                Menu {
+                    Button("Edit \(space.name)", systemImage: "pencil") { store.showManageSpaces(editing: space.id) }
+                    Button("Manage Spaces", systemImage: "square.stack") { store.showManageSpaces() }
+                } label: {
                     Image(systemName: space.icon.rawValue)
                         .font(.system(size: glyph * 0.5, weight: .medium))
                         .foregroundStyle(isActive ? Color.white : space.color.color)
@@ -125,12 +131,11 @@ struct SpaceStrip: View {
                         .background { if isActive { Circle().fill(space.color.color) } }
                         .frame(width: slot, height: slotHeight)
                         .contentShape(.rect)
+                } primaryAction: {
+                    onSwitch(space.id)
                 }
+                .menuStyle(.button)
                 .buttonStyle(.plain)
-                .contextMenu {
-                    Button("Edit \(space.name)", systemImage: "pencil") { store.showManageSpaces(editing: space.id) }
-                    Button("Manage Spaces", systemImage: "square.stack") { store.showManageSpaces() }
-                }
                 .accessibilityAction(named: "Edit \(space.name)") { store.showManageSpaces(editing: space.id) }
                 .accessibilityAction(named: "Manage Spaces") { store.showManageSpaces() }
                 .accessibilityShowsLargeContentViewer {

@@ -76,6 +76,10 @@ struct SpaceEditor: View {
                     .accessibilityIdentifier("SpaceProfile")
                 }
 
+                if !isNew, store.hasSpacesToSwitch, saved?.isArchived == false {
+                    focusSection
+                }
+
                 if !isNew {
                     tabsSection
                     if !isHome { archiveAndDelete }
@@ -133,6 +137,45 @@ struct SpaceEditor: View {
     }
 
     // MARK: Edit Space only
+
+    /// Whether a Focus filter sends links from other apps here now. The app knows its filter is on and
+    /// which Space it names, not which Focus it belongs to, so it doesn't say.
+    private var isFocusTarget: Bool { store.focusFilter.spaceID == draft.id }
+
+    /// The Focus filter: on now for this Space, or how to set one up (that's in iOS Settings).
+    private var focusSection: some View {
+        Section {
+            HStack(spacing: 12) {
+                Image(systemName: "moon.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Swatch.indigo.color, in: .rect(cornerRadius: 8, style: .continuous))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Focus Filter")
+                    Text(isFocusTarget ? "On now: links from other apps open in \(confirmName)" : "Off")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if isFocusTarget {
+                    Circle()
+                        .fill(.green)
+                        .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("FocusFilterRow")
+        } header: {
+            Text("Focus")
+        } footer: {
+            Text(isFocusTarget
+                 ? "When the Focus ends, links open in the last Space you used."
+                 : "To open links from other apps in \(confirmName) during a Focus, go to Settings › Focus, choose a Focus, then Add Filter › Cormorant › \(saved?.name ?? confirmName).")
+        }
+    }
 
     private var tabsSection: some View {
         Section {

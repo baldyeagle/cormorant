@@ -1,8 +1,11 @@
 import CormorantCore
+import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Receives a shared URL, drops it in the app-group inbox, and hands off to the main app.
+/// Receives a shared URL, drops it in the app-group inbox, and hands off to the main app. With more
+/// than one Space it first asks which one the link opens in (`SpacePickerView`); with one it asks
+/// nothing.
 final class ShareViewController: UIViewController {
     private var didStart = false
 
@@ -19,21 +22,75 @@ final class ShareViewController: UIViewController {
             extensionContext?.completeRequest(returningItems: nil)
             return
         }
-        openContainingApp(Self.openAppURL(handingOff: url))
+        var spaceID: UUID?
+        if let summary = SpacesSummaryFile(appGroup: AppGroup.identifier)?.read(), summary.hasSpacesToChoose {
+            switch await chooseSpace(for: url, in: summary) {
+            case .open(let picked): spaceID = picked
+            case .cancel:
+                extensionContext?.cancelRequest(withError: CocoaError(.userCancelled))
+                return
+            }
+        }
+        openContainingApp(Self.openAppURL(handingOff: url, spaceID: spaceID))
         // The open above isn't a supported API and may do nothing; the link is in the inbox either way.
         extensionContext?.completeRequest(returningItems: nil)
     }
 
-    /// `cormorant://open` drains the inbox. If the inbox can't be written, the URL rides along instead.
-    private static func openAppURL(handingOff url: URL) -> URL {
+    private enum Choice {
+        /// With the Space picked; nil if none was.
+        case open(UUID?)
+        case cancel
+    }
+
+    /// Shows the Space picker over the share sheet until Open or Cancel. The Spaces come from the
+    /// summary the app writes for this (`SpacesSummaryFile`), read-only: the extension never reads or
+    /// writes the app's tabs.
+    private func chooseSpace(for url: URL, in summary: SpacesSummary) async -> Choice {
+        let focus = UserDefaults(suiteName: AppGroup.identifier).flatMap(FocusFilterSpace.read(from:))
+        guard let defaultSpace = summary.defaultSpace(focusSpace: focus) else { return .open(nil) }
+        return await withCheckedContinuation { continuation in
+            var resumed = false
+            let finish: (Choice) -> Void = { choice in
+                guard !resumed else { return }
+                resumed = true
+                continuation.resume(returning: choice)
+            }
+            let picker = SpacePickerView(
+                link: url, title: sharedTitle(for: url), summary: summary, defaultSpace: defaultSpace,
+                focusChoseDefault: focus == defaultSpace.id,
+                onOpen: { finish(.open($0)) }, onCancel: { finish(.cancel) })
+            let host = UIHostingController(rootView: picker)
+            // Open or Cancel, not a swipe: a swipe would leave the share request unanswered.
+            isModalInPresentation = true
+            addChild(host)
+            host.view.frame = view.bounds
+            host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            view.addSubview(host.view)
+            host.didMove(toParent: self)
+        }
+    }
+
+    /// The page's title, when the sharing app gave one that isn't just the link.
+    private func sharedTitle(for url: URL) -> String? {
+        let item = extensionContext?.inputItems.lazy.compactMap { $0 as? NSExtensionItem }.first
+        let title = (item?.attributedTitle ?? item?.attributedContentText)?.string
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let title, !title.isEmpty, title != url.absoluteString, URL(string: title)?.host() == nil else { return nil }
+        return title
+    }
+
+    /// `cormorant://open` drains the inbox. If the inbox can't be written, the URL (and the Space picked
+    /// for it) rides along instead.
+    private static func openAppURL(handingOff url: URL, spaceID: UUID?) -> URL {
         var components = URLComponents()
         components.scheme = "cormorant"
         components.host = "open"
         do {
             guard let inbox = SharedInbox(appGroup: AppGroup.identifier) else { throw CocoaError(.fileNoSuchFile) }
-            try inbox.append(OpenRequest(url: url))
+            try inbox.append(OpenRequest(url: url, spaceID: spaceID))
         } catch {
             components.queryItems = [URLQueryItem(name: "url", value: url.absoluteString)]
+                + (spaceID.map { [URLQueryItem(name: "space", value: $0.uuidString)] } ?? [])
         }
         return components.url!
     }

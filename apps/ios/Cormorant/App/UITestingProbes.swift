@@ -18,6 +18,11 @@ import UIKit
 ///   can see one come and go without having to catch it on screen.
 /// - `UITesting.erasing`: how many deleted profiles' website data and history are still to be
 ///   erased (`BrowserState.profilesToErase`): "0" once a deleted profile's data is gone.
+/// - `UITesting.focus`: the name of the Space the Focus filter sends links to, or "off" (set by
+///   `cormorant://ui-testing/focus`).
+/// - `UITesting.stripFade`: which edges of the switcher's Space strip fade out, with Spaces beyond them
+///   (`SpaceStrip.reportedOverflow`): "none", "leading", "trailing" or "both"; "no scrolling" while no
+///   strip scrolls.
 /// - `UITesting.keyboard`: "up" from the keyboard's did-show to its did-hide, else "down". The bar's
 ///   buttons come back to the accessibility tree as the keyboard starts down, and the keyboard leaves
 ///   the tree then too, but it takes taps over the bar until it has slid away.
@@ -37,6 +42,18 @@ struct UITestingProbes: View {
             Probe(identifier: "UITesting.keyboard") { KeyboardPresence.isUp ? "up" : "down" }
             Probe(identifier: "UITesting.erasing") { [store] in "\(store.state.profilesToErase.count)" }
             Probe(identifier: "UITesting.toasts") { [store] in "\(store.toastsShown) \(store.toast == nil ? "none" : "up")" }
+            Probe(identifier: "UITesting.focus") { [store] in
+                store.focusFilter.spaceID.map { id in store.state.space(id)?.name ?? "unknown" } ?? "off"
+            }
+            Probe(identifier: "UITesting.stripFade") {
+                guard let overflow = SpaceStrip.reportedOverflow else { return "no scrolling" }
+                return switch (overflow.leading, overflow.trailing) {
+                case (true, true): "both"
+                case (true, false): "leading"
+                case (false, true): "trailing"
+                case (false, false): "none"
+                }
+            }
         }
         .allowsHitTesting(false)
     }

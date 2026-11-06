@@ -80,6 +80,63 @@ final class SpacesTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
+    /// With more Spaces than the strip shows, it fades out at each edge with more beyond it, and keeps
+    /// the active Space in sight: one switched to while the switcher was away, and one tapped in the strip.
+    func testManySpacesStripFadesAtItsEdgesAndShowsTheActiveOne() throws {
+        let server = try FixtureServer(html: Self.page)
+        let app = XCUIApplication()
+        // Home, Work, Projects, Trip, then Space 5 to Space 9: nine.
+        app.launchArguments = ["-uiTesting", "-uiTestingSpaces", server.url.absoluteString, "-uiTestingExtraSpaces", "5"]
+        app.launch()
+        open(server.url.appending(path: "home"), path: "/home", in: app)
+
+        openSwitcher(in: app)
+        let strip = app.buttons.matching(identifier: "SpaceStrip")
+        let scroller = app.scrollViews["SpaceStripScroller"]
+        let fade = app.descendants(matching: .any)["UITesting.stripFade"].firstMatch
+        XCTAssertTrue(scroller.appears(within: Ceiling.ui), "the strip doesn't scroll with nine Spaces")
+        XCTAssertEqual(strip.count, 9, "the strip doesn't have every Space")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { fade.value as? String == "trailing" },
+                      "the strip doesn't fade where more Spaces are: \(fade.value as? String ?? "no probe")")
+        assertShows(strip["Home"], in: scroller)
+        // Search Tabs and New Tab still have the bar.
+        let newTab = app.buttons.matching(NSPredicate(format: "label == 'New Tab' AND identifier != 'NewTabPill'")).firstMatch
+        XCTAssertTrue(app.buttons["Search Tabs"].firstMatch.isHittable && newTab.isHittable,
+                      "the strip pushed Search Tabs or New Tab off the bar")
+
+        // Switched to the last Space from outside the switcher (a link shared into it), the strip opens
+        // scrolled to it. (Its menus list every Space, too many to reach the last by press and drag on a
+        // short screen: the menu scrolls.)
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.buttons["Done"].disappears(within: Ceiling.ui), "the switcher didn't close")
+        shareIntoSpace(server.url.appending(path: "nine"), space: "Space 9")
+        XCTAssertTrue(heading("/nine", in: app).appears(within: Ceiling.load), "the link didn't open")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).value as? String == "Space 9" },
+                      "the link didn't open in Space 9")
+        // Its toast is up over the bar; swipe it away first.
+        let toast = app.otherElements["Toast"].firstMatch
+        XCTAssertTrue(toast.appears(within: Ceiling.ui), "no toast for the shared link")
+        toast.swipeDown()
+        XCTAssertTrue(toast.disappears(within: Ceiling.ui), "the toast didn't go")
+        openSwitcher(in: app)
+        XCTAssertTrue(waitUntil(Ceiling.ui) { fade.value as? String == "leading" },
+                      "the strip didn't open scrolled to the end: \(fade.value as? String ?? "no probe")")
+        assertShows(strip["Space 9"], in: scroller)
+        XCTAssertTrue(strip["Space 9"].isSelected, "Space 9 isn't marked active")
+
+        // Switched from the strip itself, the Space comes to the middle: Space 6, with more on both sides.
+        // (Not from the title menu: nine Spaces make it scroll, and a press-and-drag onto an item of a
+        // scrolling menu scrolls it instead of choosing.)
+        let title = app.buttons["SpaceTitleMenu"]
+        XCTAssertTrue(strip["Space 6"].isHittable, "Space 6 isn't in sight beside Space 9")
+        strip["Space 6"].tap()
+        XCTAssertTrue(waitUntil(Ceiling.ui) { title.label == "Space, Space 6" }, "the strip didn't switch to Space 6")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { fade.value as? String == "both" },
+                      "the strip doesn't fade at both edges: \(fade.value as? String ?? "no probe")")
+        assertShows(strip["Space 6"], in: scroller)
+        withExtendedLifetime(server) {}
+    }
+
     /// With Spaces to switch, the switcher still reaches Manage Spaces: the title menu's last item, and
     /// a strip icon's long press, whose Edit opens that Space's Edit Space.
     func testSwitcherReachesManageSpaces() throws {
@@ -253,6 +310,22 @@ final class SpacesTests: UITestCase {
     /// A Space's row in a Space menu (not the strip's glyph, which is labeled with the name alone).
     private func menuItem(_ name: String, in app: XCUIApplication) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND identifier != 'SpaceStrip'", name)).firstMatch
+    }
+
+    /// As the share extension does with `space` picked (the app's DEBUG `-uiTesting` hook): the link
+    /// opens there, switching to it.
+    private func shareIntoSpace(_ url: URL, space: String) {
+        var components = URLComponents(string: "cormorant://ui-testing/share")!
+        components.queryItems = [URLQueryItem(name: "url", value: url.absoluteString), URLQueryItem(name: "space", value: space)]
+        XCUIDevice.shared.system.open(components.url!)
+    }
+
+    /// The strip's icon is wholly inside the strip, once it has stopped scrolling.
+    private func assertShows(_ glyph: XCUIElement, in scroller: XCUIElement,
+                             file: StaticString = #filePath, line: UInt = #line) {
+        let frame = glyph.settledFrame()
+        XCTAssertTrue(scroller.frame.insetBy(dx: -1, dy: -1).contains(frame),
+                      "\(glyph.label) is out of the strip's sight: \(frame) in \(scroller.frame)", file: file, line: line)
     }
 
     /// The panel is up, stays up, and has the keyboard (losing focus closes it).

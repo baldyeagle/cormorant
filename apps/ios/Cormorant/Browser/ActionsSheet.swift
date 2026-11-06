@@ -1,10 +1,12 @@
 import CormorantBlocking
+import CormorantCore
 import SwiftUI
 import UIKit
 import WebKit
 
 /// The caret sheet: back/forward, the host (tap to search), copy and reload, Find on Page and
-/// Share, page zoom, desktop site, per-site blockers, and Settings.
+/// Share, Move to Space (with more than one Space), page zoom, desktop site, per-site blockers, and
+/// Settings.
 ///
 /// The presenter must call `session.runPendingAction()` from the sheet's `onDismiss`: Find on
 /// Page needs first responder, which it can only take once the sheet is gone. `showSearch` is the
@@ -20,6 +22,8 @@ struct ActionsSheet: View {
     let showSearch: () -> Void
     @State private var contentHeight: CGFloat = 0
     @State private var showSettings = false
+    /// The Move to Space sheet, stacked on this one as Settings is, for the tab on screen when it opened.
+    @State private var moveRequest: MoveRequest?
 
     var body: some View {
         ScrollView {
@@ -45,6 +49,11 @@ struct ActionsSheet: View {
         .presentationBackground(.regularMaterial)
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        .sheet(item: $moveRequest) { request in
+            // Moving the tab on screen changes the active tab, which closes this sheet and the Move
+            // sheet with it (`BrowserView`); dismissed here too, in case.
+            MoveToSpaceSheet(tabID: request.tabID, onMoved: { dismiss() })
         }
     }
 
@@ -75,6 +84,18 @@ struct ActionsSheet: View {
 
     private func pageGroup(session: TabSession) -> some View {
         RowGroup {
+            if let space = store.shownSpace {
+                Button {
+                    moveRequest = MoveRequest(tabID: session.tabID)
+                } label: {
+                    MoveToSpaceRow(space: space)
+                }
+                .buttonStyle(RowButtonStyle())
+                .accessibilityLabel("Move to Space")
+                .accessibilityValue("In \(space.name) now")
+                .accessibilityIdentifier("MoveToSpaceRow")
+                RowDivider()
+            }
             PageZoomRow(session: session)
             RowDivider()
             Button {
@@ -378,6 +399,36 @@ private struct ActionRow<Trailing: View>: View {
 extension ActionRow where Trailing == EmptyView {
     init(title: String, subtitle: Text? = nil, systemImage: String) {
         self.init(title: title, subtitle: subtitle, systemImage: systemImage) { EmptyView() }
+    }
+}
+
+/// Move to Space, with the tab's Space where the icon goes and "In Work now" under the title.
+private struct MoveToSpaceRow: View {
+    let space: Space
+    @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 28
+    @ScaledMetric(relativeTo: .body) private var minHeight: CGFloat = 54
+
+    var body: some View {
+        HStack(spacing: RowMetrics.iconSpacing) {
+            SpaceIconBadge(icon: space.icon, color: space.color, side: min(iconWidth, 44))
+                .frame(width: iconWidth)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Move to Space")
+                Text("In \(space.name) now")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.forward")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, RowMetrics.horizontalPadding)
+        .padding(.vertical, 6)
+        .frame(minHeight: minHeight)
+        .contentShape(.rect)
     }
 }
 

@@ -51,12 +51,11 @@ struct TabSwitcherView: View {
                                                               dy: frame.height * (1 - scale) / 2)
                                     open(tab, from: start, tilt: Self.tiltPerStep * offset)
                                 },
-                                onClose: {
-                                    withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Self.closeAnimation) {
-                                        store.close(tab.id)
-                                    }
-                                }
+                                onClose: { close(tab) }
                             )
+                            // Before the fan's tilt, so the menu's preview is the card as it is.
+                            .modifier(CardMenu(tab: tab, isEnabled: store.hasSpacesToSwitch,
+                                               onMove: { move(tab, to: $0) }, onClose: { close(tab) }))
                             .visualEffect { content, proxy in
                                 // Steps from the center, fractional while scrolling.
                                 let offset = fans ? (proxy.frame(in: .scrollView).midX - viewportMidX) / step : 0
@@ -82,6 +81,11 @@ struct TabSwitcherView: View {
                 .id(store.state.activeSpaceID)
                 .transition(.opacity)
             }
+            // Above the bottom toolbar: a card moved to another Space says where it went.
+            .overlay(alignment: .bottom) {
+                ToastHost(isSuppressed: opening != nil)
+                    .padding(.bottom, 8)
+            }
             .overlay {
                 if store.tabs.isEmpty {
                     ContentUnavailableView {
@@ -105,6 +109,10 @@ struct TabSwitcherView: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
+        }
+        // A toast's Move… while the switcher is up: the browser can't present over it.
+        .sheet(item: Binding(get: { store.moveRequest }, set: { store.moveRequest = $0 })) { request in
+            MoveToSpaceSheet(tabID: request.tabID, onMoved: { store.moveRequest = nil })
         }
         .onAppear { presence.isPresented = true }
         .onDisappear { presence.isPresented = false }
@@ -166,6 +174,20 @@ struct TabSwitcherView: View {
         let tabs = Array(store.tabs.reversed())
         guard let order = opening?.order else { return tabs }
         return tabs.sorted { (order[$0.id] ?? .max) < (order[$1.id] ?? .max) }
+    }
+
+    private func close(_ tab: CormorantCore.Tab) {
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Self.closeAnimation) {
+            store.close(tab.id)
+        }
+    }
+
+    /// The card leaves as a closed one does; the toast says where it went.
+    private func move(_ tab: CormorantCore.Tab, to spaceID: UUID) {
+        guard opening == nil else { return }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Self.closeAnimation) {
+            store.moveTab(tab.id, toSpace: spaceID)
+        }
     }
 
     /// Switches to the tab under the switcher, then grows its card into the page.
@@ -273,6 +295,33 @@ struct TabSwitcherView: View {
     private static func cardSize(in size: CGSize) -> CGSize {
         let width = size.width * 0.7
         return CGSize(width: width, height: min(width * 1.9, size.height * 0.78))
+    }
+}
+
+/// A card's long-press menu, with more than one Space: Move to Space, and Close Tab. With only Home
+/// a card has no menu, as before Spaces. VoiceOver gets each move as an action of its own.
+private struct CardMenu: ViewModifier {
+    @Environment(BrowserStore.self) private var store
+    let tab: CormorantCore.Tab
+    let isEnabled: Bool
+    let onMove: (UUID) -> Void
+    let onClose: () -> Void
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .contextMenu {
+                    MoveToSpaceMenu(tabID: tab.id, onMove: onMove)
+                    Button("Close Tab", systemImage: "xmark", role: .destructive, action: onClose)
+                }
+                .accessibilityActions {
+                    ForEach(store.moveDestinations(for: tab.id).filter { !$0.isCurrent }) { destination in
+                        Button("Move to \(destination.space.name)") { onMove(destination.space.id) }
+                    }
+                }
+        } else {
+            content
+        }
     }
 }
 

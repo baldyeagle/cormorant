@@ -1,3 +1,4 @@
+import CormorantCore
 import UIKit
 import WebKit
 
@@ -116,6 +117,7 @@ extension TabSession {
             open.append(UIAction(title: "Open in Background Tab", image: UIImage(systemName: "square.on.square")) { [weak self] _ in
                 self?.openInBackgroundTab(url)
             })
+            if let spaces = openInSpaceMenu(for: url) { open.append(spaces) }
         }
         let pass: [UIMenuElement] = [
             UIAction(title: "Copy Link", image: UIImage(systemName: "link")) { _ in
@@ -149,6 +151,29 @@ extension TabSession {
     private func takeHandoff(for url: URL, freezingPreview: Bool) -> LinkPreviewHandoff? {
         guard let preview = linkPreview, preview.url == url else { return nil }
         return preview.handoff(freezing: freezingPreview)
+    }
+
+    /// Open in Space: the other Spaces, each with its profile where it isn't the default. Nil with only
+    /// one Space.
+    private func openInSpaceMenu(for url: URL) -> UIMenu? {
+        let options = spacesToOpenLinksIn?() ?? []
+        guard !options.isEmpty else { return nil }
+        let actions = options.map { option in
+            let action = UIAction(title: option.space.name, image: SpaceBadge.menuImage(for: option.space)) { [weak self] _ in
+                self?.openInSpace(url, option: option)
+            }
+            action.subtitle = option.profileName.map { "\($0) profile" }
+            return action
+        }
+        return UIMenu(title: "Open in Space", image: UIImage(systemName: "arrow.up.forward.square"), children: actions)
+    }
+
+    /// A background tab in another Space; the store's toast says where, with Show. The preview's page
+    /// goes with it only to a Space on this tab's profile: it was loaded with this tab's website data.
+    private func openInSpace(_ url: URL, option: LinkSpaceOption) {
+        let handoff = option.adoptsPreview ? takeHandoff(for: url, freezingPreview: false) : nil
+        guard onOpenInSpace?(url, option.space.id, handoff) == true else { return }
+        setBarCollapsed(false)
     }
 
     /// The current page stays. The bar expands so the badge can be seen counting up, with a

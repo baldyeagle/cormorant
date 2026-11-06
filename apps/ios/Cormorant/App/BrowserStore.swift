@@ -55,6 +55,12 @@ final class BrowserStore {
     /// Bumped to ask the browser to close the search panel, the caret sheet and Settings on it: a Space
     /// just added (so you land in it) and a link from another app (straight to the page).
     var closeSheetsRequest = 0
+    /// The toast on screen, if any (`showToast(_:)`).
+    private(set) var toast: Toast?
+    /// Toasts put up since launch, for UI tests (`UITestingProbes`).
+    @ObservationIgnored private(set) var toastsShown = 0
+    /// A tab the Move to Space sheet is asked up for, from a toast (BrowserStore+MoveTabs.swift).
+    var moveRequest: MoveRequest?
 
     let blocking: BlockingService
     let settings: AppSettings
@@ -109,6 +115,8 @@ final class BrowserStore {
     /// What the file holds once the save chain drains: the loaded state, then each queued write.
     /// Nil when unknown (load failed, a write failed), so the next save writes.
     @ObservationIgnored private var lastSavedState: BrowserState?
+    /// Takes the toast down once its time is up.
+    @ObservationIgnored private var toastExpiry: Task<Void, Never>?
 
     init(
         stateStore: (any BrowserStateStore)? = nil,
@@ -415,7 +423,14 @@ final class BrowserStore {
     /// Returns false if no tab was opened.
     @discardableResult
     func openLinkInNewTab(_ url: URL, inBackground: Bool, from opener: TabSession?, handoff: LinkPreviewHandoff?) -> Bool {
-        guard isLoaded, Self.isWeb(url) else { return false }
+        openLink(url, inBackground: inBackground, inSpace: nil, from: opener, handoff: handoff) != nil
+    }
+
+    /// `openLinkInNewTab`, in `spaceID` rather than the opener's Space when it's given (Open in Space,
+    /// always in the background). Returns the new tab's ID, or nil if none was opened.
+    func openLink(_ url: URL, inBackground: Bool, inSpace spaceID: UUID?, from opener: TabSession?,
+                  handoff: LinkPreviewHandoff?) -> UUID? {
+        guard isLoaded, Self.isWeb(url) else { return nil }
         if !inBackground {
             isComposingNewTab = false
             isSearchingTabs = false
@@ -424,7 +439,7 @@ final class BrowserStore {
         // An adopted page may have redirected; the tab records where it ended up. Like any tab a link
         // opens, swiping back from its first page closes it.
         let tab = state.openTab(url: handoff?.webView.url ?? url, title: handoff?.webView.title ?? "",
-                                inSpace: spaceID(of: opener), activate: !inBackground, fromLink: true)
+                                inSpace: spaceID ?? self.spaceID(of: opener), activate: !inBackground, fromLink: true)
         unvisitedTabIDs.insert(tab.id)
         // Stamped after, so the page being read stays first in the switcher, the new tab next.
         if inBackground { stampActiveTab() }
@@ -455,7 +470,101 @@ final class BrowserStore {
         }
         stateDidChange()
         if handoff != nil { saveHistories(onlyNavigated: true) }
-        return true
+        return tab.id
+    }
+
+    // MARK: Toasts
+
+    /// How long a toast stays up: longer with VoiceOver, which reads it first, and not at all while
+    /// VoiceOver is on it (`holdToast`). UI tests keep it up until it's dismissed (no test can depend on
+    /// beating a timer), unless `-uiTestingToastSeconds`.
+    private static var toastLifetime: Duration? {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uiTesting") {
+            let seconds = UserDefaults.standard.double(forKey: "uiTestingToastSeconds")
+            return seconds > 0 ? .seconds(seconds) : nil
+        }
+        #endif
+        return UIAccessibility.isVoiceOverRunning ? .seconds(15) : .seconds(5)
+    }
+
+    /// Puts up `toast` in place of any other, and announces it to VoiceOver (queued, so a menu or sheet
+    /// closing doesn't cut it off).
+    func showToast(_ toast: Toast) {
+        self.toast = toast
+        toastsShown += 1
+        let actions = toast.actions.map(\.title).joined(separator: ", ")
+        let announcement = NSAttributedString(string: actions.isEmpty ? toast.message : "\(toast.message). \(actions).",
+                                              attributes: [.accessibilitySpeechQueueAnnouncement: true])
+        UIAccessibility.post(notification: .announcement, argument: announcement)
+        startToastExpiry()
+    }
+
+    /// Keeps the toast up while VoiceOver is on it, so it doesn't vanish from under the user; its time
+    /// starts over when VoiceOver moves off.
+    func holdToast(_ held: Bool) {
+        if held {
+            toastExpiry?.cancel()
+            toastExpiry = nil
+        } else {
+            startToastExpiry()
+        }
+    }
+
+    private func startToastExpiry() {
+        toastExpiry?.cancel()
+        toastExpiry = nil
+        guard let toast, let lifetime = Self.toastLifetime else { return }
+        let id = toast.id
+        toastExpiry = Task { [weak self] in
+            try? await Task.sleep(for: lifetime)
+            if !Task.isCancelled { self?.dismissToast(id) }
+        }
+    }
+
+    /// A toast about a Space goes once that Space can't be switched to, or there's only one Space left:
+    /// its buttons would act on a Space out of reach, and with one Space no toast names one.
+    private func dismissStaleToast() {
+        guard case .space(let space)? = toast?.icon else { return }
+        if !hasSpacesToSwitch || state.space(space.id)?.isArchived != false { dismissToast() }
+    }
+
+    /// Takes the toast down: the one with `id`, or any.
+    func dismissToast(_ id: UUID? = nil) {
+        guard let toast, id == nil || toast.id == id else { return }
+        self.toast = nil
+        toastExpiry?.cancel()
+        toastExpiry = nil
+    }
+
+    // MARK: Moves
+
+    /// Applies `move` (a `moveTab` or `moveTabBack` of `tabID`, returning its result) and shows the
+    /// result. A tab that changed profile loses its web view first, keeping its history and settings,
+    /// so it's rebuilt, and reloads, in the new profile's website data when it's next shown. Returns
+    /// the move's result: nil when nothing moved.
+    @discardableResult
+    func applyMove(of tabID: UUID, _ move: (inout BrowserState) -> Bool?) -> Bool? {
+        guard isLoaded else { return nil }
+        let spaceID = state.activeSpaceID
+        guard let changesProfile = move(&state) else { return nil }
+        if changesProfile {
+            // Profiles share the default website data until each has its own; the rebuilt web view
+            // is where that will take effect.
+            if let session = activeSession, session.tabID == tabID {
+                // Its page as it was, for its card, before it goes.
+                snapshot(session)
+                session.didResignActiveTab()
+                activeSession = nil
+            }
+            releaseWebView(of: tabID)
+        }
+        if state.activeSpaceID != spaceID {
+            isComposingNewTab = false
+            isSearchingTabs = false
+        }
+        stateDidChange()
+        return changesProfile
     }
 
     // MARK: Blocking
@@ -618,7 +727,14 @@ final class BrowserStore {
         spaceToEdit = nil
         closeSheetsRequest += 1
         stampActiveTab()
-        for url in urls { unvisitedTabIDs.insert(state.openTab(url: url).id) }
+        var opened: [UUID] = []
+        for url in urls {
+            let tab = state.openTab(url: url)
+            unvisitedTabIDs.insert(tab.id)
+            opened.append(tab.id)
+        }
+        moveRequest = nil
+        didOpenFromOtherApp(opened)
     }
 
     /// Build one kept a URL-less placeholder tab alive; tabs now exist only with a page, so drop any
@@ -654,6 +770,7 @@ final class BrowserStore {
     private func stateDidChange() {
         syncActiveSession()
         pruneSessions()
+        dismissStaleToast()
         scheduleSave()
     }
 
@@ -696,7 +813,8 @@ final class BrowserStore {
         cancelBackgroundLoad(tabID, unstaging: true)
         if let session = sessions.removeValue(forKey: tabID) {
             backgroundStage.remove(session.webView)
-            if let history = session.webView.interactionState {
+            // Still restoring, its web view's history is empty: keep the one waiting to go in.
+            if let history = session.isRestoringHistory ? session.pendingHistory : session.webView.interactionState {
                 interactionStates[tabID] = history
                 navigatedTabIDs.insert(tabID)
             }
@@ -750,6 +868,10 @@ final class BrowserStore {
         }
         session.onOpenInNewTab = { [weak self, weak session] url, inBackground, handoff in
             self?.openLinkInNewTab(url, inBackground: inBackground, from: session, handoff: handoff) ?? false
+        }
+        session.spacesToOpenLinksIn = { [weak self] in self?.spacesToOpenLinks(from: tabID) ?? [] }
+        session.onOpenInSpace = { [weak self, weak session] url, spaceID, handoff in
+            self?.openLink(url, inSpace: spaceID, from: session, handoff: handoff) ?? false
         }
         session.onClose = { [weak self] in self?.close(tabID) }
         session.onProcessTerminated = { [weak self, weak session] in

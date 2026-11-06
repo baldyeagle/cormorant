@@ -13,6 +13,8 @@ import UIKit
 ///   Mac's clipboard, synced into the Simulator) put there.
 /// - `UITesting.pull`: how the last drag on a page went (`PullToRefresh.lastPullOutcome`): "moving",
 ///   then "committed" or "dropped <moves>"; "none" before any drag.
+/// - `UITesting.toasts`: how many toasts have been put up since launch, then "up" or "none", so a test
+///   can see one come and go without having to catch it on screen.
 /// - `UITesting.keyboard`: "up" from the keyboard's did-show to its did-hide, else "down". The bar's
 ///   buttons come back to the accessibility tree as the keyboard starts down, and the keyboard leaves
 ///   the tree then too, but it takes taps over the bar until it has slid away.
@@ -30,6 +32,7 @@ struct UITestingProbes: View {
             }
             Probe(identifier: "UITesting.pull") { PullToRefresh.lastPull?.lastPullOutcome ?? "none" }
             Probe(identifier: "UITesting.keyboard") { KeyboardPresence.isUp ? "up" : "down" }
+            Probe(identifier: "UITesting.toasts") { [store] in "\(store.toastsShown) \(store.toast == nil ? "none" : "up")" }
         }
         .allowsHitTesting(false)
     }

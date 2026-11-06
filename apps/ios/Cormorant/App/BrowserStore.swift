@@ -71,10 +71,16 @@ final class BrowserStore {
     let browsingHistory: BrowsingHistory?
     /// Asks the search engine for suggestions; nil never asks (UI tests).
     let searchSuggestions: SearchSuggestionClient?
+    /// The Space a Focus filter sends links from other apps to, while one is on.
+    let focusFilter: FocusFilterSettings
 
     @ObservationIgnored private let stateStore: any BrowserStateStore
     @ObservationIgnored private let historyStore: TabHistoryStore
     @ObservationIgnored private let inbox: SharedInbox?
+    /// Where the Spaces are summed up for the share extension and the Focus filter's Space list.
+    @ObservationIgnored private let spacesSummary: SpacesSummaryFile?
+    /// What `spacesSummary` holds, as far as this launch knows: written again only when it changes.
+    @ObservationIgnored private var writtenSummary: SpacesSummary?
     @ObservationIgnored private var sessions: [UUID: TabSession] = [:]
     @ObservationIgnored private var recentTabIDs: [UUID] = []
     /// Back/forward history of tabs with no web view (evicted, or not shown since launch), restored
@@ -103,7 +109,8 @@ final class BrowserStore {
     /// from, so they're ready to show as they are.
     @ObservationIgnored private weak var stagingWindow: UIWindow?
     @ObservationIgnored private var stagingLayout: PageLayout?
-    @ObservationIgnored private var pendingURLs: [URL] = []
+    /// Links from other apps waiting for the tabs to load, each with the Space it was sent to, if any.
+    @ObservationIgnored private var pendingURLs: [(url: URL, spaceID: UUID?)] = []
     @ObservationIgnored private var sceneIsActive = true
     @ObservationIgnored private var debouncedSave: Task<Void, Never>?
     /// Tail of the save chain. Every save waits for the one before it, so writes land in order.
@@ -131,7 +138,9 @@ final class BrowserStore {
         defaultBrowser: DefaultBrowserStatus = DefaultBrowserStatus(),
         browsingHistory: BrowsingHistory? = BrowserStore.openBrowsingHistory(),
         searchSuggestions: SearchSuggestionClient? = SearchSuggestionClient(),
-        receivesSharedLinks: Bool = true
+        focusFilter: FocusFilterSettings = .shared,
+        inbox: SharedInbox? = SharedInbox(appGroup: AppGroup.identifier),
+        spacesSummary: SpacesSummaryFile? = SpacesSummaryFile(appGroup: AppGroup.identifier)
     ) {
         var usesFallbackStorage = false
         if let stateStore {
@@ -148,8 +157,9 @@ final class BrowserStore {
             usesFallbackStorage = true
         }
         self.historyStore = historyStore
-        inbox = receivesSharedLinks ? SharedInbox(appGroup: AppGroup.identifier) : nil
-        if receivesSharedLinks, inbox == nil {
+        self.inbox = inbox
+        self.spacesSummary = spacesSummary
+        if inbox == nil {
             Logger.app.fault("App group unavailable: shared links can't be received.")
         }
         self.blocking = blocking
@@ -158,6 +168,7 @@ final class BrowserStore {
         self.defaultBrowser = defaultBrowser
         self.browsingHistory = browsingHistory
         self.searchSuggestions = searchSuggestions
+        self.focusFilter = focusFilter
         showsStorageFallbackWarning = usesFallbackStorage
             && !UserDefaults.standard.bool(forKey: Self.warnedStorageFallbackKey)
         blocking.onListsChanged = { [weak self] in self?.reapplyBlockingEverywhere() }
@@ -220,6 +231,7 @@ final class BrowserStore {
     func didBecomeActive() {
         sceneIsActive = true
         defaultBrowser.didBecomeActive()
+        focusFilter.refresh()
         guard isLoaded else { return }
         stampActiveTab()
         state.runArchive()
@@ -247,22 +259,27 @@ final class BrowserStore {
         saveHistories()
     }
 
-    /// `cormorant://open` drains the inbox (optionally with an http(s) `?url=`); plain web URLs open as tabs.
+    /// `cormorant://open` drains the inbox (optionally with an http(s) `?url=`, and the `&space=` ID the
+    /// share extension picked for it); plain web URLs open as tabs.
     func handle(openURL url: URL) {
+        #if DEBUG
+        if handleUITestingURL(url) { return }
+        #endif
         switch url.scheme?.lowercased() {
         case "cormorant":
-            let target = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                .queryItems?.first { $0.name == "url" }?.value.flatMap(URL.init(string:))
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let target = query.first { $0.name == "url" }?.value.flatMap(URL.init(string:))
+            let spaceID = query.first { $0.name == "space" }?.value.flatMap(UUID.init(uuidString:))
             if let target {
                 if Self.isWeb(target) {
-                    pendingURLs.append(target)
+                    pendingURLs.append((target, spaceID))
                 } else {
                     Logger.app.notice("Dropped cormorant://open target with scheme \(target.scheme ?? "none", privacy: .public)")
                 }
             }
         case "http", "https":
             defaultBrowser.didReceiveWebURL()
-            pendingURLs.append(url)
+            pendingURLs.append((url, nil))
         default:
             return
         }
@@ -504,7 +521,7 @@ final class BrowserStore {
         self.toast = toast
         toastsShown += 1
         let actions = toast.actions.map(\.title).joined(separator: ", ")
-        let announcement = NSAttributedString(string: actions.isEmpty ? toast.message : "\(toast.message). \(actions).",
+        let announcement = NSAttributedString(string: actions.isEmpty ? toast.spokenMessage : "\(toast.spokenMessage). \(actions).",
                                               attributes: [.accessibilitySpeechQueueAnnouncement: true])
         UIAccessibility.post(notification: .announcement, argument: announcement)
         startToastExpiry()
@@ -717,20 +734,26 @@ final class BrowserStore {
             Logger.app.error("Shared inbox unreadable: \(error.localizedDescription, privacy: .public)")
             requests = []
         }
-        let urls = (requests.map(\.url) + pendingURLs).filter(Self.isWeb)
+        let links = (requests.map { ($0.url, $0.spaceID) } + pendingURLs).filter { Self.isWeb($0.0) }
         pendingURLs.removeAll()
-        guard !urls.isEmpty else { return }
+        guard !links.isEmpty else { return }
         isComposingNewTab = false
+        isSearchingTabs = false
         // Straight to the page (default-browser rule): nothing left over it.
         showsManageSpaces = false
         spaceToEdit = nil
         closeSheetsRequest += 1
         stampActiveTab()
-        var opened: [UUID] = []
-        for url in urls {
-            let tab = state.openTab(url: url)
+        // Each in the Space picked for it in the share extension, else the Focus filter's, else the one
+        // last used, switching there: the page is what you came for, wherever it opens. Activating the
+        // new tab switches Spaces without counting the tab left there as seen (`switchToSpace` would).
+        var opened: [OpenedLink] = []
+        for (url, requestedSpace) in links {
+            let route = state.destinationForLink(requestedSpace: requestedSpace, focusSpace: focusFilter.spaceID)
+            let tab = state.openTab(url: url, inSpace: route.spaceID, activate: false)
+            state.activate(tabID: tab.id)
             unvisitedTabIDs.insert(tab.id)
-            opened.append(tab.id)
+            opened.append(OpenedLink(tabID: tab.id, spaceID: route.spaceID, reason: route.reason))
         }
         moveRequest = nil
         didOpenFromOtherApp(opened)
@@ -776,6 +799,22 @@ final class BrowserStore {
         pruneSessions()
         dismissStaleToast()
         scheduleSave()
+        writeSpacesSummary()
+    }
+
+    /// Keeps the Spaces summary the share extension and the Focus filter read in step with the state:
+    /// written at once (it's small) when the Spaces you can switch to, or the active one, change. Even
+    /// while saving is off after a load failure: it's a separate file, and says what the app shows.
+    private func writeSpacesSummary() {
+        guard isLoaded, let spacesSummary else { return }
+        let summary = SpacesSummary(state)
+        guard summary != writtenSummary else { return }
+        do {
+            try spacesSummary.write(summary)
+            writtenSummary = summary
+        } catch {
+            Logger.app.error("Writing the Spaces summary failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func syncActiveSession() {
@@ -1202,6 +1241,38 @@ final class BrowserStore {
             state.addSpace(name: "Space \(n + 5)", icon: SpaceIcon.allCases[(n + 4) % SpaceIcon.allCases.count],
                            color: Swatch.allCases[(n + 3) % Swatch.allCases.count])
         }
+    }
+
+    /// UI tests' stand-ins for what they can't drive, under `-uiTesting` (other launches ignore them):
+    /// - `cormorant://ui-testing/share?url=<url>&space=<name>`: as the share extension does with a Space
+    ///   picked, appends a request for the Space of that name (none if no Space has it) to the inbox
+    ///   (the test run's own), then drains it as `cormorant://open` would.
+    /// - `cormorant://ui-testing/focus?space=<name>`: as the system does when a Focus with the filter
+    ///   starts; no `space` (or an unknown name) as when it ends.
+    /// Returns whether `url` was one of these.
+    private func handleUITestingURL(_ url: URL) -> Bool {
+        guard ProcessInfo.processInfo.arguments.contains("-uiTesting"), url.scheme == "cormorant",
+              url.host() == "ui-testing" else { return false }
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let named = query.first { $0.name == "space" }?.value
+            .flatMap { name in state.spaces.first { $0.name == name }?.id }
+        switch url.path() {
+        case "/share":
+            guard let target = query.first(where: { $0.name == "url" })?.value.flatMap(URL.init(string:)) else { break }
+            do {
+                try inbox?.append(OpenRequest(url: target, spaceID: named))
+            } catch {
+                Logger.app.error("UI testing: couldn't append to the inbox: \(error.localizedDescription, privacy: .public)")
+            }
+            guard isLoaded else { break }
+            openInboxAndPending()
+            stateDidChange()
+        case "/focus":
+            focusFilter.set(named)
+        default:
+            break
+        }
+        return true
     }
 
     /// For UI tests (`UITestingProbes`): whether something the app writes while browsing isn't on

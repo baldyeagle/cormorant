@@ -23,10 +23,27 @@ struct Toast: Identifiable {
         case symbol(String)
     }
 
+    /// A small line under the message saying why: "Focus" when a Focus filter chose the Space.
+    struct Note {
+        let text: String
+        let symbol: String
+    }
+
     let id = UUID()
     let icon: Icon
     let message: String
+    var note: Note?
     let actions: [Action]
+
+    init(icon: Icon, message: String, note: Note? = nil, actions: [Action]) {
+        self.icon = icon
+        self.message = message
+        self.note = note
+        self.actions = actions
+    }
+
+    /// The message and note, as VoiceOver announces them: "Opened in Work, Focus".
+    var spokenMessage: String { note.map { "\(message), \($0.text)" } ?? message }
 
     var tint: Swatch? {
         if case .space(let space) = icon { space.color } else { nil }
@@ -78,12 +95,24 @@ private struct ToastView: View {
         layout {
             HStack(spacing: 10) {
                 icon
-                Text(toast.message)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityFocused($focus, equals: "message")
-                    .accessibilityAction(named: "Dismiss", onDismiss)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(toast.message)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+                        .accessibilityFocused($focus, equals: "message")
+                        .accessibilityAction(named: "Dismiss", onDismiss)
+                    if let note = toast.note {
+                        Label(note.text, systemImage: note.symbol)
+                            .font(.caption)
+                            .labelStyle(ToastNoteLabelStyle())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .accessibilityFocused($focus, equals: "note")
+                            .accessibilityAction(named: "Dismiss", onDismiss)
+                            .accessibilityIdentifier("Toast.note")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 6) {
                 ForEach(toast.actions) { action in
@@ -155,6 +184,16 @@ private struct ToastView: View {
                     withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.25)) { drag = .zero }
                 }
             }
+    }
+}
+
+/// The note's symbol a little smaller than its text, close beside it.
+private struct ToastNoteLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon.imageScale(.small)
+            configuration.title
+        }
     }
 }
 

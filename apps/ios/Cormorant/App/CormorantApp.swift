@@ -55,8 +55,9 @@ struct CormorantApp: App {
     private static func makeStore() -> BrowserStore {
         #if DEBUG
         // `-uiTesting` launch argument (CormorantUITests): tabs, their history and icons are saved to
-        // throwaway files instead of the app group's, settings to a throwaway defaults suite, the share
-        // extension's inbox is left alone, no filter lists are downloaded, compiled or installed, and
+        // throwaway files instead of the app group's, settings (the Focus filter's Space too, which
+        // tests set themselves) to a throwaway defaults suite, the share extension's inbox and Spaces
+        // summary are the run's own, no filter lists are downloaded, compiled or installed, and
         // the default-browser status never asks the system (it answers only a few times a year), and
         // search engines aren't asked for suggestions unless `-uiTestingSearchSuggestions` says to.
         // Each launch starts with no tabs, no icons and default settings, unless
@@ -67,16 +68,19 @@ struct CormorantApp: App {
             // Per named session too, so a test that leaves a setting changed can't reach another's relaunch.
             let suite = "dev.baldyeagle.cormorant.ui-testing" + (session.map { ".\($0)" } ?? "")
             if session == nil { UserDefaults.standard.removePersistentDomain(forName: suite) }
+            let defaults = UserDefaults(suiteName: suite) ?? .standard
             return BrowserStore(
                 stateStore: JSONBrowserStateStore(fileURL: run.appendingPathExtension("json")),
                 historyStore: TabHistoryStore(directory: run.appending(path: "History")),
                 blocking: BlockingService(usesFilterLists: false),
-                settings: AppSettings(defaults: UserDefaults(suiteName: suite) ?? .standard),
+                settings: AppSettings(defaults: defaults),
                 favicons: FaviconStore(directory: run.appending(path: "Favicons")),
                 defaultBrowser: DefaultBrowserStatus(isLive: false),
                 browsingHistory: BrowserStore.openBrowsingHistory(at: run.appending(path: "browsing-history.sqlite")),
                 searchSuggestions: ProcessInfo.processInfo.arguments.contains("-uiTestingSearchSuggestions") ? SearchSuggestionClient() : nil,
-                receivesSharedLinks: false
+                focusFilter: FocusFilterSettings(defaults: defaults, followsSystem: false),
+                inbox: SharedInbox(fileURL: run.appending(path: "inbox.json")),
+                spacesSummary: SpacesSummaryFile(fileURL: run.appending(path: "spaces-summary.json"))
             )
         }
         #endif

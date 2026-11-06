@@ -118,13 +118,28 @@ extension BrowserStore {
 
     // MARK: Links from other apps
 
-    /// Links from other apps open in the active Space, straight to the page. With more than one Space,
-    /// a toast says which, and for a single link offers Move… to another.
-    func didOpenFromOtherApp(_ tabIDs: [UUID]) {
-        guard hasSpacesToSwitch, let last = tabIDs.last else { return }
-        let space = state.activeSpace
-        let message = tabIDs.count == 1 ? "Opened in \(space.name)" : "Opened \(tabIDs.count) tabs in \(space.name)"
-        let actions = tabIDs.count == 1 ? [Toast.Action("Move…") { [weak self] in self?.requestMove(of: last) }] : []
-        showToast(Toast(icon: .space(space), message: message, actions: actions))
+    /// Links from other apps open straight to the page, in the Space picked for them in the share
+    /// extension, else a Focus filter's, else the one last used (`openInboxAndPending`). With more than
+    /// one Space, a toast says which, notes a Focus filter that chose it, and for a single link offers
+    /// Move… to another. It never says which app a link came from: the app can't know.
+    func didOpenFromOtherApp(_ links: [OpenedLink]) {
+        guard hasSpacesToSwitch, let last = links.last, let space = state.space(last.spaceID) else { return }
+        var names: [String] = []
+        for link in links {
+            if let name = state.space(link.spaceID)?.name, !names.contains(name) { names.append(name) }
+        }
+        let message = links.count == 1
+            ? "Opened in \(space.name)"
+            : "Opened \(links.count) tabs in \(names.formatted(.list(type: .and)))"
+        let actions = links.count == 1 ? [Toast.Action("Move…") { [weak self] in self?.requestMove(of: last.tabID) }] : []
+        let note = links.contains { $0.reason == .focus } ? Toast.Note(text: "Focus", symbol: "moon.fill") : nil
+        showToast(Toast(icon: .space(space), message: message, note: note, actions: actions))
     }
+}
+
+/// A tab opened for a link from another app, where it opened, and why there.
+struct OpenedLink {
+    let tabID: UUID
+    let spaceID: UUID
+    let reason: LinkDestinationReason
 }

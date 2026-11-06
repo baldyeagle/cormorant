@@ -6,11 +6,26 @@ public struct OpenRequest: Codable, Sendable, Equatable, Identifiable {
     public let id: UUID
     public let url: URL
     public let receivedAt: Date
+    /// The Space the share extension was told to open it in; nil when none was picked, and in inboxes
+    /// written before Spaces. See `BrowserState.destinationForLink(requestedSpace:focusSpace:)`.
+    public let spaceID: UUID?
 
-    public init(id: UUID = UUID(), url: URL, receivedAt: Date = .now) {
+    public init(id: UUID = UUID(), url: URL, receivedAt: Date = .now, spaceID: UUID? = nil) {
         self.id = id
         self.url = url
         self.receivedAt = receivedAt
+        self.spaceID = spaceID
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, url, receivedAt, spaceID }
+
+    /// A missing or unreadable `spaceID` is nil: the link still opens, where links go by default.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        url = try container.decode(URL.self, forKey: .url)
+        receivedAt = try container.decode(Date.self, forKey: .receivedAt)
+        spaceID = (try? container.decodeIfPresent(UUID.self, forKey: .spaceID)) ?? nil
     }
 }
 

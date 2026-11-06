@@ -40,6 +40,7 @@ struct TabSwitcherView: View {
                                 snapshot: store.snapshots[tab.id]?.content,
                                 favicons: store.favicons,
                                 isActive: tab.id == store.state.activeTabID,
+                                accent: store.shownSpace?.color.color ?? .accentColor,
                                 size: cardSize,
                                 labelWidth: tab.id == stack.last?.id ? cardSize.width : max(0, step - 10),
                                 onOpen: { frame in
@@ -76,6 +77,10 @@ struct TabSwitcherView: View {
                 }
                 .scrollIndicators(.hidden)
                 .defaultScrollAnchor(.trailing)
+                // Another Space's cards replace these whole, scrolled to its newest, rather than
+                // leaving one by one as closed cards do.
+                .id(store.state.activeSpaceID)
+                .transition(.opacity)
             }
             .overlay {
                 if store.tabs.isEmpty {
@@ -84,6 +89,16 @@ struct TabSwitcherView: View {
                     } description: {
                         Text("Closed pages are in the archive, top left.")
                     }
+                }
+            }
+            // The Space's color from the top, fading out by 340pt, once there are Spaces to switch.
+            .background(alignment: .top) {
+                if let space = store.shownSpace {
+                    LinearGradient(colors: [space.color.switcherWash, .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 340)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
             .background(Color(.systemGroupedBackground))
@@ -164,8 +179,46 @@ struct TabSwitcherView: View {
         store.activate(tab.id)
     }
 
+    /// Switches the cards to the Space's tabs. The switcher stays up: Done (or a card) goes to them.
+    /// Not once a card is opening, nor once New Tab or Search Tabs has the switcher closing (switching
+    /// would drop what they asked for).
+    private func switchToSpace(_ spaceID: UUID) {
+        guard opening == nil, !store.isComposingNewTab, !store.isSearchingTabs else { return }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.25)) {
+            store.switchToSpace(spaceID)
+        }
+    }
+
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        if let space = store.shownSpace {
+            // The Space's name in place of the tab count; it opens the same list as the tabs button.
+            ToolbarItem(placement: .principal) {
+                Menu {
+                    SpaceMenuList(onSwitch: switchToSpace)
+                    Section {
+                        Button("Manage Spaces", systemImage: "square.stack") { store.showManageSpaces() }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        SpaceBadge(space: space)
+                        Text(space.name)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .accessibilityLabel("Space, \(space.name)")
+                // What the title said before Spaces.
+                .accessibilityValue(title)
+                .accessibilityHint("Switches Spaces")
+                .accessibilityIdentifier("SpaceTitleMenu")
+            }
+        }
         ToolbarItem(placement: .topBarLeading) {
             NavigationLink {
                 ArchiveListView(onRestore: { dismiss() })
@@ -175,6 +228,21 @@ struct TabSwitcherView: View {
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button("Done") { dismiss() }
+        }
+        if store.hasSpacesToSwitch {
+            ToolbarItem(placement: .bottomBar) {
+                SpaceStrip(onSwitch: switchToSpace)
+            }
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+        } else {
+            // With only Home, the one sign Spaces exist: Manage Spaces, where New Space lives.
+            ToolbarItem(placement: .bottomBar) {
+                // The browser closes the switcher on the way (`presentManageSpaces`).
+                Button("Spaces", systemImage: "square.stack") { store.showManageSpaces() }
+                .accessibilityHint("Creates and manages Spaces")
+                .accessibilityIdentifier("ManageSpacesButton")
+            }
+            ToolbarSpacer(.flexible, placement: .bottomBar)
         }
         ToolbarItem(placement: .bottomBar) {
             // Searches in the search panel once the switcher is gone, like New Tab.

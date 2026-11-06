@@ -1,3 +1,4 @@
+import CormorantCore
 import SwiftUI
 
 /// Tabs on the left, a New Tab pill in the middle, page actions on the right, as in Arc Search.
@@ -14,9 +15,7 @@ struct BottomBar: View {
     let showActions: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// A tint for every control's glass. Reserved for the current Space's color (faint: about 10% in
-    /// light mode, 14% in dark); websites never tint the bar. Nothing sets it yet.
-    var glassTint: Color? = nil
+    @Environment(\.colorScheme) private var colorScheme
     /// Scales the round controls with Dynamic Type; a minimum, never a cap.
     @ScaledMetric(relativeTo: .body) private var controlSize: CGFloat = 46
     /// Arc Search's proportions: a short pill, not a field-width one.
@@ -43,6 +42,15 @@ struct BottomBar: View {
         .padding(.bottom, isCollapsed && !reduceMotion ? -14 : 0)
     }
 
+    /// The Space on screen, once there's more than one; with only Home the bar stays plain.
+    private var space: Space? { store.shownSpace }
+
+    /// Every control's glass takes a trace of the Space's color (`Swatch.barTint`). Websites never
+    /// tint the bar.
+    private var glassTint: Color? {
+        space.map { $0.color.barTint(in: colorScheme) }
+    }
+
     private var glass: Glass {
         glassTint.map { .regular.tint($0).interactive() } ?? .regular.interactive()
     }
@@ -57,17 +65,25 @@ struct BottomBar: View {
         Button {
             session?.isBarCollapsed = false
         } label: {
-            Text(url?.displayHost ?? "")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 5)
-                // Wide enough for the progress line to read under a short host like "x.com".
-                .frame(minWidth: 140)
-                .overlay(alignment: .bottom) { LoadingLine(progress: progress, isLoading: isLoading) }
-                .glassEffect(glass, in: .capsule)
-                .contentShape(.capsule)
+            HStack(spacing: 6) {
+                // So the Space is never fully out of sight.
+                if let space {
+                    Circle()
+                        .fill(space.color.color)
+                        .frame(width: 7, height: 7)
+                }
+                Text(url?.displayHost ?? "")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 5)
+            // Wide enough for the progress line to read under a short host like "x.com".
+            .frame(minWidth: 140)
+            .overlay { LoadingLine(progress: progress, isLoading: isLoading) }
+            .glassEffect(glass, in: .capsule)
+            .contentShape(.capsule)
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
@@ -92,27 +108,51 @@ struct BottomBar: View {
         .padding(.bottom, 4)
     }
 
-    /// Tap opens the switcher; long-press offers Search Tabs and New Tab.
+    /// Tap opens the switcher; long-press offers Search Tabs and New Tab, and above them the Spaces
+    /// when there's more than one.
     private var tabsButton: some View {
         Menu {
-            Button("Search Tabs", systemImage: "magnifyingglass") { store.searchTabs() }
-                .labelStyle(.titleAndIcon)
-            Button("New Tab", systemImage: "plus") { store.newTab() }
-                .labelStyle(.titleAndIcon)
+            // The system lists a menu that opens upward from its last item, so nearest the button
+            // comes first here. The Spaces read top-down in their own order instead, so that menu is
+            // fixed in written order, with New Tab and Search Tabs where they were.
+            if space != nil {
+                SpaceMenuList(onSwitch: store.switchToSpace)
+                Button("New Tab", systemImage: "plus") { store.newTab() }
+                    .labelStyle(.titleAndIcon)
+                Button("Search Tabs", systemImage: "magnifyingglass") { store.searchTabs() }
+                    .labelStyle(.titleAndIcon)
+                Button("Manage Spaces", systemImage: "square.stack") { store.showManageSpaces() }
+                    .labelStyle(.titleAndIcon)
+            } else {
+                Button("Search Tabs", systemImage: "magnifyingglass") { store.searchTabs() }
+                    .labelStyle(.titleAndIcon)
+                Button("New Tab", systemImage: "plus") { store.newTab() }
+                    .labelStyle(.titleAndIcon)
+            }
         } label: {
-            TabCountGlyph(count: store.tabs.count)
+            TabCountGlyph(count: store.tabs.count, color: space?.color.color)
                 .frame(minWidth: controlSize, minHeight: controlSize)
                 .contentShape(.circle)
         } primaryAction: {
             showSwitcher()
         }
         .menuStyle(.button)
+        .menuOrder(space != nil ? .fixed : .automatic)
         .buttonStyle(.plain)
         .glassEffect(glass, in: .circle)
         .accessibilityLabel("Tabs, \(store.tabs.count) open")
         .accessibilityHint("Shows open tabs")
         .accessibilityAction(named: "Search Tabs") { store.searchTabs() }
         .accessibilityAction(named: "New Tab") { store.newTab() }
+        .accessibilityValue(space?.name ?? "")
+        .accessibilityActions {
+            if space != nil {
+                ForEach(store.state.switchableSpaces.filter { $0.id != store.state.activeSpaceID }) { other in
+                    Button("Switch to \(other.name)") { store.switchToSpace(other.id) }
+                }
+                Button("Manage Spaces") { store.showManageSpaces() }
+            }
+        }
     }
 
     private var newTabPill: some View {
@@ -121,7 +161,7 @@ struct BottomBar: View {
                 .font(.title3.weight(.medium))
                 // Gives way before the round buttons do (a narrow screen at the largest text size).
                 .frame(minWidth: controlSize, idealWidth: newTabWidth, maxWidth: newTabWidth, minHeight: controlSize)
-                .overlay(alignment: .bottom) { LoadingLine(progress: progress, isLoading: isLoading) }
+                .overlay { LoadingLine(progress: progress, isLoading: isLoading) }
                 .contentShape(.capsule)
         }
         .buttonStyle(.plain)
@@ -147,9 +187,11 @@ struct BottomBar: View {
     }
 }
 
-/// The open-tab count in a rounded square, the same glyph the switcher uses as its metaphor.
+/// The open-tab count in a rounded square, the same glyph the switcher uses as its metaphor. In the
+/// Space's color when there's more than one.
 private struct TabCountGlyph: View {
     let count: Int
+    let color: Color?
     @ScaledMetric(relativeTo: .footnote) private var side: CGFloat = 24
     @ScaledMetric(relativeTo: .footnote) private var radius: CGFloat = 6
 
@@ -163,11 +205,12 @@ private struct TabCountGlyph: View {
             .padding(.horizontal, 4)
             .frame(minWidth: side, minHeight: side)
             .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(lineWidth: 1.6))
-            .foregroundStyle(.primary)
+            .foregroundStyle(color.map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
     }
 }
 
-/// A hairline of page-load progress along the bottom edge of the control it overlays.
+/// A hairline of page-load progress along the bottom edge of the capsule it overlays, clipped to the
+/// capsule: that close to the bottom its rounded ends curve in further than the line's inset.
 private struct LoadingLine: View {
     let progress: Double
     let isLoading: Bool
@@ -178,6 +221,8 @@ private struct LoadingLine: View {
             .scaleEffect(x: 1, y: 0.6, anchor: .bottom)
             .padding(.horizontal, 14)
             .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .clipShape(.capsule)
             .opacity(isLoading ? 1 : 0)
             .animation(.easeOut(duration: 0.25), value: isLoading)
             .accessibilityHidden(true)

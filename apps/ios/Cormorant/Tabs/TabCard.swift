@@ -8,6 +8,8 @@ struct TabCard: View {
     let snapshot: UIImage?
     let favicons: FaviconStore
     let isActive: Bool
+    /// The active card's outline: the Space's color, or the app's accent with only Home.
+    var accent: Color = .accentColor
     /// The card itself, not counting the label above it.
     let size: CGSize
     /// How much of the label the next card's label leaves room for.
@@ -76,7 +78,7 @@ struct TabCard: View {
         .clipShape(.rect(cornerRadius: 22, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(isActive ? Color.accentColor : .clear, lineWidth: 3)
+                .strokeBorder(isActive ? accent : .clear, lineWidth: 3)
         }
         .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
     }

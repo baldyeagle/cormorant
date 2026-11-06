@@ -8,21 +8,25 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
     public var icon: SpaceIcon
     public var color: Swatch
     public var profileID: UUID
-    /// Idle time before this Space's Today tabs archive.
+    /// Idle time before this Space's tabs archive.
     public var archivePolicy: ArchivePolicy
+    /// The policy Settings' Archive Idle Tabs switch turned off, which turning it back on restores
+    /// (`stopArchivingIdleTabs` / `resumeArchivingIdleTabs`). Nil unless that switch turned it off.
+    public var archivePolicyBeforeOff: ArchivePolicy?
     /// Set while the Space is archived: kept with its tabs, but out of switching.
     public var archivedAt: Date?
     public let createdAt: Date
 
     public init(id: UUID = UUID(), name: String, icon: SpaceIcon = .house, color: Swatch = .teal,
                 profileID: UUID = Profile.defaultID, archivePolicy: ArchivePolicy = .oneDay,
-                archivedAt: Date? = nil, createdAt: Date = .now) {
+                archivePolicyBeforeOff: ArchivePolicy? = nil, archivedAt: Date? = nil, createdAt: Date = .now) {
         self.id = id
         self.name = name
         self.icon = icon
         self.color = color
         self.profileID = profileID
         self.archivePolicy = archivePolicy
+        self.archivePolicyBeforeOff = archivePolicyBeforeOff
         self.archivedAt = archivedAt
         self.createdAt = createdAt
     }
@@ -135,6 +139,7 @@ extension Space {
             profileID: try container.decodeIfPresent(UUID.self, forKey: .profileID) ?? Profile.defaultID,
             // A policy this build can't read (a newer build's shape) costs the setting, not the file.
             archivePolicy: (try? container.decodeIfPresent(ArchivePolicy.self, forKey: .archivePolicy)) ?? .oneDay,
+            archivePolicyBeforeOff: (try? container.decodeIfPresent(ArchivePolicy.self, forKey: .archivePolicyBeforeOff)),
             archivedAt: try container.decodeIfPresent(Date.self, forKey: .archivedAt),
             createdAt: try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .distantPast
         )

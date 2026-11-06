@@ -4,6 +4,15 @@ import SwiftUI
 @main
 struct CormorantApp: App {
     @State private var store = Self.makeStore()
+
+    init() {
+        #if DEBUG
+        // Before any window: at launch the keyboard comes up with the search panel, and a probe that
+        // started watching later would never see it.
+        if Self.isUITesting { KeyboardPresence.start() }
+        if Self.isUITesting, ProcessInfo.processInfo.arguments.contains("-uiTestingShowTouches") { TouchMarks.start() }
+        #endif
+    }
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {

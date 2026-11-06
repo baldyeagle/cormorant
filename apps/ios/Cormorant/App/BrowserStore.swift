@@ -40,6 +40,21 @@ final class BrowserStore {
     private(set) var isComposingNewTab = false
     /// The search panel is open to search open tabs only (Search Tabs). Dropped with the panel.
     private(set) var isSearchingTabs = false
+    /// Manage Spaces is up, or asked for. Set by `showManageSpaces()` / `dismissManageSpaces()`
+    /// (BrowserStore+Spaces.swift).
+    var showsManageSpaces = false
+    /// Bumped by each `showManageSpaces()`, to ask the browser to close whatever else is up and present
+    /// it. On an ask while it's meant to be up already, the browser presents it afresh, so one
+    /// presentation that didn't take can't leave the way in dead (`BrowserView.presentManageSpaces`).
+    var manageSpacesRequest = 0
+    /// A Space whose Edit Space opens on top of Manage Spaces once it's up (a strip icon's Edit).
+    var spaceToEdit: UUID?
+    /// Manage Spaces is showing as a page in Settings. While it is, a change of active tab (from
+    /// archiving, deleting or switching Spaces there) leaves the caret sheet and Settings up.
+    @ObservationIgnored var isManagingSpacesInSettings = false
+    /// Bumped to ask the browser to close the search panel, the caret sheet and Settings on it: a Space
+    /// just added (so you land in it) and a link from another app (straight to the page).
+    var closeSheetsRequest = 0
 
     let blocking: BlockingService
     let settings: AppSettings
@@ -163,6 +178,10 @@ final class BrowserStore {
             loadFailure = LoadFailure(keptCopyName: await keepCopyOfStateFile())
         }
         dropBlankTabs()
+        #if DEBUG
+        seedUITestingSpaces()
+        state = Self.uiTestingLaunchState(state)
+        #endif
         isLoaded = true
         writeBrowsingHistory { await $0.prune() }
         forgetFavicons()
@@ -268,6 +287,39 @@ final class BrowserStore {
         isSearchingTabs = false
         stampActiveTab()
         state.activate(tabID: tabID)
+        stateDidChange()
+    }
+
+    // MARK: Spaces
+
+    /// More than one Space to switch between. Until then nothing of Spaces shows.
+    var hasSpacesToSwitch: Bool { state.hasSpacesToSwitch }
+
+    /// The active Space, with its look and tab count, when there are Spaces to switch between; nil
+    /// with only Home, where the bar and switcher look as they always have.
+    var shownSpace: Space? { hasSpacesToSwitch ? state.activeSpace : nil }
+
+    /// Shows the Space's most recently viewed tab, or the search panel when it has none. Web views of
+    /// the Space left stay as they are (`liveWebViewLimit` spans Spaces).
+    func switchToSpace(_ spaceID: UUID) {
+        guard isLoaded, spaceID != state.activeSpaceID else { return }
+        isComposingNewTab = false
+        isSearchingTabs = false
+        state.switchToSpace(spaceID)
+        stateDidChange()
+    }
+
+    /// Applies `change` to the state, then shows and saves the result: for extensions in other files
+    /// (BrowserStore+Spaces.swift), which can't set `state`. Leaving the active Space ends any
+    /// composing or tab search, as switching tabs does. No-op until tabs are loaded.
+    func changeState(_ change: (inout BrowserState) -> Void) {
+        guard isLoaded else { return }
+        let spaceID = state.activeSpaceID
+        change(&state)
+        if state.activeSpaceID != spaceID {
+            isComposingNewTab = false
+            isSearchingTabs = false
+        }
         stateDidChange()
     }
 
@@ -561,6 +613,10 @@ final class BrowserStore {
         pendingURLs.removeAll()
         guard !urls.isEmpty else { return }
         isComposingNewTab = false
+        // Straight to the page (default-browser rule): nothing left over it.
+        showsManageSpaces = false
+        spaceToEdit = nil
+        closeSheetsRequest += 1
         stampActiveTab()
         for url in urls { unvisitedTabIDs.insert(state.openTab(url: url).id) }
     }
@@ -630,16 +686,29 @@ final class BrowserStore {
               let evicted = recentTabIDs.last(where: {
                   $0 != tabID && $0 != state.activeTabID && stagedLoads[$0] == nil
               }) {
-            recentTabIDs.removeAll { $0 == evicted }
-            cancelBackgroundLoad(evicted, unstaging: true)
-            if let session = sessions.removeValue(forKey: evicted) {
-                backgroundStage.remove(session.webView)
-                if let history = session.webView.interactionState {
-                    interactionStates[evicted] = history
-                    navigatedTabIDs.insert(evicted)
-                }
-                pendingViewSettings[evicted] = session.viewSettings
+            releaseWebView(of: evicted)
+        }
+    }
+
+    /// Lets go of the tab's web view, keeping its history and view settings to rebuild it from.
+    private func releaseWebView(of tabID: UUID) {
+        recentTabIDs.removeAll { $0 == tabID }
+        cancelBackgroundLoad(tabID, unstaging: true)
+        if let session = sessions.removeValue(forKey: tabID) {
+            backgroundStage.remove(session.webView)
+            if let history = session.webView.interactionState {
+                interactionStates[tabID] = history
+                navigatedTabIDs.insert(tabID)
             }
+            pendingViewSettings[tabID] = session.viewSettings
+        }
+    }
+
+    /// Lets go of the web views of the Space's tabs, as eviction does, so an archived Space's pages
+    /// (and any media in them) stop. Never the tab on screen.
+    func releaseWebViews(inSpace spaceID: UUID) {
+        for tab in state.tabs where tab.spaceID == spaceID && tab.id != state.activeTabID {
+            releaseWebView(of: tab.id)
         }
     }
 
@@ -909,6 +978,27 @@ final class BrowserStore {
     }
 
     #if DEBUG
+    /// `-uiTestingSpaces <base URL>` (UI tests, with `-uiTesting`): adds Work, on a profile of its own
+    /// ("Vialumi"), and Projects, with one tab each at `<base>/work` and `<base>/projects`, then Trip
+    /// with none, unless a relaunch finds them there already. Home stays active.
+    private func seedUITestingSpaces() {
+        guard ProcessInfo.processInfo.arguments.contains("-uiTesting"),
+              let base = UserDefaults.standard.string(forKey: "uiTestingSpaces").flatMap(URL.init(string:)),
+              !state.spaces.contains(where: { $0.name == "Work" }) else { return }
+        let vialumi = state.addProfile(name: "Vialumi", color: .indigo)
+        let work = state.addSpace(name: "Work", icon: .briefcase, color: .indigo, profileID: vialumi.id)
+        let projects = state.addSpace(name: "Projects", icon: .hammer, color: .orange)
+        _ = state.openTab(url: base.appending(path: "work"), inSpace: work.id, activate: false)
+        _ = state.openTab(url: base.appending(path: "projects"), inSpace: projects.id, activate: false)
+        state.addSpace(name: "Trip", icon: .airplane, color: .green)
+        // `-uiTestingExtraSpaces N`: N more, empty, for a crowded strip.
+        let extra = UserDefaults.standard.integer(forKey: "uiTestingExtraSpaces")
+        for n in 0..<max(0, extra) {
+            state.addSpace(name: "Space \(n + 5)", icon: SpaceIcon.allCases[(n + 4) % SpaceIcon.allCases.count],
+                           color: Swatch.allCases[(n + 3) % Swatch.allCases.count])
+        }
+    }
+
     /// For UI tests (`UITestingProbes`): whether something the app writes while browsing isn't on
     /// disk yet: a debounced save still waiting, a write queued or running, a tab whose new page's
     /// history hasn't been queued, or a page still loading (its history is saved once it has).

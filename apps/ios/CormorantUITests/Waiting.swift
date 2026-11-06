@@ -67,6 +67,13 @@ extension XCUIApplication {
         return waitUntil(Ceiling.ui, "Waiting for the app's saves to land") { probe.value as? String == "settled" }
     }
 
+    /// True once the app reports (`UITestingProbes`) that the keyboard has finished going: until then
+    /// it takes taps meant for the bar under it, though both look ready to XCTest.
+    func keyboardIsDown() -> Bool {
+        let probe = descendants(matching: .any)["UITesting.keyboard"].firstMatch
+        return waitUntil(Ceiling.ui, "Waiting for the keyboard to go") { probe.value as? String == "down" }
+    }
+
     /// Whether XCTest waits for the app's animations to finish before each action (its default), so a
     /// tap never lands mid-transition, where UIKit drops it. Off only while a link context menu is up:
     /// on the iOS 27.1 simulator one never reports its animations finished, and every query waited out

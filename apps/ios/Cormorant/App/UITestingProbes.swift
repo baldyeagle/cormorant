@@ -13,6 +13,9 @@ import UIKit
 ///   Mac's clipboard, synced into the Simulator) put there.
 /// - `UITesting.pull`: how the last drag on a page went (`PullToRefresh.lastPullOutcome`): "moving",
 ///   then "committed" or "dropped <moves>"; "none" before any drag.
+/// - `UITesting.keyboard`: "up" from the keyboard's did-show to its did-hide, else "down". The bar's
+///   buttons come back to the accessibility tree as the keyboard starts down, and the keyboard leaves
+///   the tree then too, but it takes taps over the bar until it has slid away.
 struct UITestingProbes: View {
     @Environment(BrowserStore.self) private var store
 
@@ -26,8 +29,29 @@ struct UITestingProbes: View {
                 return pasteboard.url?.absoluteString ?? pasteboard.string
             }
             Probe(identifier: "UITesting.pull") { PullToRefresh.lastPull?.lastPullOutcome ?? "none" }
+            Probe(identifier: "UITesting.keyboard") { KeyboardPresence.isUp ? "up" : "down" }
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// Whether the keyboard is on screen, by its did-show and did-hide notifications, for `UITestingProbes`.
+/// Started at launch (`CormorantApp.init`), before the first keyboard.
+enum KeyboardPresence {
+    private(set) static var isUp = false
+    private static var observers: [NSObjectProtocol] = []
+
+    static func start() {
+        guard observers.isEmpty else { return }
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: UIResponder.keyboardDidShowNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { isUp = true }
+            },
+            center.addObserver(forName: UIResponder.keyboardDidHideNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { isUp = false }
+            },
+        ]
     }
 }
 
@@ -68,6 +92,65 @@ private struct Probe: UIViewRepresentable {
         override var accessibilityValue: String? {
             get { value() }
             set {}
+        }
+    }
+}
+/// `-uiTestingShowTouches` (with `-uiTesting`): a red dot wherever a touch reaches the app's windows,
+/// fading over a second, so a test's screen recording shows its taps and drags. A tap that never
+/// reaches the app (taken by the keyboard, say) leaves no dot.
+enum TouchMarks {
+    private static var observer: NSObjectProtocol?
+
+    static func start() {
+        guard observer == nil else { return }
+        observer = NotificationCenter.default.addObserver(forName: UIWindow.didBecomeKeyNotification, object: nil,
+                                                          queue: .main) { _ in
+            MainActor.assumeIsolated { watchEveryWindow() }
+        }
+    }
+
+    private static func watchEveryWindow() {
+        let windows = UIApplication.shared.connectedScenes.flatMap { ($0 as? UIWindowScene)?.windows ?? [] }
+        for window in windows where !(window.gestureRecognizers ?? []).contains(where: { $0 is Recognizer }) {
+            window.addGestureRecognizer(Recognizer())
+        }
+    }
+
+    /// Sees every touch in its window and never takes one.
+    private final class Recognizer: UIGestureRecognizer {
+        init() {
+            super.init(target: nil, action: nil)
+            cancelsTouchesInView = false
+            delaysTouchesBegan = false
+            delaysTouchesEnded = false
+        }
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+            for touch in touches { mark(touch) }
+        }
+
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+            for touch in touches { mark(touch, size: 14) }
+        }
+
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { state = .failed }
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { state = .failed }
+
+        override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+        override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+
+        private func mark(_ touch: UITouch, size: CGFloat = 36) {
+            guard let window = view as? UIWindow else { return }
+            let dot = UIView(frame: CGRect(x: 0, y: 0, width: size, height: size))
+            dot.center = touch.location(in: window)
+            dot.layer.cornerRadius = size / 2
+            dot.backgroundColor = UIColor.systemRed.withAlphaComponent(0.55)
+            dot.layer.borderColor = UIColor.white.cgColor
+            dot.layer.borderWidth = 2
+            dot.isUserInteractionEnabled = false
+            window.addSubview(dot)
+            UIView.animate(withDuration: 1, delay: 0.3, options: [.allowUserInteraction]) { dot.alpha = 0 }
+                completion: { _ in dot.removeFromSuperview() }
         }
     }
 }

@@ -131,7 +131,8 @@ extension BrowserState {
     /// Repairs references so the state always has somewhere to put a tab: Space and profile IDs are
     /// unique, Home and the default profile exist, Home isn't archived, every Space's profile exists,
     /// every open tab belongs to an existing Space, the active Space is a switchable one, and the active
-    /// tab is in it. Archived tabs keep their Space ID even if it's gone (`restore` handles that).
+    /// tab is in it. `profilesToErase` holds no duplicates, no default profile and no profile that
+    /// exists: a profile still listed is never erased. Archived tabs keep their Space ID even if it's gone (`restore` handles that).
     /// `init`, decoding, `updateSpace` and `deleteProfile` call it; the other mutations keep these
     /// invariants themselves. Doesn't count any tab as viewed.
     public mutating func normalize() {
@@ -145,6 +146,10 @@ extension BrowserState {
             spaces.insert(.default, at: 0)
         }
         let profileIDs = Set(profiles.map(\.id))
+        var seenErasures = Set<UUID>()
+        profilesToErase.removeAll {
+            $0 == Profile.defaultID || profileIDs.contains($0) || !seenErasures.insert($0).inserted
+        }
         for index in spaces.indices where !profileIDs.contains(spaces[index].profileID) {
             spaces[index].profileID = Profile.defaultID
         }
@@ -313,8 +318,9 @@ extension BrowserState {
     }
 
     /// Deletes the profile; the Spaces that used it switch to the default profile. Returns those Spaces'
-    /// IDs, whose tabs must reload, or nil if nothing was deleted (unknown or default profile). Erasing
-    /// the profile's website data store is the caller's job.
+    /// IDs, whose tabs must reload, or nil if nothing was deleted (unknown or default profile). The
+    /// profile joins `profilesToErase`: erasing its website data store and history is the caller's job,
+    /// reported with `profileErased(_:)`.
     @discardableResult
     public mutating func deleteProfile(_ profileID: UUID) -> [UUID]? {
         guard profileID != Profile.defaultID, let index = profiles.firstIndex(where: { $0.id == profileID }) else {
@@ -322,7 +328,13 @@ extension BrowserState {
         }
         let affected = spaces(usingProfile: profileID).map(\.id)
         profiles.remove(at: index)
+        profilesToErase.append(profileID)
         normalize()
         return affected
+    }
+
+    /// The deleted profile's website data and history are gone: it leaves `profilesToErase`.
+    public mutating func profileErased(_ profileID: UUID) {
+        profilesToErase.removeAll { $0 == profileID }
     }
 }

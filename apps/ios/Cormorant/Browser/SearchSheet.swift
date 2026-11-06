@@ -45,7 +45,8 @@ struct SearchSheet: View {
     @State private var didSelectInitially = false
     /// The site the field completes the typed text to; its suffix is the selected end of `text`.
     @State private var completion: InlineCompletion?
-    /// Visited sites, best first, to complete to. Read once, so a keystroke is completed in the same
+    /// Visited sites, best first, to complete to: the active Space's profile's, as every history row
+    /// here is (history follows the profile). Read once, so a keystroke is completed in the same
     /// update that delivers it: anything slower can land after the field has taken the next key, and
     /// setting the text then would drop that key.
     @State private var completionHosts: [String] = []
@@ -69,6 +70,7 @@ struct SearchSheet: View {
     /// What a lookup depends on; a change starts a new one.
     private struct LookupKey: Equatable {
         let query: String?
+        let profileID: UUID
         let engine: SearchEngine
         let asksEngine: Bool
     }
@@ -96,8 +98,11 @@ struct SearchSheet: View {
             Task { selectAll() }
         }
         .onChange(of: text) { old, new in textDidChange(from: old, to: new) }
-        .task { completionHosts = await store.browsingHistory?.completionHosts() ?? [] }
-        .task(id: LookupKey(query: isTabSearch ? nil : query, engine: store.settings.searchEngine,
+        .task(id: store.activeProfileID) {
+            completionHosts = await store.browsingHistory?.completionHosts(profile: store.activeProfileID) ?? []
+        }
+        .task(id: LookupKey(query: isTabSearch ? nil : query, profileID: store.activeProfileID,
+                            engine: store.settings.searchEngine,
                             asksEngine: store.settings.searchSuggestions)) {
             await lookUp()
         }
@@ -496,9 +501,9 @@ struct SearchSheet: View {
             lookup = Lookup()
             return
         }
-        let history = store.browsingHistory
-        let pages = await history?.pages(matching: query) ?? []
-        let pastSearches = await history?.searches(matching: query) ?? []
+        let history = store.browsingHistory, profile = store.activeProfileID
+        let pages = await history?.pages(matching: query, profile: profile) ?? []
+        let pastSearches = await history?.searches(matching: query, profile: profile) ?? []
         guard !Task.isCancelled else { return }
         let carried = lookup.engineSuggestions.filter { $0.lowercased().hasPrefix(query.lowercased()) }
         lookup = Lookup(text: query, pages: pages, pastSearches: pastSearches, engineSuggestions: carried)

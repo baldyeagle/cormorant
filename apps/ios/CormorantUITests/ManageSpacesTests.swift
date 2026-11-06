@@ -100,8 +100,12 @@ final class ManageSpacesTests: UITestCase {
         createSpace("Work", in: app)
         openSpaces(in: app)
         row("Work", in: app).tap()
+        XCTAssertTrue(app.buttons["Save"].appears(within: Ceiling.ui), "Edit Space didn't open")
+        // Below the Profile row on a short screen. On the preview: a swipe starting on a button can
+        // land as a tap on it.
+        app.otherElements["Preview"].firstMatch.swipeUp()
         let archive = app.buttons["Archive Space"]
-        XCTAssertTrue(archive.appears(within: Ceiling.ui), "Edit Space didn't open")
+        XCTAssertTrue(archive.appears(within: Ceiling.ui), "no Archive Space")
         archive.tap()
         let confirm = app.buttons["Archive Work"]
         XCTAssertTrue(confirm.appears(within: Ceiling.ui), "no archive confirmation")
@@ -127,8 +131,12 @@ final class ManageSpacesTests: UITestCase {
         XCTAssertFalse(row("Home", in: app).isSelected, "Home is checked though you're in Work")
 
         row("Work", in: app).tap()
+        XCTAssertTrue(app.buttons["Save"].appears(within: Ceiling.ui), "Edit Space didn't open")
+        // Below the Profile row on a short screen. On the preview: a swipe starting on a button can
+        // land as a tap on it.
+        app.otherElements["Preview"].firstMatch.swipeUp()
         let archive = app.buttons["Archive Space"]
-        XCTAssertTrue(archive.appears(within: Ceiling.ui), "Edit Space didn't open")
+        XCTAssertTrue(archive.appears(within: Ceiling.ui), "no Archive Space")
         archive.tap()
         let confirmArchive = app.buttons["Archive Work"]
         XCTAssertTrue(confirmArchive.appears(within: Ceiling.ui), "no archive confirmation")
@@ -164,10 +172,9 @@ final class ManageSpacesTests: UITestCase {
         openSpaces(in: app)
         XCTAssertEqual(row("Work", in: app).value as? String, "Briefcase icon, Indigo, 1 tab")
         row("Work", in: app).tap()
-        // Below the fold on a short screen, where the form hasn't made it yet.
-        let archive = app.buttons["Archive Space"]
-        XCTAssertTrue(archive.appears(within: Ceiling.ui), "Edit Space didn't open")
-        // On the preview: a swipe starting on a button can land as a tap on it.
+        XCTAssertTrue(app.buttons["Save"].appears(within: Ceiling.ui), "Edit Space didn't open")
+        // Below the fold on a short screen. On the preview: a swipe starting on a button can land as a
+        // tap on it.
         app.otherElements["Preview"].firstMatch.swipeUp()
         let delete = app.buttons["Delete Space"]
         XCTAssertTrue(delete.appears(within: Ceiling.ui), "no Delete Space")

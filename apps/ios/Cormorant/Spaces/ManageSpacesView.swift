@@ -2,8 +2,9 @@ import CormorantCore
 import SwiftUI
 
 /// Manage Spaces: the Spaces you switch between, in order (Edit reorders them), each opening Edit
-/// Space; New Space; and the archived ones, each restored with one tap. Presented from the browser's
-/// root (`BrowserStore.showManageSpaces()`).
+/// Space; New Space; the archived ones, each restored with one tap; and the profiles, each with the
+/// Spaces using it, opening Edit Profile, and New Profile. Presented from the browser's root
+/// (`BrowserStore.showManageSpaces()`).
 struct ManageSpacesView: View {
     @Environment(BrowserStore.self) private var store
     @State private var editMode: EditMode = .inactive
@@ -31,8 +32,7 @@ struct ManageSpacesView: View {
         List {
             spacesSection
             archivedSection
-            // Profiles (step 5): a section here listing each profile and the Spaces using it, with
-            // New Profile.
+            profilesSection
         }
         .environment(\.editMode, $editMode)
         // An archived Space swiped to Delete. On the list, not its section: from inside the section
@@ -79,7 +79,7 @@ struct ManageSpacesView: View {
                 // Not `disabled` while reordering, which would dim the rows being dragged.
                 Button { if !editMode.isEditing { editing = space } } label: {
                     HStack {
-                        SpaceRow(space: space, detail: tabsPhrase(space),
+                        SpaceRow(space: space, detail: spaceDetail(space),
                                  isCurrent: space.id == store.state.activeSpaceID)
                         if !editMode.isEditing {
                             Image(systemName: "chevron.right")
@@ -126,6 +126,32 @@ struct ManageSpacesView: View {
         }
     }
 
+    /// Pushed pages, in Settings' stack or Manage Spaces' own alike.
+    private var profilesSection: some View {
+        Section {
+            ForEach(store.state.profilesInOrder) { profile in
+                NavigationLink {
+                    ProfileEditor(editing: profile)
+                } label: {
+                    ProfileRow(profile: profile, detail: store.state.spaceNames(usingProfile: profile.id) ?? "No Spaces")
+                }
+                .accessibilityIdentifier("ProfileRow")
+            }
+            if !editMode.isEditing {
+                NavigationLink {
+                    ProfileEditor(newWith: store.state.suggestedNewProfileColor)
+                } label: {
+                    Label("New Profile", systemImage: "plus")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+        } header: {
+            Text("Profiles")
+        } footer: {
+            Text("Profiles keep logins and website data apart. A Space uses one profile; several Spaces can share it.")
+        }
+    }
+
     private func confirmDelete(_ space: Space) {
         deletingTitle = "Delete \(space.name)?"
         deleting = space
@@ -138,6 +164,12 @@ struct ManageSpacesView: View {
     private func tabsPhrase(_ space: Space) -> String {
         let count = store.state.tabCount(inSpace: space.id)
         return count == 1 ? "1 tab" : "\(count) tabs"
+    }
+
+    /// Its tabs, then its profile where it isn't the default: "1 tab · Vialumi".
+    private func spaceDetail(_ space: Space) -> String {
+        let profile = store.state.profile(forSpace: space.id)
+        return profile.isDefault ? tabsPhrase(space) : "\(tabsPhrase(space)) · \(profile.name)"
     }
 
     private func archivedDetail(_ space: Space) -> String {

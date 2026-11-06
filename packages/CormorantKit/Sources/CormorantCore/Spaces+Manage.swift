@@ -32,3 +32,23 @@ extension BrowserState {
             .tabsDue(in: tabs.filter { $0.spaceID == spaceID }, activeTabID: activeTabID, now: now)
     }
 }
+
+// MARK: - Profiles (Manage Spaces' Profiles section, New and Edit Profile)
+
+extension BrowserState {
+    /// The profile the active Space uses: whose website data its tabs have, and whose history the
+    /// search panel suggests from.
+    public var activeProfile: Profile { profile(forSpace: activeSpaceID) }
+
+    /// A color for a new profile: the first no profile uses yet, after the default profile's blue,
+    /// falling back to the first once all are taken.
+    public var suggestedNewProfileColor: Swatch {
+        let colors = Set(profiles.map(\.color))
+        return Swatch.allCases.first { !colors.contains($0) } ?? Swatch.allCases[0]
+    }
+
+    /// Profiles in the order Manage Spaces lists them: the default first, then by when they were made.
+    public var profilesInOrder: [Profile] {
+        profiles.filter(\.isDefault) + profiles.filter { !$0.isDefault }.sorted { $0.createdAt < $1.createdAt }
+    }
+}

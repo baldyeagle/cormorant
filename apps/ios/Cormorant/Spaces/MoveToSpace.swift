@@ -64,7 +64,7 @@ struct MoveToSpaceSheet: View {
                     }
                 } footer: {
                     if destinations.contains(where: \.changesProfile) {
-                        Text("Spaces marked Reloads use another profile, so the page loads again there.")
+                        Text("Spaces marked Reloads use another profile: the page loads again there, signed in with that profile's accounts.")
                     }
                 }
             }

@@ -17,9 +17,12 @@ import WebKit
 struct ActionsSheet: View {
     @Environment(BrowserStore.self) private var store
     @Environment(\.dismiss) private var dismiss
-    let session: TabSession?
-    let url: URL?
     let showSearch: () -> Void
+    /// Read from the store, not handed in: with Settings stacked on this sheet its presenter doesn't
+    /// update it, and a web view the store has let go of (its tab's profile changed underneath) would
+    /// be kept alive here, still running on the old profile's website data.
+    private var session: TabSession? { store.activeSession }
+    private var url: URL? { store.activeTab?.url }
     @State private var contentHeight: CGFloat = 0
     @State private var showSettings = false
     /// The Move to Space sheet, stacked on this one as Settings is, for the tab on screen when it opened.

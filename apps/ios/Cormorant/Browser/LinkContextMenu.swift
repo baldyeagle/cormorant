@@ -198,8 +198,8 @@ extension TabSession {
 
     private func makeLinkPreview(for url: URL) -> UIViewController {
         linkPreview?.stop()
-        let preview = LinkPreviewController(url: url, blocking: blocking, settings: viewSettings,
-                                            layout: PageLayout(of: webView))
+        let preview = LinkPreviewController(url: url, profileID: profileID, blocking: blocking,
+                                            settings: viewSettings, layout: PageLayout(of: webView))
         // Small: about half the screen, full menu width.
         if let bounds = webView.window?.bounds {
             preview.preferredContentSize = CGSize(width: bounds.width, height: (bounds.height * 0.5).rounded())
@@ -263,12 +263,14 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
     /// could land on the content controller after a handoff, behind the tab's back.
     private var pendingMainFrameDecisions = 0
 
-    init(url: URL, blocking: BlockingService, settings: TabSession.ViewSettings, layout: PageLayout) {
+    /// - Parameter profileID: the opener's, whose website data the preview loads with (signed in as
+    ///   the tab it came from is).
+    init(url: URL, profileID: UUID, blocking: BlockingService, settings: TabSession.ViewSettings, layout: PageLayout) {
         self.url = url
         self.blocking = blocking
         self.settings = settings
         self.layout = layout
-        let (configuration, contentController) = TabSession.makeConfiguration()
+        let (configuration, contentController) = TabSession.makeConfiguration(profileID: profileID)
         self.contentController = contentController
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init(nibName: nil, bundle: nil)

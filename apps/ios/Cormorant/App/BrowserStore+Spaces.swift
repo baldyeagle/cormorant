@@ -24,11 +24,11 @@ extension BrowserStore {
 
     /// Adds a Space at the end of the list and switches to it, then closes Manage Spaces: the Space is
     /// empty, so the browser brings up the search panel. A blank name (after trimming) adds nothing.
-    func createSpace(name: String, icon: SpaceIcon, color: Swatch) {
+    func createSpace(name: String, icon: SpaceIcon, color: Swatch, profileID: UUID = Profile.defaultID) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isLoaded, !name.isEmpty else { return }
         changeState { state in
-            let space = state.addSpace(name: name, icon: icon, color: color)
+            let space = state.addSpace(name: name, icon: icon, color: color, profileID: profileID)
             state.switchToSpace(space.id)
         }
         dismissManageSpaces()
@@ -36,8 +36,10 @@ extension BrowserStore {
         if isManagingSpacesInSettings { closeSheetsRequest += 1 }
     }
 
-    /// Saves Edit Space's fields. A blank name (after trimming) keeps the old one.
-    func updateSpace(_ spaceID: UUID, name: String, icon: SpaceIcon, color: Swatch, archivePolicy: ArchivePolicy) {
+    /// Saves Edit Space's fields. A blank name (after trimming) keeps the old one. A new profile
+    /// reloads the Space's tabs in its website data (`releaseSessionsOnOtherProfiles`).
+    func updateSpace(_ spaceID: UUID, name: String, icon: SpaceIcon, color: Swatch, archivePolicy: ArchivePolicy,
+                     profileID: UUID) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         changeState { state in
             state.updateSpace(spaceID) { space in
@@ -45,6 +47,7 @@ extension BrowserStore {
                 space.icon = icon
                 space.color = color
                 space.archivePolicy = archivePolicy
+                space.profileID = profileID
             }
         }
     }

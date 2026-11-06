@@ -55,16 +55,21 @@ public enum BrowsingHistoryError: Error, Sendable, Equatable {
 /// Keep the file outside the app-group container: iOS kills a suspended app that holds a lock on a
 /// file there (0xdead10cc), and SQLite takes locks on every write.
 ///
-/// One row per page (`key(for:)`), counting visits and typed visits, plus the search query when the
-/// page is a search engine's results. Ranking is frecency: visit counts, with typed visits counting
-/// extra, weighted by how recent the last visit was.
+/// One row per page (`key(for:)`) per profile, counting visits and typed visits, plus the search query
+/// when the page is a search engine's results. Ranking is frecency: visit counts, with typed visits
+/// counting extra, weighted by how recent the last visit was.
+///
+/// History follows the profile, as its website data does: each visit is recorded under the profile of
+/// the tab it happened in, and suggestions come from one profile's pages only. Pages recorded before
+/// profiles existed (schema 1) belong to the default profile. Clearing history and pruning span every
+/// profile.
 public actor BrowsingHistory {
     /// Most pages kept; the least recently visited go first.
     public static let capacity = 20_000
     /// Longest URL recorded; longer ones (inline data, tracking blobs) aren't worth suggesting.
     static let maxURLLength = 4_096
     static let maxTitleLength = 512
-    static let schemaVersion: Int32 = 1
+    static let schemaVersion: Int32 = 2
 
     private let db: OpaquePointer
     /// Nil for an in-memory database.
@@ -103,17 +108,18 @@ public actor BrowsingHistory {
     ///     which ranks it higher.
     ///   - searchQuery: set when `url` is a search engine's results page (`SearchEngine.query(in:)`);
     ///     such pages suggest their query rather than themselves.
+    ///   - profile: the profile of the tab the visit happened in.
     public func recordVisit(to url: URL, title: String = "", searchQuery: String? = nil, typed: Bool = false,
-                            at date: Date = .now) {
-        upsert(url, title: title, searchQuery: searchQuery, visits: 1, typed: typed ? 1 : 0, at: date)
+                            profile: UUID = Profile.defaultID, at date: Date = .now) {
+        upsert(url, title: title, searchQuery: searchQuery, visits: 1, typed: typed ? 1 : 0, profile: profile, at: date)
     }
 
-    /// Sets the title of the page at `url`, if it's in history and `title` isn't empty.
-    public func updateTitle(_ title: String, for url: URL) {
+    /// Sets the title of the page at `url` in `profile`, if it's in history there and `title` isn't empty.
+    public func updateTitle(_ title: String, for url: URL, profile: UUID = Profile.defaultID) {
         let title = Self.clean(title)
         guard !title.isEmpty, let key = Self.key(for: url) else { return }
-        run("UPDATE places SET title = ?1, match_text = ?2 WHERE key = ?3 AND title != ?1",
-            [.text(title), .text(Self.matchText(key: key, title: title)), .text(key)])
+        run("UPDATE places SET title = ?1, match_text = ?2 WHERE key = ?3 AND profile = ?4 AND title != ?1",
+            [.text(title), .text(Self.matchText(key: key, title: title)), .text(key), .profile(profile)])
     }
 
     /// Forgets pages last visited at or after `date`. Copies of a database once set aside as corrupt
@@ -124,9 +130,28 @@ public actor BrowsingHistory {
         if let fileURL { Self.removeQuarantined(beside: fileURL) }
     }
 
-    public func removePage(_ url: URL) {
+    /// Forgets the page at `url`: in `profile`, or in every profile when that's nil.
+    public func removePage(_ url: URL, profile: UUID? = nil) {
         guard let key = Self.key(for: url) else { return }
-        run("DELETE FROM places WHERE key = ?1", [.text(key)])
+        if let profile {
+            run("DELETE FROM places WHERE key = ?1 AND profile = ?2", [.text(key), .profile(profile)])
+        } else {
+            run("DELETE FROM places WHERE key = ?1", [.text(key)])
+        }
+    }
+
+    /// Forgets every page visited in `profile` (a deleted profile's history goes with it). Returns
+    /// whether the pages are gone, so a caller can try again later.
+    @discardableResult
+    public func removeProfile(_ profile: UUID) -> Bool {
+        let removed = change("DELETE FROM places WHERE profile = ?1", [.profile(profile)])
+        scrubDeletedData()
+        return removed
+    }
+
+    /// The profiles that have pages in history.
+    public func profiles() -> Set<UUID> {
+        Set(query("SELECT DISTINCT profile FROM places", []) { UUID(uuidString: Self.text($0, 0)) }.compactMap { $0 })
     }
 
     /// Forgets everything, including copies of a database once set aside as corrupt.
@@ -159,8 +184,16 @@ public actor BrowsingHistory {
             .compactMap { $0 }
     }
 
+    /// Pages in every profile.
     public var pageCount: Int {
         query("SELECT count(*) FROM places", []) { Int(sqlite3_column_int64($0, 0)) }.first ?? 0
+    }
+
+    /// Pages in `profile`.
+    public func pageCount(profile: UUID) -> Int {
+        query("SELECT count(*) FROM places WHERE profile = ?1", [.profile(profile)]) {
+            Int(sqlite3_column_int64($0, 0))
+        }.first ?? 0
     }
 
     // MARK: Suggestions
@@ -170,17 +203,19 @@ public actor BrowsingHistory {
     ///
     /// Frecency picks the candidates; among them, a host that starts with the first word ranks above
     /// a title word that does, which ranks above a match anywhere.
-    public func pages(matching text: String, limit: Int = 6, now: Date = .now) -> [HistoryEntry] {
+    public func pages(matching text: String, profile: UUID = Profile.defaultID, limit: Int = 6,
+                      now: Date = .now) -> [HistoryEntry] {
         let words = Self.words(in: text)
         guard !words.isEmpty, limit > 0 else { return [] }
-        let filter = words.indices.map { "instr(match_text, ?\($0 + 3)) > 0" }.joined(separator: " AND ")
+        let filter = words.indices.map { "instr(match_text, ?\($0 + 4)) > 0" }.joined(separator: " AND ")
         let candidates = query("""
             SELECT url, title, visit_count, typed_count, last_visit, key, host, \(Self.frecency) AS score
             FROM places
-            WHERE search_key IS NULL AND visit_count > 0 AND \(filter)
+            WHERE profile = ?3 AND search_key IS NULL AND visit_count > 0 AND \(filter)
             ORDER BY score DESC, last_visit DESC
             LIMIT ?2
-            """, [.double(now.timeIntervalSinceReferenceDate), .int(Int64(max(limit * 8, 48)))] + words.map { .text($0) }
+            """, [.double(now.timeIntervalSinceReferenceDate), .int(Int64(max(limit * 8, 48))), .profile(profile)]
+                + words.map { .text($0) }
         ) { row -> (entry: HistoryEntry, host: String, score: Double)? in
             guard let entry = Self.entry(row) else { return nil }
             return (entry, Self.text(row, 6), sqlite3_column_double(row, 7))
@@ -207,38 +242,40 @@ public actor BrowsingHistory {
     /// Past search queries containing every word of `text`, best first: queries that start with
     /// `text` before others, then by frecency. Case-insensitive and de-duplicated; each query is
     /// returned as it was last typed.
-    public func searches(matching text: String, limit: Int = 4, now: Date = .now) -> [String] {
+    public func searches(matching text: String, profile: UUID = Profile.defaultID, limit: Int = 4,
+                         now: Date = .now) -> [String] {
         let words = Self.words(in: text, stripURLPrefix: false)
         guard !words.isEmpty, limit > 0 else { return [] }
         let prefix = words.joined(separator: " ")
-        let filter = words.indices.map { "instr(search_key, ?\($0 + 4)) > 0" }.joined(separator: " AND ")
+        let filter = words.indices.map { "instr(search_key, ?\($0 + 5)) > 0" }.joined(separator: " AND ")
         return query("""
             SELECT search_query FROM (
                 SELECT search_query, search_key, last_visit,
                        row_number() OVER (PARTITION BY search_key ORDER BY last_visit DESC) AS n,
                        sum(\(Self.frecency)) OVER (PARTITION BY search_key) AS total
-                FROM places WHERE search_key IS NOT NULL
+                FROM places WHERE profile = ?4 AND search_key IS NOT NULL
             )
             WHERE n = 1 AND \(filter)
             ORDER BY substr(search_key, 1, length(?3)) = ?3 DESC, total DESC, last_visit DESC
             LIMIT ?2
-            """, [.double(now.timeIntervalSinceReferenceDate), .int(Int64(limit)), .text(prefix)] + words.map { .text($0) }
+            """, [.double(now.timeIntervalSinceReferenceDate), .int(Int64(limit)), .text(prefix), .profile(profile)]
+                + words.map { .text($0) }
         ) { Self.text($0, 0) }
     }
 
     /// Visited hosts (without `www.`, with any port other than the default), highest frecency first,
     /// for `InlineCompletion(completing:from:)`. Loaded once when the address field opens, so
     /// completing a keystroke never waits on the database.
-    public func completionHosts(limit: Int = 5_000, now: Date = .now) -> [String] {
+    public func completionHosts(profile: UUID = Profile.defaultID, limit: Int = 5_000, now: Date = .now) -> [String] {
         // The key up to its path or query: the host, and the port if it has one.
         query("""
             SELECT substr(key, 1, min(instr(key || '/', '/'), instr(key || '?', '?')) - 1) AS site
             FROM places
-            WHERE search_key IS NULL AND visit_count > 0
+            WHERE profile = ?3 AND search_key IS NULL AND visit_count > 0
             GROUP BY site
             ORDER BY sum(\(Self.frecency)) DESC, max(last_visit) DESC
             LIMIT ?2
-            """, [.double(now.timeIntervalSinceReferenceDate), .int(Int64(limit))]
+            """, [.double(now.timeIntervalSinceReferenceDate), .int(Int64(limit)), .profile(profile)]
         ) { Self.text($0, 0) }
     }
 
@@ -282,7 +319,8 @@ public actor BrowsingHistory {
             ELSE 10 END)
         """
 
-    private func upsert(_ url: URL, title: String, searchQuery: String?, visits: Int, typed: Int, at date: Date) {
+    private func upsert(_ url: URL, title: String, searchQuery: String?, visits: Int, typed: Int, profile: UUID,
+                        at date: Date) {
         guard let key = Self.key(for: url), let host = Self.normalizedHost(url),
               let stored = Self.withoutCredentials(url), stored.absoluteString.utf8.count <= Self.maxURLLength
         else { return }
@@ -292,9 +330,9 @@ public actor BrowsingHistory {
         // An empty title (a typed visit, a page that hasn't reported one yet) keeps the stored one.
         run("""
             INSERT INTO places (key, url, host, title, search_query, search_key, match_text,
-                                visit_count, typed_count, last_visit)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-            ON CONFLICT (key) DO UPDATE SET
+                                visit_count, typed_count, last_visit, profile)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            ON CONFLICT (profile, key) DO UPDATE SET
                 url = excluded.url,
                 title = CASE WHEN excluded.title != '' THEN excluded.title ELSE title END,
                 match_text = CASE WHEN excluded.title != '' THEN excluded.match_text ELSE match_text END,
@@ -308,6 +346,7 @@ public actor BrowsingHistory {
                 searchQuery.map { .text($0) } ?? .null, searchKey.map { .text($0) } ?? .null,
                 .text(Self.matchText(key: key, title: title)),
                 .int(Int64(visits)), .int(Int64(typed)), .double(date.timeIntervalSinceReferenceDate),
+                .profile(profile),
             ])
     }
 
@@ -364,6 +403,9 @@ public actor BrowsingHistory {
 
     enum Value {
         case text(String), int(Int64), double(Double), null
+
+        /// A profile ID as the `profile` column holds it.
+        static func profile(_ id: UUID) -> Value { .text(id.uuidString) }
     }
 
     private static func open(_ path: String) throws -> OpaquePointer {
@@ -408,6 +450,40 @@ public actor BrowsingHistory {
                 CREATE INDEX places_host ON places (host);
                 CREATE INDEX places_last_visit ON places (last_visit);
                 PRAGMA user_version = 1;
+                COMMIT;
+                """)
+        }
+        if version < 2 {
+            // Profiles: every page so far was visited in the default profile. A page is now unique per
+            // profile, which SQLite can only change by copying the table. In one transaction: a failure
+            // rolls back to the version-1 table, untouched, and the next launch tries again.
+            try exec(db, """
+                BEGIN;
+                CREATE TABLE places_v2 (
+                    id INTEGER PRIMARY KEY,
+                    profile TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    search_query TEXT,
+                    search_key TEXT,
+                    match_text TEXT NOT NULL,
+                    visit_count INTEGER NOT NULL DEFAULT 0,
+                    typed_count INTEGER NOT NULL DEFAULT 0,
+                    last_visit REAL NOT NULL,
+                    UNIQUE (profile, key)
+                );
+                INSERT INTO places_v2 (id, profile, key, url, host, title, search_query, search_key, match_text,
+                                       visit_count, typed_count, last_visit)
+                    SELECT id, '\(Profile.defaultID.uuidString)', key, url, host, title, search_query, search_key,
+                           match_text, visit_count, typed_count, last_visit
+                    FROM places;
+                DROP TABLE places;
+                ALTER TABLE places_v2 RENAME TO places;
+                CREATE INDEX places_host ON places (host);
+                CREATE INDEX places_last_visit ON places (last_visit);
+                PRAGMA user_version = 2;
                 COMMIT;
                 """)
         }
@@ -461,10 +537,27 @@ public actor BrowsingHistory {
         _ = query(sql, values) { _ in () }
     }
 
+    /// Runs a statement for its effect, reporting whether it ran to the end. For writes whose failure
+    /// the caller must know about.
+    private func change(_ sql: String, _ values: [Value]) -> Bool {
+        var statement: OpaquePointer?
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return false }
+        Self.bind(values, to: statement)
+        return sqlite3_step(statement) == SQLITE_DONE
+    }
+
     private func query<Row>(_ sql: String, _ values: [Value], _ read: (OpaquePointer) -> Row) -> [Row] {
         var statement: OpaquePointer?
         defer { sqlite3_finalize(statement) }
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return [] }
+        Self.bind(values, to: statement)
+        var rows: [Row] = []
+        while sqlite3_step(statement) == SQLITE_ROW { rows.append(read(statement)) }
+        return rows
+    }
+
+    private static func bind(_ values: [Value], to statement: OpaquePointer) {
         for (index, value) in values.enumerated() {
             let position = Int32(index + 1)
             switch value {
@@ -474,9 +567,6 @@ public actor BrowsingHistory {
             case .null: sqlite3_bind_null(statement, position)
             }
         }
-        var rows: [Row] = []
-        while sqlite3_step(statement) == SQLITE_ROW { rows.append(read(statement)) }
-        return rows
     }
 
     /// `SQLITE_TRANSIENT`, which the C macro defines as `(sqlite3_destructor_type)-1`.

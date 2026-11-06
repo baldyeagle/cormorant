@@ -67,7 +67,14 @@ struct SpaceEditor: View {
                     }
                 }
 
-                // Profile (step 5): a row here choosing the Space's profile, in New and Edit Space alike.
+                Section("Profile") {
+                    NavigationLink {
+                        ProfilePicker(profileID: $draft.profileID, spaceName: confirmName, saved: saved, tabCount: tabCount)
+                    } label: {
+                        ProfileRow(profile: draftProfile, detail: profileDetail)
+                    }
+                    .accessibilityIdentifier("SpaceProfile")
+                }
 
                 if !isNew {
                     tabsSection
@@ -89,6 +96,20 @@ struct SpaceEditor: View {
         }
         // A half-typed new Space isn't swiped away by accident.
         .interactiveDismissDisabled(isNew ? !trimmedName.isEmpty : draft != saved)
+    }
+
+    /// The chosen profile; the default if it's gone (deleted from another window).
+    private var draftProfile: Profile { store.state.profile(draft.profileID) ?? .default }
+
+    /// Who else uses the chosen profile, or that a switch reloads the tabs here once saved.
+    private var profileDetail: String {
+        if let saved, draft.profileID != saved.profileID, tabCount > 0 {
+            return tabCount == 1 ? "Its tab reloads when you save" : "Its \(tabCount) tabs reload when you save"
+        }
+        if let others = store.state.spaceNames(usingProfile: draft.profileID, except: draft.id) {
+            return "Also used by \(others)"
+        }
+        return isNew ? "No other Space uses this profile" : "Only \(confirmName) uses this profile"
     }
 
     private var preview: some View {
@@ -202,7 +223,7 @@ struct SpaceEditor: View {
         guard !trimmedName.isEmpty else { return }
         if isNew {
             // Closes Manage Spaces, and this with it.
-            store.createSpace(name: trimmedName, icon: draft.icon, color: draft.color)
+            store.createSpace(name: trimmedName, icon: draft.icon, color: draft.color, profileID: draft.profileID)
         } else {
             commitEdits()
             dismiss()
@@ -211,7 +232,7 @@ struct SpaceEditor: View {
 
     private func commitEdits() {
         store.updateSpace(draft.id, name: draft.name, icon: draft.icon, color: draft.color,
-                          archivePolicy: draft.archivePolicy)
+                          archivePolicy: draft.archivePolicy, profileID: draft.profileID)
     }
 
     /// Keeps what was changed here, then archives.

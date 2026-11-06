@@ -6,7 +6,8 @@ public struct BrowserState: Codable, Sendable, Equatable {
     /// store keeps a copy of any file newer than this build (see `JSONBrowserStateStore.load()`).
     /// 2: profiles, and Space icon / color / profile / archive policy / archived date.
     /// 3: the archive time a Space gets back when Archive Idle Tabs is turned on (`archivePolicyBeforeOff`).
-    public static let currentSchemaVersion = 3
+    /// 4: deleted profiles whose website data is still to be erased (`profilesToErase`).
+    public static let currentSchemaVersion = 4
 
     /// Schema version this value was decoded from (or `currentSchemaVersion` for new values), for
     /// migrations. Encoding always writes `currentSchemaVersion`.
@@ -24,10 +25,16 @@ public struct BrowserState: Codable, Sendable, Equatable {
     public internal(set) var activeSpaceID: UUID
     /// A tab in the active Space, or nil.
     public internal(set) var activeTabID: UUID?
+    /// Profiles `deleteProfile` removed whose website data store and history the app hasn't erased yet
+    /// (a store can't be removed while a web view still uses it), oldest first. Saved with the state, so
+    /// erasing is only ever decided by a state that loaded and shows the profile deleted. Never holds
+    /// the default profile or one in `profiles`. See `profileErased(_:)`.
+    public internal(set) var profilesToErase: [UUID]
 
     /// Missing Home or default profile are added (see `normalize()`).
     public init(spaces: [Space] = [.default], profiles: [Profile] = [.default], tabs: [Tab] = [],
-                archived: [ArchivedTab] = [], activeSpaceID: UUID = Space.defaultID, activeTabID: UUID? = nil) {
+                archived: [ArchivedTab] = [], activeSpaceID: UUID = Space.defaultID, activeTabID: UUID? = nil,
+                profilesToErase: [UUID] = []) {
         self.schemaVersion = Self.currentSchemaVersion
         self.spaces = spaces
         self.profiles = profiles
@@ -35,11 +42,12 @@ public struct BrowserState: Codable, Sendable, Equatable {
         self.archived = archived
         self.activeSpaceID = activeSpaceID
         self.activeTabID = activeTabID
+        self.profilesToErase = profilesToErase
         normalize()
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, spaces, profiles, tabs, archived, activeSpaceID, activeTabID
+        case schemaVersion, spaces, profiles, tabs, archived, activeSpaceID, activeTabID, profilesToErase
     }
 
     /// Missing fields take defaults (files from before `schemaVersion` existed are version 1), then
@@ -53,6 +61,7 @@ public struct BrowserState: Codable, Sendable, Equatable {
         archived = try container.decodeIfPresent([ArchivedTab].self, forKey: .archived) ?? []
         activeSpaceID = try container.decodeIfPresent(UUID.self, forKey: .activeSpaceID) ?? Space.defaultID
         activeTabID = try container.decodeIfPresent(UUID.self, forKey: .activeTabID)
+        profilesToErase = try container.decodeIfPresent([UUID].self, forKey: .profilesToErase) ?? []
         normalize()
     }
 
@@ -66,6 +75,7 @@ public struct BrowserState: Codable, Sendable, Equatable {
         try container.encode(archived, forKey: .archived)
         try container.encode(activeSpaceID, forKey: .activeSpaceID)
         try container.encodeIfPresent(activeTabID, forKey: .activeTabID)
+        if !profilesToErase.isEmpty { try container.encode(profilesToErase, forKey: .profilesToErase) }
     }
 
     public static let empty = BrowserState()

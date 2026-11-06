@@ -117,6 +117,10 @@ final class BrowserStore {
     @ObservationIgnored private var lastSavedState: BrowserState?
     /// Takes the toast down once its time is up.
     @ObservationIgnored private var toastExpiry: Task<Void, Never>?
+    /// Erasing deleted profiles' website data and history, while it runs (BrowserStore+Profiles.swift).
+    @ObservationIgnored var profileErasure: Task<Void, Never>?
+    /// Erasing was asked for again while it ran: it runs once more when done.
+    @ObservationIgnored var erasesProfilesAgain = false
 
     init(
         stateStore: (any BrowserStateStore)? = nil,
@@ -191,6 +195,9 @@ final class BrowserStore {
         state = Self.uiTestingLaunchState(state)
         #endif
         isLoaded = true
+        #if DEBUG
+        removeUITestingDataStores()
+        #endif
         writeBrowsingHistory { await $0.prune() }
         forgetFavicons()
         Task { await blocking.refresh() }
@@ -201,6 +208,7 @@ final class BrowserStore {
     func startFresh() {
         loadFailure = nil
         saveNow()
+        eraseDeletedProfiles()
     }
 
     func dismissStorageFallbackWarning() {
@@ -220,6 +228,8 @@ final class BrowserStore {
             state.activate(tabID: first.id)
         }
         stateDidChange()
+        // Deleted profiles whose data couldn't go last time (a web view still held it).
+        eraseDeletedProfiles()
     }
 
     /// The scene can be killed from here without a background transition; flush now.
@@ -451,7 +461,7 @@ final class BrowserStore {
             // `url` may already be a page still on its way (a redirect page's target), which the tab
             // records itself if it lands.
             if let pageURL = handoff.webView.backForwardList.currentItem?.url {
-                recordVisit(to: pageURL, title: handoff.webView.title ?? "", typed: false)
+                recordVisit(to: pageURL, title: handoff.webView.title ?? "", typed: false, profile: session.profileID)
                 session.assumeVisited(pageURL)
             }
             // Its page may be in already, so no `didFinish` will say so: its one-entry history is
@@ -540,25 +550,14 @@ final class BrowserStore {
     // MARK: Moves
 
     /// Applies `move` (a `moveTab` or `moveTabBack` of `tabID`, returning its result) and shows the
-    /// result. A tab that changed profile loses its web view first, keeping its history and settings,
-    /// so it's rebuilt, and reloads, in the new profile's website data when it's next shown. Returns
-    /// the move's result: nil when nothing moved.
+    /// result. A tab that changed profile loses its web view (`releaseSessionsOnOtherProfiles`),
+    /// keeping its history and settings, so it's rebuilt, and reloads, signed in with the new
+    /// profile's accounts when it's next shown. Returns the move's result: nil when nothing moved.
     @discardableResult
     func applyMove(of tabID: UUID, _ move: (inout BrowserState) -> Bool?) -> Bool? {
         guard isLoaded else { return nil }
         let spaceID = state.activeSpaceID
         guard let changesProfile = move(&state) else { return nil }
-        if changesProfile {
-            // Profiles share the default website data until each has its own; the rebuilt web view
-            // is where that will take effect.
-            if let session = activeSession, session.tabID == tabID {
-                // Its page as it was, for its card, before it goes.
-                snapshot(session)
-                session.didResignActiveTab()
-                activeSession = nil
-            }
-            releaseWebView(of: tabID)
-        }
         if state.activeSpaceID != spaceID {
             isComposingNewTab = false
             isSearchingTabs = false
@@ -750,6 +749,10 @@ final class BrowserStore {
         // archived (or gone) Space has nowhere to put it, so the popup is refused.
         let openerSpace = spaceID(of: opener)
         guard isLoaded, openerSpace.map({ state.space($0)?.isArchived == false }) ?? true else { return nil }
+        // Nor can it go where tabs use other website data than WebKit's view (an opener gone, its Space
+        // since moved to another profile): it would be let go at once (`releaseSessionsOnOtherProfiles`).
+        let profileID = TabSession.profileID(of: configuration.websiteDataStore)
+        guard state.profile(forSpace: openerSpace ?? state.activeSpaceID).id == profileID else { return nil }
         isComposingNewTab = false
         // `window.open('')` has no URL yet; the opener navigates or writes into the new view.
         let requested = action.request.url.flatMap { $0.absoluteString.isEmpty ? nil : $0 }
@@ -768,6 +771,7 @@ final class BrowserStore {
     }
 
     private func stateDidChange() {
+        releaseSessionsOnOtherProfiles()
         syncActiveSession()
         pruneSessions()
         dismissStaleToast()
@@ -819,7 +823,40 @@ final class BrowserStore {
                 navigatedTabIDs.insert(tabID)
             }
             pendingViewSettings[tabID] = session.viewSettings
+            session.detach()
         }
+    }
+
+    /// Lets go of every web view running on other website data than its tab's Space's profile now
+    /// uses, as eviction does, keeping its back/forward history and view settings: the tab moved to a
+    /// Space on another profile, its Space was switched to one, or its profile was deleted. Rebuilt
+    /// from the state when next shown, it loads its page again signed in with the new profile's
+    /// accounts. Decided from the state alone, so whatever changed a profile, nothing is left behind.
+    /// The tab on screen goes too, its page snapshotted for its card first; `syncActiveSession`
+    /// builds it again.
+    private func releaseSessionsOnOtherProfiles() {
+        releaseSessions { session, tab in session.profileID != state.profile(forSpace: tab.spaceID).id }
+    }
+
+    /// Lets go of the web views `shouldRelease` picks, the one on screen included, as
+    /// `releaseSessionsOnOtherProfiles` does. Call `stateDidChange()` after, to build the one on
+    /// screen again.
+    func releaseSessions(where shouldRelease: (TabSession, Tab) -> Bool) {
+        for (tabID, session) in sessions {
+            guard let tab = state.tab(tabID), shouldRelease(session, tab) else { continue }
+            if session === activeSession {
+                // Its page as it was, for its card, before it goes.
+                snapshot(session)
+                session.didResignActiveTab()
+                activeSession = nil
+            }
+            releaseWebView(of: tabID)
+        }
+    }
+
+    /// Whether any live web view (a tab's, on screen or not) runs on `profileID`'s website data.
+    func hasWebViews(usingProfile profileID: UUID) -> Bool {
+        sessions.values.contains { $0.profileID == profileID }
     }
 
     /// Lets go of the web views of the Space's tabs, as eviction does, so an archived Space's pages
@@ -839,17 +876,24 @@ final class BrowserStore {
         return session
     }
 
+    /// A web view for `tab` on its Space's profile: a new one, or the one WebKit's `configuration` or
+    /// the link preview's `handoff` brings (on their opener's profile).
     @discardableResult
     private func makeSession(for tab: Tab, configuration: WKWebViewConfiguration? = nil,
                              adopting handoff: LinkPreviewHandoff? = nil) -> TabSession {
+        let profileID = state.profile(forSpace: tab.spaceID).id
         let session = handoff.map { TabSession(tabID: tab.id, blocking: blocking, adopting: $0) }
-            ?? TabSession(tabID: tab.id, blocking: blocking, configuration: configuration)
+            ?? TabSession(tabID: tab.id, profileID: profileID, blocking: blocking, configuration: configuration)
         session.activeStripColor = { [weak self] in self?.stripUIColor(for: $0) }
         let tabID = tab.id
+        // History goes where the page was seen: the profile whose website data it loaded with.
+        let visitProfile = session.profileID
         session.onPageChange = { [weak self] url, title in self?.pageDidChange(tabID: tabID, url: url, title: title) }
-        session.onVisit = { [weak self] url, title, typed in self?.recordVisit(to: url, title: title, typed: typed) }
+        session.onVisit = { [weak self] url, title, typed in
+            self?.recordVisit(to: url, title: title, typed: typed, profile: visitProfile)
+        }
         session.onTitleChange = { [weak self] url, title in
-            self?.writeBrowsingHistory { await $0.updateTitle(title, for: url) }
+            self?.writeBrowsingHistory { await $0.updateTitle(title, for: url, profile: visitProfile) }
         }
         session.onPageLoaded = { [weak self, weak session] in
             guard let self, let session else { return }
@@ -874,6 +918,14 @@ final class BrowserStore {
             self?.openLink(url, inSpace: spaceID, from: session, handoff: handoff) ?? false
         }
         session.onClose = { [weak self] in self?.close(tabID) }
+        // A web view on a deleted profile is what keeps its data store from being erased. The task
+        // runs once the session's properties, the web view among them, have gone too.
+        session.onRelease = { [weak self] in
+            Task { @MainActor in
+                guard let self, self.state.profilesToErase.contains(visitProfile) else { return }
+                self.eraseDeletedProfiles()
+            }
+        }
         session.onProcessTerminated = { [weak self, weak session] in
             // Background tabs reload when they're next shown (`didBecomeActiveTab`).
             guard let self, let session else { return }
@@ -936,9 +988,14 @@ final class BrowserStore {
         }
     }
 
-    private func recordVisit(to url: URL, title: String, typed: Bool) {
+    /// Counts a visit in `profile`'s history; none for a profile deleted meanwhile (a page that
+    /// arrived as its tab's web view was let go), whose history is being erased.
+    private func recordVisit(to url: URL, title: String, typed: Bool, profile: UUID) {
+        guard state.profile(profile) != nil else { return }
         let query = searchQuery(in: url)
-        writeBrowsingHistory { await $0.recordVisit(to: url, title: title, searchQuery: query, typed: typed) }
+        writeBrowsingHistory {
+            await $0.recordVisit(to: url, title: title, searchQuery: query, typed: typed, profile: profile)
+        }
     }
 
     /// The query `url` shows results for, if it's a results page of the current, a built-in, or the
@@ -949,7 +1006,7 @@ final class BrowserStore {
     }
 
     /// Queues a write after the ones before it.
-    private func writeBrowsingHistory(_ write: @escaping @Sendable (BrowsingHistory) async -> Void) {
+    func writeBrowsingHistory(_ write: @escaping @Sendable (BrowsingHistory) async -> Void) {
         guard let browsingHistory else { return }
         let previous = browsingHistoryChain
         browsingHistoryChain = Task {
@@ -958,9 +1015,24 @@ final class BrowserStore {
         }
     }
 
+    /// Runs `work` on the history after the writes queued before it, and returns its result: nil
+    /// without a history database.
+    func afterBrowsingHistoryWrites<Result: Sendable>(
+        _ work: @escaping @Sendable (BrowsingHistory) async -> Result
+    ) async -> Result? {
+        guard let browsingHistory else { return nil }
+        let previous = browsingHistoryChain
+        let task = Task {
+            await previous?.value
+            return await work(browsingHistory)
+        }
+        browsingHistoryChain = Task { _ = await task.value }
+        return await task.value
+    }
+
     /// The icon cache is named by host: keep only sites that open tabs, the archive or history still
     /// show. After any queued history change, so a cleared site's icon goes with it.
-    private func forgetFavicons() {
+    func forgetFavicons() {
         guard let browsingHistory else {
             favicons.forgetSites(except: state.tabs.compactMap(\.url) + state.archived.map(\.url))
             return
@@ -977,13 +1049,14 @@ final class BrowserStore {
     // MARK: Saving
 
     /// Saving is off until the state is loaded, and while a load failure is unacknowledged.
-    private var canSave: Bool { isLoaded && loadFailure == nil }
+    /// Erasing a deleted profile's data is too (`eraseDeletedProfiles`).
+    var canSave: Bool { isLoaded && loadFailure == nil }
 
     /// Saving is allowed and the state differs from what's on disk (a fresh install with no tabs never writes).
     private var needsSave: Bool { canSave && state != lastSavedState }
 
     /// Debounced while the scene is active; immediate otherwise, since the process may not get another chance.
-    private func scheduleSave() {
+    func scheduleSave() {
         guard needsSave else { return }
         guard sceneIsActive else {
             saveNow()
@@ -1000,6 +1073,16 @@ final class BrowserStore {
             // Not only when the app goes away: it can be killed without that (a crash, a watchdog).
             saveHistories(onlyNavigated: true)
         }
+    }
+
+    /// Writes the state now and returns what the file holds once every queued write has landed: nil
+    /// if saving is off or a write failed. Erasing a deleted profile's data waits on this, so the
+    /// deletion is on disk first and can't come back at the next launch with its data gone.
+    func savedState() async -> BrowserState? {
+        guard canSave else { return nil }
+        saveNow()
+        await saveChain?.value
+        return lastSavedState
     }
 
     private func saveNow() {

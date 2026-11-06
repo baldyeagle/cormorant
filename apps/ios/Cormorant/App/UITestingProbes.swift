@@ -1,4 +1,5 @@
 #if DEBUG
+import CormorantCore
 import SwiftUI
 import UIKit
 
@@ -15,6 +16,8 @@ import UIKit
 ///   then "committed" or "dropped <moves>"; "none" before any drag.
 /// - `UITesting.toasts`: how many toasts have been put up since launch, then "up" or "none", so a test
 ///   can see one come and go without having to catch it on screen.
+/// - `UITesting.erasing`: how many deleted profiles' website data and history are still to be
+///   erased (`BrowserState.profilesToErase`): "0" once a deleted profile's data is gone.
 /// - `UITesting.keyboard`: "up" from the keyboard's did-show to its did-hide, else "down". The bar's
 ///   buttons come back to the accessibility tree as the keyboard starts down, and the keyboard leaves
 ///   the tree then too, but it takes taps over the bar until it has slid away.
@@ -32,6 +35,7 @@ struct UITestingProbes: View {
             }
             Probe(identifier: "UITesting.pull") { PullToRefresh.lastPull?.lastPullOutcome ?? "none" }
             Probe(identifier: "UITesting.keyboard") { KeyboardPresence.isUp ? "up" : "down" }
+            Probe(identifier: "UITesting.erasing") { [store] in "\(store.state.profilesToErase.count)" }
             Probe(identifier: "UITesting.toasts") { [store] in "\(store.toastsShown) \(store.toast == nil ? "none" : "up")" }
         }
         .allowsHitTesting(false)

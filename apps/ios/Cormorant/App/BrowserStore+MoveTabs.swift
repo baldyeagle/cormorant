@@ -12,7 +12,8 @@ struct MoveDestination: Identifiable {
     let space: Space
     /// The Space the tab is in: listed, checked, not choosable.
     let isCurrent: Bool
-    /// Its profile isn't the one the tab's Space uses: the page reloads there.
+    /// Its profile isn't the one the tab's Space uses: the page loads again there, signed in with that
+    /// profile's accounts.
     let changesProfile: Bool
     let profile: Profile
     let tabCount: Int

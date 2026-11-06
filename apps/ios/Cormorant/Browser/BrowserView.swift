@@ -132,7 +132,7 @@ struct BrowserView: View {
                 .presentationBackground(.clear)
         }
         .sheet(isPresented: $showActions, onDismiss: actionsDidDismiss) {
-            ActionsSheet(session: store.activeSession, url: store.activeTab?.url, showSearch: {
+            ActionsSheet(showSearch: {
                 // Not deferred to `actionsDidDismiss`: that runs a second or more after the sheet
                 // has gone. The field takes focus while the sheet slides away, since nothing
                 // is left for the sheet to restore (see `presentActions`).

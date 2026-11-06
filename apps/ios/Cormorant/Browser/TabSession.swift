@@ -18,6 +18,10 @@ final class TabSession {
 
     let tabID: UUID
     let webView: WKWebView
+    /// The profile whose website data the web view runs on, read from the store it was built with
+    /// (`profileID(of:)`). Fixed for the web view's life: a tab whose Space comes to use another
+    /// profile gets a new web view (`BrowserStore.releaseSessionsOnOtherProfiles()`).
+    let profileID: UUID
 
     private(set) var canGoBack = false
     private(set) var canGoForward = false
@@ -80,6 +84,9 @@ final class TabSession {
     /// The long-press menu's page preview, while one is up. See `LinkContextMenu.swift`.
     @ObservationIgnored weak var linkPreview: LinkPreviewController?
     @ObservationIgnored var onProcessTerminated: (() -> Void)?
+    /// The session, and with it its web view, is gone: nothing of it holds its profile's website data
+    /// any more. Called on the main actor, before the web view itself is released; see `deinit`.
+    @ObservationIgnored var onRelease: (() -> Void)?
     /// This tab is the one on screen. Off screen (including loading on the background stage), a page
     /// can't put up dialogs.
     @ObservationIgnored private(set) var isActiveTab = false
@@ -122,22 +129,40 @@ final class TabSession {
     /// Never acted on from inside a page: our own scheme (pages must not drive the app) and local files.
     static let refusedSchemes: Set<String> = ["cormorant", "file"]
 
-    /// A tab's web view configuration. Link previews are built from it too, so a preview's web view
-    /// can become a tab (`init(tabID:blocking:adopting:)`) with nothing configured differently.
+    /// A tab's web view configuration, on `profileID`'s website data. Link previews are built from it
+    /// too (on their opener's profile), so a preview's web view can become a tab
+    /// (`init(tabID:blocking:adopting:)`) with nothing configured differently.
     /// Configuration-level settings, user scripts included, belong here; anything that needs the
     /// session (script message handlers) goes in `init(tabID:blocking:webView:contentController:)`.
     /// Each web view gets its own content controller, so rules applied to one never touch another.
-    static func makeConfiguration() -> (WKWebViewConfiguration, WKUserContentController) {
+    static func makeConfiguration(profileID: UUID) -> (WKWebViewConfiguration, WKUserContentController) {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        configuration.websiteDataStore = dataStore(for: profileID)
         configuration.allowsInlineMediaPlayback = true
         let contentController = WKUserContentController()
         configuration.userContentController = contentController
         return (configuration, contentController)
     }
 
-    /// - Parameter configuration: supplied by WebKit for `window.open`; the new view must be built from it.
-    convenience init(tabID: UUID, blocking: BlockingService, configuration supplied: WKWebViewConfiguration? = nil) {
+    /// The website data a profile's web views run on. The default profile has the app's default
+    /// store, as every tab did before profiles, so nobody is signed out; every other profile has its
+    /// own persistent store, identified by the profile's ID. Not cached: a store can only be removed
+    /// (`WKWebsiteDataStore.remove(forIdentifier:)`) once nothing holds it.
+    static func dataStore(for profileID: UUID) -> WKWebsiteDataStore {
+        profileID == Profile.defaultID ? .default() : WKWebsiteDataStore(forIdentifier: profileID)
+    }
+
+    /// The profile `store` belongs to: its identifier, or the default profile for the default store.
+    static func profileID(of store: WKWebsiteDataStore) -> UUID {
+        store.identifier ?? Profile.defaultID
+    }
+
+    /// - Parameters:
+    ///   - profileID: whose website data a new web view runs on.
+    ///   - configuration: supplied by WebKit for `window.open`; the new view must be built from it,
+    ///     and runs on its opener's website data whatever `profileID` says.
+    convenience init(tabID: UUID, profileID: UUID, blocking: BlockingService,
+                     configuration supplied: WKWebViewConfiguration? = nil) {
         let configuration: WKWebViewConfiguration
         let contentController: WKUserContentController
         if let supplied {
@@ -145,7 +170,7 @@ final class TabSession {
             contentController = WKUserContentController()
             configuration.userContentController = contentController
         } else {
-            (configuration, contentController) = Self.makeConfiguration()
+            (configuration, contentController) = Self.makeConfiguration(profileID: profileID)
         }
         let webView = WKWebView(frame: .zero, configuration: configuration)
         self.init(tabID: tabID, blocking: blocking, webView: webView, contentController: contentController)
@@ -176,6 +201,7 @@ final class TabSession {
         self.tabID = tabID
         self.blocking = blocking
         self.webView = webView
+        profileID = Self.profileID(of: webView.configuration.websiteDataStore)
         self.contentController = contentController
         pullToRefresh = PullToRefresh(webView: webView)
         webView.allowsBackForwardNavigationGestures = true
@@ -195,6 +221,13 @@ final class TabSession {
             [weak self] (_: WKWebView, _: UITraitCollection) in
             self?.pageBackgroundDidChange()
         }
+    }
+
+    /// The browser can let go of a session while a view still shows it (the caret sheet, under
+    /// Settings, keeps the one it opened with until Settings closes), so a deleted profile's data
+    /// store waits for this rather than a guess at how long that takes.
+    isolated deinit {
+        onRelease?()
     }
 
     /// Installs blocking rules, then performs the tab's first load: restoring saved back/forward
@@ -342,6 +375,25 @@ final class TabSession {
         // Asked for while another tab's sheet was open; it must not fire on a later dismissal.
         pendingAction = nil
         if needsReload { recoverFromCrash() }
+    }
+
+    /// The browser has let go of this session (`BrowserStore.releaseWebView`): its page stops loading
+    /// and playing, and reports nothing more to the tab, in case a view holds it a while longer.
+    /// `onRelease` stays, to say when it's finally gone.
+    func detach() {
+        webView.stopLoading()
+        webView.setAllMediaPlaybackSuspended(true)
+        onPageChange = nil
+        onVisit = nil
+        onTitleChange = nil
+        onPageLoaded = nil
+        onCreateWebView = nil
+        onOpenInNewTab = nil
+        spacesToOpenLinksIn = nil
+        onOpenInSpace = nil
+        onClose = nil
+        onProcessTerminated = nil
+        activeStripColor = nil
     }
 
     /// For a tab loading in the background: nothing plays (or is heard) until it's shown.

@@ -19,9 +19,14 @@ struct BrowserView: View {
     /// A keyboard is on screen. The bar (and download banner) stay put underneath it (see
     /// `.ignoresSafeArea(.keyboard)`), and VoiceOver mustn't find them in among a page's form fields.
     @State private var keyboardCoversBar = false
+    /// Tops of the bar (find bar included) and the download banner in global coordinates, for the toast
+    /// to sit above.
+    @State private var barTop: CGFloat?
+    @State private var bannerTop: CGFloat?
     @FocusState private var searchFocused: Bool
 
-    var body: some View {
+    /// The page, the bar, the search panel and the toast, before the sheets and covers on them.
+    private var screen: some View {
         ZStack {
             if let session = store.activeSession {
                 // Under the status bar (unless that's off), and under the bottom bar so its inset
@@ -45,6 +50,8 @@ struct BrowserView: View {
         .overlay(alignment: .bottom) {
             if let session = store.activeSession, let url = session.blockedDownloadURL {
                 DownloadBanner(url: url) { session.blockedDownloadURL = nil }
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { bannerTop = $0 }
+                    .onDisappear { bannerTop = nil }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     // Under the keyboard with the bar.
                     .accessibilityHidden(keyboardCoversBar)
@@ -83,6 +90,7 @@ struct BrowserView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
                 if store.activeSession?.isBarCollapsed != true, height > 0 { barHeight = height }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { barTop = $0 }
         }
         // The bar never moves for the keyboard (no mid-screen bar while the keyboard animates at
         // launch, none riding up over page form fields); only the search panel avoids it.
@@ -109,7 +117,14 @@ struct BrowserView: View {
                     .id(store.state.activeTabID?.uuidString ?? "none")
             }
         }
+        // Over the search panel's dimming, so its buttons still take taps while the panel is up.
+        .overlay { toast }
         .animation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.3), value: isSearching)
+    }
+
+    /// `screen` with the switcher, the sheets and the alerts that go over it.
+    private var presentations: some View {
+        screen
         .fullScreenCover(isPresented: $showSwitcher, onDismiss: switcherDidDismiss) {
             TabSwitcherView()
                 // Keeps the browser in the window under the switcher (it draws its own background), so
@@ -124,6 +139,17 @@ struct BrowserView: View {
                 showActions = false
                 presentSearch()
             })
+        }
+        // A toast's Move… (a link from another app).
+        .sheet(item: moveRequest, onDismiss: searchIfBlank) { request in
+            MoveToSpaceSheet(tabID: request.tabID, onMoved: { store.moveRequest = nil })
+        }
+        .onChange(of: store.moveRequest?.id) { _, id in
+            guard id != nil else { return }
+            // As for the caret sheet: the panel goes, and nothing is left for the sheet to hand first
+            // responder back to, so the panel can take focus if the move empties the Space.
+            dismissSearch()
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
         // Asked for through the store (`showManageSpaces()`), from Settings and wherever else.
         .sheet(isPresented: manageSpacesPresented) {
@@ -147,6 +173,10 @@ struct BrowserView: View {
         } message: {
             Text("Cormorant's shared container is unavailable, so the share extension can't send links. Reinstall the app to fix this.")
         }
+    }
+
+    var body: some View {
+        presentations
         .onChange(of: store.isLoaded) {
             // A URL handed in at cold launch is usually the active tab by the time `isLoaded` flips,
             // but `onOpenURL` can land just after. With no tab yet, give it a moment so the panel and
@@ -174,6 +204,7 @@ struct BrowserView: View {
         }
         .onChange(of: store.closeSheetsRequest) {
             dismissSearch()
+            store.moveRequest = nil
             // Settings, if stacked on the sheet, goes with it; `actionsDidDismiss` brings the panel up
             // in an empty Space.
             showActions = false
@@ -221,6 +252,28 @@ struct BrowserView: View {
         guard store.closesOnBackSwipe(tabID), !session.isRestoringHistory else { return nil }
         return .init(destinationSnapshot: { store.backSwipeSnapshot(for: tabID) },
                      close: { store.close(tabID) })
+    }
+
+    /// Above the bar (and a download banner); above the search panel while it's up, so it never covers
+    /// the field, and hidden if the panel leaves no room. Not while the switcher is up (it shows its
+    /// own) or a keyboard for the page covers the bar.
+    private var toast: some View {
+        GeometryReader { proxy in
+            let frame = proxy.frame(in: .global)
+            let anchor = isSearching ? searchPanelTop : barTop.map { min($0, bannerTop ?? $0) }
+            let lift = anchor.map { max(0, frame.maxY - $0) + 8 }
+            // Room for a toast between the status bar and the panel.
+            let fits = anchor.map { $0 - frame.minY > 140 } ?? false
+            ToastHost(isSuppressed: showSwitcher || !fits || (keyboardCoversBar && !isSearching))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, lift ?? 0)
+                .animation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.3), value: lift)
+        }
+    }
+
+    /// Not while the switcher is up: it presents the sheet itself.
+    private var moveRequest: Binding<MoveRequest?> {
+        Binding(get: { showSwitcher ? nil : store.moveRequest }, set: { store.moveRequest = $0 })
     }
 
     /// Dismissed only by its action, which clears the failure.
@@ -353,7 +406,7 @@ struct BrowserView: View {
     /// With no page to show, the search field is always up (default-browser requirement).
     private func searchIfBlank() {
         guard store.isLoaded, !alertIsUp, !showSwitcher, !showActions, !showManageSpaces,
-              store.activeTab?.url == nil else { return }
+              store.moveRequest == nil, store.activeTab?.url == nil else { return }
         presentSearch()
     }
 

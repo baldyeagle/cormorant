@@ -69,6 +69,12 @@ final class TabSession {
     /// A link from the long-press menu, to open in a new tab (switched to unless `inBackground`),
     /// adopting the menu's preview web view when there is a `handoff`. Returns false if no tab opened.
     @ObservationIgnored var onOpenInNewTab: ((_ url: URL, _ inBackground: Bool, _ handoff: LinkPreviewHandoff?) -> Bool)?
+    /// The Spaces other than this tab's that the long-press menu's Open in Space lists; none with only
+    /// one Space.
+    @ObservationIgnored var spacesToOpenLinksIn: (() -> [LinkSpaceOption])?
+    /// A link from the long-press menu, to open in a background tab in another Space, adopting the
+    /// preview's web view when there is a `handoff`. Returns false if no tab opened.
+    @ObservationIgnored var onOpenInSpace: ((_ url: URL, _ spaceID: UUID, _ handoff: LinkPreviewHandoff?) -> Bool)?
     /// The page called `window.close()`.
     @ObservationIgnored var onClose: (() -> Void)?
     /// The long-press menu's page preview, while one is up. See `LinkContextMenu.swift`.

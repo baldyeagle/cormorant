@@ -16,6 +16,15 @@ struct WebViewContainer: UIViewRepresentable {
         let close: () -> Void
     }
 
+    /// UIKit adds the safe area (status bar, home indicator) and the keyboard to the scroll range of
+    /// every page. WebKit turns that off for a page with `viewport-fit=cover`, so its scroll range
+    /// started at the top of the screen: only a fresh load sat below the status bar, and scrolling
+    /// back up or returning to the app left its header under the status bar, out of reach. Setting
+    /// it, even to the value it has, also stops WebKit switching it per page.
+    static func keepSafeAreaScrollInsets(of scrollView: UIScrollView) {
+        scrollView.contentInsetAdjustmentBehavior = .always
+    }
+
     func makeUIView(context: Context) -> ContainerView {
         ContainerView()
     }
@@ -102,6 +111,7 @@ struct WebViewContainer: UIViewRepresentable {
             let covered = UIEdgeInsets(top: safeAreaInsets.top, left: 0, bottom: barHeight + safeAreaInsets.bottom, right: 0)
             if webView.obscuredContentInsets != covered { webView.obscuredContentInsets = covered }
             let scrollView = webView.scrollView
+            WebViewContainer.keepSafeAreaScrollInsets(of: scrollView)
             let edge: UIScrollEdgeEffect.Style = covered.top > 0 ? .soft : .automatic
             if scrollView.topEdgeEffect.style != edge { scrollView.topEdgeEffect.style = edge }
             if scrollView.contentInset.bottom != barHeight {

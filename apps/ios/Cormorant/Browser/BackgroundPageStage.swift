@@ -25,6 +25,7 @@ struct PageLayout {
         webView.transform = .identity
         webView.frame = CGRect(origin: .zero, size: size)
         webView.obscuredContentInsets = obscuredInsets
+        WebViewContainer.keepSafeAreaScrollInsets(of: webView.scrollView)
         webView.scrollView.contentInset.bottom = scrollInsetBottom
         webView.scrollView.verticalScrollIndicatorInsets.bottom = scrollInsetBottom
     }

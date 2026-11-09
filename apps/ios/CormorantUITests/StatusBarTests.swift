@@ -157,7 +157,66 @@ final class StatusBarTests: UITestCase {
         withExtendedLifetime([blue, red]) {}
     }
 
+    /// A `viewport-fit=cover` page, which WebKit gives no safe-area scroll inset of its own, rests
+    /// below the status bar after scrolling back to its top: it used to rest with its header under the
+    /// status bar, out of reach (flydubaitraining.com). Only where the status bar runs along the top:
+    /// there's no top inset to get wrong beside a column, so CI's iPhone Duo skips it.
+    func testCoverPageRestsBelowTheStatusBar() throws {
+        let server = try FixtureServer(html: """
+            <!doctype html>
+            <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+            <style>html { overscroll-behavior-y: none } body { margin: 0 } header { position: absolute; top: 0; left: 0; right: 0; height: 64px }
+            header p, main p { margin: 0 16px; line-height: 64px } main { padding-top: 64px; height: 4000px }
+            #report { position: fixed; bottom: 120px; left: 16px }</style>
+            <title>Cover page</title>
+            <header><p>Cover header</p></header>
+            <main><p>Body text for Cover page.</p></main>
+            <p id="report"><span id="loads"></span><br><span id="scrolled">Scrolled 0</span></p>
+            <script>
+            // A reload puts the page back below the status bar, hiding the bug: counted to rule one out.
+            sessionStorage.loads = Number(sessionStorage.loads || 0) + 1
+            loads.textContent = 'Loads ' + sessionStorage.loads
+            addEventListener('scroll', () => scrolled.textContent = 'Scrolled ' + Math.round(scrollY))
+            </script>
+            """)
+        let app = launch()
+        open(server.url, in: app, expecting: "Cover page")
+        let (region, runsUnder) = Shot.statusBarRegion(app: app)
+        guard runsUnder else { throw XCTSkip("the status bar isn't along the top") }
+        let header = app.webViews.staticTexts["Cover header"]
+        XCTAssertTrue(header.appears(within: Ceiling.ui), "no header")
+        let resting = header.settledFrame().minY
+        XCTAssertGreaterThanOrEqual(resting, region.maxY, "the header is under the status bar")
+
+        drag(in: app, from: 0.7, to: 0.3, velocity: .default)
+        XCTAssertTrue(waitUntil(Ceiling.ui) { self.scrollY(in: app) > 200 }, "the page didn't scroll")
+        // Dragged back past the top: with no overscroll (no bounce, no pull to refresh), the page stops
+        // at the top of the scroll range, where one resting with its top under the status bar reports more.
+        for _ in 0..<4 where scrollY(in: app) != 0 {
+            drag(in: app, from: 0.3, to: 0.8, velocity: .slow)
+            header.settledFrame()
+        }
+        XCTAssertTrue(waitUntil(Ceiling.ui) { self.scrollY(in: app) == 0 },
+                      "the page rests at Scrolled \(scrollY(in: app)), not at its top")
+        XCTAssertEqual(header.settledFrame().minY, resting, accuracy: 1, "the header isn't back where it was")
+        XCTAssertTrue(app.webViews.staticTexts["Loads 1"].exists, "the page reloaded")
+        withExtendedLifetime(server) {}
+    }
+
     // MARK: Driving
+
+    /// What the page reports in its "Scrolled N" line.
+    private func scrollY(in app: XCUIApplication) -> Int {
+        let label = app.webViews.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Scrolled '")).firstMatch.label
+        return Int(label.dropFirst("Scrolled ".count)) ?? -1
+    }
+
+    private func drag(in app: XCUIApplication, from start: CGFloat, to end: CGFloat, velocity: XCUIGestureVelocity) {
+        let web = app.webViews.firstMatch
+        web.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: start))
+            .press(forDuration: 0.05, thenDragTo: web.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: end)),
+                   withVelocity: velocity, thenHoldForDuration: 0.1)
+    }
 
     private func searchField(in app: XCUIApplication) -> XCUIElement {
         app.textFields["Search or enter address"]

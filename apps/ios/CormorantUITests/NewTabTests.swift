@@ -22,7 +22,7 @@ final class NewTabTests: UITestCase {
         let app = launchOnPage(server.url)
 
         app.buttons["Tabs, 1 open"].tap()
-        let newTab = app.toolbars.buttons["New Tab"]
+        let newTab = app.buttons["SwitcherNewTab"]
         XCTAssertTrue(newTab.appears(within: Ceiling.ui))
         newTab.tap()
 

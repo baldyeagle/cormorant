@@ -92,7 +92,7 @@ final class StatusBarTests: UITestCase {
 
         // A second tab, on a page without a color of its own.
         app.buttons["Tabs, 1 open"].tapWhenSettled()
-        let newTab = app.toolbars.buttons["New Tab"]
+        let newTab = app.buttons["SwitcherNewTab"]
         XCTAssertTrue(newTab.appears(within: Ceiling.ui), "switcher didn't open")
         newTab.tapWhenSettled()
         open(plain.url, in: app, expecting: "Plain page")

@@ -81,7 +81,7 @@ struct TabSwitcherView: View {
                 .id(store.state.activeSpaceID)
                 .transition(.opacity)
             }
-            // Above the bottom toolbar: a card moved to another Space says where it went.
+            // Above the bottom bar: a card moved to another Space says where it went.
             .overlay(alignment: .bottom) {
                 ToastHost(isSuppressed: opening != nil)
                     .padding(.bottom, 8)
@@ -95,6 +95,7 @@ struct TabSwitcherView: View {
                     }
                 }
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
             // The Space's color from the top, fading out by 340pt, once there are Spaces to switch.
             .background(alignment: .top) {
                 if let space = store.shownSpace {
@@ -251,36 +252,62 @@ struct TabSwitcherView: View {
         ToolbarItem(placement: .topBarTrailing) {
             Button("Done") { dismiss() }
         }
-        if store.hasSpacesToSwitch {
-            ToolbarItem(placement: .bottomBar) {
-                SpaceStrip(onSwitch: switchToSpace)
+    }
+
+    /// Each round control's side, and the bar's height: the strip's tallest slot (44pt, at the largest
+    /// text sizes) inside its capsule.
+    fileprivate static let control: CGFloat = 48
+    /// At least this between the strip and New Tab.
+    private static let gap: CGFloat = 8
+    /// The strip's capsule around its slots.
+    private static let stripInset: CGFloat = 2
+
+    /// Spaces on the left, New Tab in the middle of the screen however many Spaces are beside it, and
+    /// Search Tabs on the right. Not the system's bottom toolbar: that centers an item between its
+    /// neighbors, so New Tab would move with the strip.
+    private var bottomBar: some View {
+        GeometryReader { geometry in
+            // The strip's slots: up to New Tab, less the gap and the strip's capsule.
+            let stripWidth = geometry.size.width / 2 - Self.control / 2 - Self.gap - 2 * Self.stripInset
+            // Spacing 0: each control's glass stays its own, never blending into the next.
+            GlassEffectContainer(spacing: 0) {
+                ZStack {
+                    HStack(spacing: 0) {
+                        if store.hasSpacesToSwitch {
+                            SpaceStrip(onSwitch: switchToSpace, slots: SpaceStrip.slots(in: stripWidth))
+                                .padding(.horizontal, Self.stripInset)
+                                .frame(height: Self.control)
+                                .glassEffect(.regular.interactive(), in: .capsule)
+                        } else {
+                            // With only Home, the one sign Spaces exist: Manage Spaces, where New Space lives.
+                            // The browser closes the switcher on the way (`presentManageSpaces`).
+                            BarButton("Spaces", systemImage: "square.stack") { store.showManageSpaces() }
+                                .accessibilityHint("Creates and manages Spaces")
+                                .accessibilityIdentifier("ManageSpacesButton")
+                        }
+                        Spacer(minLength: 0)
+                        // Searches in the search panel once the switcher is gone, like New Tab.
+                        BarButton("Search Tabs", systemImage: "magnifyingglass") {
+                            store.searchTabs()
+                            dismiss()
+                        }
+                        .disabled(store.tabs.isEmpty)
+                        .accessibilityIdentifier("SwitcherSearchTabs")
+                    }
+                    // Composes in the search panel once the switcher is gone; no tab exists until Go.
+                    BarButton("New Tab", systemImage: "plus") {
+                        store.newTab()
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("SwitcherNewTab")
+                }
             }
-            ToolbarSpacer(.flexible, placement: .bottomBar)
-        } else {
-            // With only Home, the one sign Spaces exist: Manage Spaces, where New Space lives.
-            ToolbarItem(placement: .bottomBar) {
-                // The browser closes the switcher on the way (`presentManageSpaces`).
-                Button("Spaces", systemImage: "square.stack") { store.showManageSpaces() }
-                .accessibilityHint("Creates and manages Spaces")
-                .accessibilityIdentifier("ManageSpacesButton")
-            }
-            ToolbarSpacer(.flexible, placement: .bottomBar)
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        ToolbarItem(placement: .bottomBar) {
-            // Searches in the search panel once the switcher is gone, like New Tab.
-            Button("Search Tabs", systemImage: "magnifyingglass") {
-                store.searchTabs()
-                dismiss()
-            }
-            .disabled(store.tabs.isEmpty)
-        }
-        ToolbarItem(placement: .bottomBar) {
-            // Composes in the search panel once the switcher is gone; no tab exists until Go.
-            Button("New Tab", systemImage: "plus") {
-                store.newTab()
-                dismiss()
-            }
-        }
+        .frame(height: Self.control)
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
     }
 
     private var title: String {
@@ -295,6 +322,36 @@ struct TabSwitcherView: View {
     private static func cardSize(in size: CGSize) -> CGSize {
         let width = size.width * 0.7
         return CGSize(width: width, height: min(width * 1.9, size.height * 0.78))
+    }
+}
+
+/// A round glass button in the switcher's bottom bar, its symbol the size the system's toolbar draws.
+private struct BarButton: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
+
+    init(_ title: String, systemImage: String, action: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(isEnabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                .frame(width: TabSwitcherView.control, height: TabSwitcherView.control)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(isEnabled), in: .circle)
+        .accessibilityLabel(title)
+        .accessibilityShowsLargeContentViewer {
+            Label(title, systemImage: systemImage)
+        }
     }
 }
 

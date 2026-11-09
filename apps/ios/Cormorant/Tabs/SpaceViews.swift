@@ -50,7 +50,8 @@ struct SpaceBadge: View {
 }
 
 /// The Spaces to switch to, as a checked list for a menu: each with its tab count, and its profile
-/// when that isn't the default. The tabs button's long-press menu and the switcher's title menu.
+/// when that isn't the default. The tabs button's long-press menu, and the switcher's title menu and
+/// strip menus.
 struct SpaceMenuList: View {
     @Environment(BrowserStore.self) private var store
     let onSwitch: (UUID) -> Void
@@ -79,127 +80,110 @@ struct SpaceMenuList: View {
 }
 
 /// The switcher's row of Spaces: each one's icon in its color, the active one on a disc of it. Tap to
-/// switch. Past five it scrolls, fading out at an edge with more Spaces beyond it, and keeps the
-/// active Space in sight.
+/// switch; long-press for every Space, Edit and Manage Spaces. As many as `slots` allows; past that
+/// the last slot is ••• (the same menu, on a tap), and the active Space keeps a slot before it.
 struct SpaceStrip: View {
     @Environment(BrowserStore.self) private var store
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let onSwitch: (UUID) -> Void
-    /// Grows with Dynamic Type only so far: five of them, Search Tabs and New Tab still share the bar.
+    /// How many icons fit, ••• included (`slots(in:)`).
+    let slots: Int
+    /// Grows with Dynamic Type only so far: it stays inside its slot.
     @ScaledMetric(relativeTo: .body) private var scaledGlyph: CGFloat = 32
     private var glyph: CGFloat { min(scaledGlyph, 40) }
-    /// Which edges have Spaces beyond them, as the strip last scrolled.
-    @State private var overflow = Overflow()
-    @State private var position = ScrollPosition(idType: UUID.self)
 
-    /// How many fit beside Search Tabs and New Tab on the narrowest phone (375pt), at any text size.
-    private static let visibleCount = 5
-
-    /// Each icon's tap target: 44pt wide (so five still leave room for Search Tabs and New Tab at the
-    /// largest text sizes, where the disc grows to 40pt inside it) and at least 44pt high.
-    private let slot: CGFloat = 44
+    /// Each icon's tap target: 44pt wide (the disc grows to 40pt inside it at the largest text sizes)
+    /// and at least 44pt high.
+    static let slot: CGFloat = 44
     private var slotHeight: CGFloat { max(glyph + 4, 44) }
-    /// How far an edge fades: nearly the whole slot there, so the icon in it shows clearly faded.
-    private let fade: CGFloat = 40
 
-    struct Overflow: Equatable {
-        var leading = false
-        var trailing = false
-    }
+    /// The slots in `width`: never fewer than two, the active Space and •••.
+    static func slots(in width: CGFloat) -> Int { max(2, Int(width / slot)) }
 
     var body: some View {
         let spaces = store.state.switchableSpaces
-        if spaces.count > Self.visibleCount {
-            ScrollView(.horizontal) {
-                glyphs(spaces).scrollTargetLayout()
-            }
-            .scrollIndicators(.hidden)
-            .accessibilityIdentifier("SpaceStripScroller")
-            .scrollPosition($position, anchor: .center)
-            .frame(width: CGFloat(Self.visibleCount) * slot)
-            .onScrollGeometryChange(for: Overflow.self) { geometry in
-                let offset = geometry.contentOffset.x + geometry.contentInsets.leading
-                let hidden = geometry.contentSize.width - geometry.containerSize.width
-                return Overflow(leading: offset > 1, trailing: offset < hidden - 1)
-            } action: { _, new in
-                overflow = new
-            }
-            .mask { edgeFade }
-            .onAppear { reveal(store.state.activeSpaceID, animated: false) }
-            // The title menu switches too, to a Space that may be out of sight here; a Space added or
-            // archived shifts the others.
-            .onChange(of: store.state.activeSpaceID) { _, id in reveal(id, animated: true) }
-            .onChange(of: spaces.map(\.id)) { _, _ in reveal(store.state.activeSpaceID, animated: true) }
-            #if DEBUG
-            .onChange(of: overflow, initial: true) { _, new in Self.reportedOverflow = new }
-            .onDisappear { Self.reportedOverflow = nil }
-            #endif
-        } else {
-            glyphs(spaces)
-        }
-    }
-
-    /// Opaque where the strip shows, fading to clear at each edge with Spaces beyond it.
-    private var edgeFade: some View {
-        HStack(spacing: 0) {
-            LinearGradient(colors: [.black.opacity(overflow.leading ? 0 : 1), .black], startPoint: .leading, endPoint: .trailing)
-                .frame(width: fade)
-            Rectangle()
-            LinearGradient(colors: [.black, .black.opacity(overflow.trailing ? 0 : 1)], startPoint: .leading, endPoint: .trailing)
-                .frame(width: fade)
-        }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: overflow)
-    }
-
-    /// Scrolls the Space to the middle of the strip (as near as its ends allow).
-    private func reveal(_ id: UUID, animated: Bool) {
-        if animated, !reduceMotion {
-            withAnimation(.snappy(duration: 0.3)) { position.scrollTo(id: id, anchor: .center) }
-        } else {
-            position.scrollTo(id: id, anchor: .center)
-        }
-    }
-
-    #if DEBUG
-    /// The edges the strip last faded, for UI tests (`UITestingProbes`): "none", "leading", "trailing"
-    /// or "both"; nil while no strip scrolls.
-    static var reportedOverflow: Overflow?
-    #endif
-
-    private func glyphs(_ spaces: [Space]) -> some View {
+        let active = store.state.activeSpaceID
+        let (shown, hidesSome) = Self.shown(spaces, active: active, slots: slots)
         // Each button spans its whole slot, so a tap near an icon, or between two, still lands.
         HStack(spacing: 0) {
-            ForEach(spaces) { space in
-                let isActive = space.id == store.state.activeSpaceID
-                // A tap switches; a long press opens the menu, anchored to the icon as the tabs button's
-                // is. Not a context menu: that lifts the icon out of the strip (and on a device slid it
-                // toward the strip's middle) for its preview.
-                Menu {
-                    Button("Edit \(space.name)", systemImage: "pencil") { store.showManageSpaces(editing: space.id) }
-                    Button("Manage Spaces", systemImage: "square.stack") { store.showManageSpaces() }
-                } label: {
-                    Image(systemName: space.icon.rawValue)
-                        .font(.system(size: glyph * 0.5, weight: .medium))
-                        .foregroundStyle(isActive ? Color.white : space.color.color)
-                        .frame(width: glyph, height: glyph)
-                        .background { if isActive { Circle().fill(space.color.color) } }
-                        .frame(width: slot, height: slotHeight)
-                        .contentShape(.rect)
-                } primaryAction: {
-                    onSwitch(space.id)
-                }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .accessibilityAction(named: "Edit \(space.name)") { store.showManageSpaces(editing: space.id) }
-                .accessibilityAction(named: "Manage Spaces") { store.showManageSpaces() }
-                .accessibilityShowsLargeContentViewer {
-                    Label(space.name, systemImage: space.icon.rawValue)
-                }
-                .id(space.id)
-                .accessibilityLabel(space.name)
-                .accessibilityAddTraits(isActive ? .isSelected : [])
-                .accessibilityIdentifier("SpaceStrip")
+            ForEach(shown) { space in
+                glyph(for: space, isActive: space.id == active)
+            }
+            if hidesSome, let space = spaces.first(where: { $0.id == active }) ?? shown.first {
+                more(editing: space)
             }
         }
+    }
+
+    /// Up to `slots` Spaces in their order; past that one slot fewer, for •••, with the active Space
+    /// in the last when it would otherwise be hidden.
+    private static func shown(_ spaces: [Space], active: UUID, slots: Int) -> (spaces: [Space], hidesSome: Bool) {
+        guard spaces.count > slots else { return (spaces, false) }
+        var shown = Array(spaces.prefix(max(1, slots - 1)))
+        if !shown.contains(where: { $0.id == active }), let activeSpace = spaces.first(where: { $0.id == active }) {
+            shown[shown.count - 1] = activeSpace
+        }
+        return (shown, true)
+    }
+
+    /// Every Space, as the tabs button's long press lists them, then the Space's Edit and Manage Spaces.
+    @ViewBuilder
+    private func menu(editing space: Space) -> some View {
+        SpaceMenuList(onSwitch: onSwitch)
+        Section {
+            Button("Edit \(space.name)", systemImage: "pencil") { store.showManageSpaces(editing: space.id) }
+            Button("Manage Spaces", systemImage: "square.stack") { store.showManageSpaces() }
+        }
+    }
+
+    private func glyph(for space: Space, isActive: Bool) -> some View {
+        // A tap switches; a long press opens the menu, anchored to the icon as the tabs button's is.
+        // Not a context menu: that lifts the icon out of the strip (and on a device slid it toward
+        // the strip's middle) for its preview.
+        Menu {
+            menu(editing: space)
+        } label: {
+            Image(systemName: space.icon.rawValue)
+                .font(.system(size: glyph * 0.5, weight: .medium))
+                .foregroundStyle(isActive ? Color.white : space.color.color)
+                .frame(width: glyph, height: glyph)
+                .background { if isActive { Circle().fill(space.color.color) } }
+                .frame(width: Self.slot, height: slotHeight)
+                .contentShape(.rect)
+        } primaryAction: {
+            onSwitch(space.id)
+        }
+        .menuStyle(.button)
+        // The menu opens upward; the Spaces read top-down in their own order, as in the tabs button's.
+        .menuOrder(.fixed)
+        .buttonStyle(.plain)
+        .accessibilityAction(named: "Edit \(space.name)") { store.showManageSpaces(editing: space.id) }
+        .accessibilityAction(named: "Manage Spaces") { store.showManageSpaces() }
+        .accessibilityShowsLargeContentViewer {
+            Label(space.name, systemImage: space.icon.rawValue)
+        }
+        .accessibilityLabel(space.name)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+        .accessibilityIdentifier("SpaceStrip")
+    }
+
+    /// The Spaces that don't fit: a tap opens the menu, its Edit for the active Space.
+    private func more(editing space: Space) -> some View {
+        Menu {
+            menu(editing: space)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: glyph * 0.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: Self.slot, height: slotHeight)
+                .contentShape(.rect)
+        }
+        .menuStyle(.button)
+        .menuOrder(.fixed)
+        .buttonStyle(.plain)
+        .accessibilityShowsLargeContentViewer {
+            Label("More Spaces", systemImage: "ellipsis")
+        }
+        .accessibilityLabel("More Spaces")
+        .accessibilityIdentifier("SpaceStripMore")
     }
 }

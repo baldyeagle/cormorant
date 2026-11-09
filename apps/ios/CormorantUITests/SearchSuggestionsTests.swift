@@ -110,7 +110,7 @@ final class SearchSuggestionsTests: UITestCase {
         XCTAssertTrue(heading("/beta", in: app).appears(within: Ceiling.load), "/beta didn't load")
 
         app.buttons["Tabs, 2 open"].tapWhenSettled()
-        let search = app.toolbars.buttons["Search Tabs"]
+        let search = app.buttons["SwitcherSearchTabs"]
         XCTAssertTrue(search.appears(within: Ceiling.ui), "no Search Tabs in the switcher")
         search.tapWhenSettled()
 
@@ -135,7 +135,7 @@ final class SearchSuggestionsTests: UITestCase {
         open(server.url.appending(path: "alpha"), in: app)
 
         app.buttons["Tabs, 1 open"].tapWhenSettled()
-        app.toolbars.buttons["Search Tabs"].tapWhenSettled()
+        app.buttons["SwitcherSearchTabs"].tapWhenSettled()
         let token = app.buttons["Open tabs only"]
         XCTAssertTrue(token.appears(within: Ceiling.ui), "no Tabs token")
         token.tap()

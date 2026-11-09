@@ -347,11 +347,15 @@ final class SpacesTests: UITestCase {
                       file: file, line: line)
     }
 
-    /// New Tab is in the middle of the screen, clear of the strip and its •••.
+    /// New Tab is in the middle of the bar, clear of the strip and its •••. The bar spans the safe
+    /// area, not the window: the iPhone Duo's sensor bar takes 84pt off one side of it.
     private func assertNewTabCentered(beside strip: XCUIElementQuery, in app: XCUIApplication,
                                       file: StaticString = #filePath, line: UInt = #line) {
         let newTab = app.buttons["SwitcherNewTab"].settledFrame()
-        XCTAssertEqual(newTab.midX, app.windows.firstMatch.frame.midX, accuracy: 1, "New Tab isn't in the middle",
+        // From the strip's first icon (2pt inside its capsule) and from Search Tabs' far edge.
+        let start = strip.allElementsBoundByIndex.map(\.frame.minX).min() ?? 0
+        let end = app.buttons["SwitcherSearchTabs"].frame.maxX
+        XCTAssertEqual(newTab.midX - start, end - newTab.midX, accuracy: 3, "New Tab isn't in the middle",
                        file: file, line: line)
         let more = app.buttons["SpaceStripMore"]
         let stripEnd = (strip.allElementsBoundByIndex.map(\.frame.maxX) + (more.exists ? [more.frame.maxX] : [])).max() ?? 0

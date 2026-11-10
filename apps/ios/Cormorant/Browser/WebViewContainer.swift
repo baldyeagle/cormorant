@@ -3,6 +3,8 @@ import WebKit
 
 /// Hosts the active tab's `WKWebView`, swapping it in place when the tab changes.
 /// The view extends under the bottom bar; `barHeight` tells WebKit how much of it is covered.
+/// It also runs to the screen's edges at the sides, where the web view stops at the safe area
+/// (landscape, the iPhone Duo's status-bar column): see `ContainerView.hitTest(_:with:)`.
 struct WebViewContainer: UIViewRepresentable {
     let webView: WKWebView
     let barHeight: CGFloat
@@ -65,8 +67,11 @@ struct WebViewContainer: UIViewRepresentable {
             webView?.removeFromSuperview()
             if let old = webView { BackSwipe.reset(old) }
             newWebView.transform = .identity
-            newWebView.frame = bounds
+            newWebView.frame = pageFrame
             newWebView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            // WebKit's back and forward swipes slide the pages past the web view's edges and park them
+            // there until the new page is up, which shows where the container runs on beside it.
+            newWebView.clipsToBounds = true
             addSubview(newWebView)
             webView = newWebView
             updateBarInsets()
@@ -90,12 +95,41 @@ struct WebViewContainer: UIViewRepresentable {
 
         override func layoutSubviews() {
             super.layoutSubviews()
+            layoutWebView()
             updateBarInsets()
         }
 
         override func safeAreaInsetsDidChange() {
             super.safeAreaInsetsDidChange()
+            layoutWebView()
             updateBarInsets()
+        }
+
+        /// The web view's place: the container, less the safe area at its sides.
+        private var pageFrame: CGRect {
+            let left = min(safeAreaInsets.left, bounds.width)
+            let right = min(safeAreaInsets.right, bounds.width - left)
+            return bounds.inset(by: UIEdgeInsets(top: 0, left: left, bottom: 0, right: right))
+        }
+
+        /// By bounds and center, not frame: a back swipe in progress has a transform on the web view.
+        private func layoutWebView() {
+            guard let webView, webView.superview === self else { return }
+            let frame = pageFrame
+            if webView.bounds.size != frame.size { webView.bounds.size = frame.size }
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            if webView.center != center { webView.center = center }
+        }
+
+        /// A swipe in from the edge of the screen starts beside the page where the safe area keeps the
+        /// web view from the edge (landscape). The swipe to close is this view's and gets it there
+        /// anyway; WebKit's back and forward swipes are the web view's, and only get a touch that lands
+        /// in it. Safari's web view runs under those areas and takes the touch in its scroll view, so
+        /// the page's scroll view gets it here too, which also scrolls the page from there.
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            let hit = super.hitTest(point, with: event)
+            guard hit === self, let webView, webView.superview === self, !pageFrame.contains(point) else { return hit }
+            return webView.scrollView
         }
 
         /// Two insets, because they do different jobs:
@@ -154,7 +188,7 @@ struct WebViewContainer: UIViewRepresentable {
             case .ended, .cancelled, .failed:
                 guard let swipe, !swipe.isCommitted else { return }
                 let velocity = pan.velocity(in: self).x
-                let progress = pan.translation(in: self).x / max(bounds.width, 1)
+                let progress = pan.translation(in: self).x / max(pageFrame.width, 1)
                 // A flick counts, but not a twitch at the edge.
                 let flicked = velocity > 700 && progress > 0.1
                 // Not if the page added history mid-swipe (`pushState`): the tab can go back now.
@@ -207,6 +241,9 @@ private final class BackSwipe {
     let close: () -> Void
     private(set) var isCommitted = false
     private let webView: WKWebView
+    /// From the page's leading edge to the container's far one, which is further than the page is
+    /// wide where the page stops short of the screen's edge (landscape).
+    private let exitDistance: CGFloat
     private let underlay = UIView()
     private let shadow = UIView()
     private let reduceMotion = UIAccessibility.isReduceMotionEnabled
@@ -219,6 +256,7 @@ private final class BackSwipe {
     init(webView: WKWebView, in container: UIView, snapshot: PageSnapshot?, close: @escaping () -> Void) {
         self.webView = webView
         self.close = close
+        exitDistance = container.bounds.maxX - webView.frame.minX
         underlay.frame = webView.frame
         underlay.clipsToBounds = true
         underlay.backgroundColor = .systemBackground
@@ -265,7 +303,7 @@ private final class BackSwipe {
             if self.reduceMotion {
                 self.webView.alpha = 0
             } else {
-                self.apply(offset: self.webView.bounds.width + Self.cardCornerRadius, lift: 1)
+                self.apply(offset: self.exitDistance + Self.cardCornerRadius, lift: 1)
             }
         } completion: { _ in completion() }
     }
@@ -317,7 +355,6 @@ private final class BackSwipe {
         webView.alpha = 1
         webView.layer.cornerRadius = 0
         webView.layer.cornerCurve = .circular
-        webView.layer.masksToBounds = false
     }
 
     private func apply(offset: CGFloat, lift: CGFloat) {

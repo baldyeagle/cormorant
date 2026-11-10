@@ -18,6 +18,15 @@ final class BackSwipeCloseTests: UITestCase {
         \(selectionReport)
         """
 
+    /// Added to `page`: makes it tall enough to scroll, and has it say so once it has.
+    private static let scrollReport = """
+        <p id="scrolled" style="position: fixed; top: 0; right: 0; margin: 0">Not scrolled</p>
+        <div style="height: 4000px"></div>
+        <script>
+          addEventListener('scroll', () => { if (scrollY > 0) document.getElementById('scrolled').textContent = 'Scrolled' }, { passive: true })
+        </script>
+        """
+
     /// Open in New Tab, follow a link there, back, back: the second back closes the tab.
     /// Synthesized drags don't drive WKWebView's own back swipe (none of press-and-drag or swipeRight
     /// did on the iOS 27.1 simulator), so the history step uses the caret sheet's Back; the swipe there
@@ -127,6 +136,48 @@ final class BackSwipeCloseTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
+    /// On its side the page stops short of the screen's edges (the safe area beside it), so the
+    /// swipe starts beside the page, not on it.
+    func testSwipeBackFromScreenEdgeClosesTabInLandscape() throws {
+        try XCTSkipIf(Self.simulatorStaysUpright, "this simulator doesn't turn on its side")
+        let server = try FixtureServer(html: Self.page)
+        let app = launchOnPage(server.url)
+
+        app.webViews.links["Blank target"].tap()
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
+        XCTAssertTrue(heading("/popup", in: app).appears(within: Ceiling.load))
+
+        rotateToLandscape(app)
+        try XCTSkipUnless(app.webViews.firstMatch.settledFrame().minX > 8, "no safe area at the left edge on its side")
+        swipeBackFromLeftEdge(in: app)
+        XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "swipe didn't close the tab")
+        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab; \(server.requestLog)")
+        withExtendedLifetime(server) {}
+    }
+
+    /// WebKit's back and forward swipes start beside the page too, but they are the web view's own,
+    /// and get a touch only if it lands in the web view: the app hands it the ones beside the page.
+    /// Synthesized drags don't drive those swipes (see above), so this checks the hand-off with a
+    /// drag the page's scroll view takes.
+    func testDragBesidePageScrollsIt() throws {
+        let server = try FixtureServer(html: Self.page + Self.scrollReport)
+        let app = launchOnPage(server.url)
+
+        if gutter(in: app) == nil {
+            try XCTSkipIf(Self.simulatorStaysUpright, "nothing beside the page, and this simulator doesn't turn on its side")
+            rotateToLandscape(app)
+        }
+        let x = try XCTUnwrap(gutter(in: app), "nothing beside the page on its side either")
+        // The keyboard the address was typed on would take the drag while it's still going.
+        XCTAssertTrue(app.keyboardIsDown(), "the keyboard was still up")
+        let height = app.frame.height
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        origin.withOffset(CGVector(dx: x, dy: height * 0.75))
+            .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: height * 0.4)))
+        XCTAssertTrue(app.webViews.staticTexts["Scrolled"].appears(within: Ceiling.ui), "a drag beside the page didn't scroll it")
+        withExtendedLifetime(server) {}
+    }
+
     /// A tab no link opened (here, typed in the address field) stays put.
     func testSwipeBackLeavesOtherTabsOpen() throws {
         let server = try FixtureServer(html: Self.page)
@@ -181,6 +232,30 @@ final class BackSwipeCloseTests: UITestCase {
 
     private func tabsButton(count: Int, in app: XCUIApplication) -> XCUIElement {
         app.buttons["Tabs, \(count) open"]
+    }
+
+    /// CI's iPhone Duo, which `XCUIDevice` can't turn: asked first, so no test waits to see that it hasn't.
+    private static let simulatorStaysUpright = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] == "iPhone19,4"
+
+    /// Turns the simulator on its side until the test ends, and waits for the app to follow, both ways.
+    private func rotateToLandscape(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let upright = app.frame.size
+        addTeardownBlock { @MainActor in
+            XCUIDevice.shared.orientation = .portrait
+            _ = waitUntil(Ceiling.ui, "Waiting for the app to turn back") { app.frame.size == upright }
+        }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(waitUntil(Ceiling.ui, "Waiting for the app to rotate") { app.frame.size != upright },
+                      "the app didn't turn on its side", file: file, line: line)
+    }
+
+    /// The middle, in points across the screen, of the strip beside the page: the status-bar column on
+    /// CI's iPhone Duo, the safe area on a phone on its side. Nil where the page fills the width.
+    private func gutter(in app: XCUIApplication) -> CGFloat? {
+        let web = app.webViews.firstMatch.settledFrame(), window = app.frame
+        if window.maxX - web.maxX >= 8 { return (web.maxX + window.maxX) / 2 }
+        if web.minX - window.minX >= 8 { return (window.minX + web.minX) / 2 }
+        return nil
     }
 
     /// Once the app reports every tab done loading (`savesSettle`): whether the swipe closes the tab

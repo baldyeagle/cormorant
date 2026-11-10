@@ -63,7 +63,7 @@ extension TabSession {
         // Where the browser draws the page, read before the switch: below the status bar, where the card
         // starts, if the page runs under it.
         let window = webView.window
-        let page = webView.superview.flatMap { container in window.map { container.convert(container.bounds, to: $0) } }
+        let page = window.map { webView.convert(webView.bounds, to: $0) }
             .map { $0.inset(by: UIEdgeInsets(top: min(webView.obscuredContentInsets.top, $0.height), left: 0, bottom: 0, right: 0)) }
         guard onOpenInNewTab?(url, false, handoff) == true else { return }
         // The new tab is showing the adopted page underneath; the card grows over it, as the switcher's

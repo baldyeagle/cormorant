@@ -30,10 +30,12 @@ struct BrowserView: View {
         ZStack {
             if let session = store.activeSession {
                 // Under the status bar (unless that's off), and under the bottom bar so its inset
-                // scrolls the page clear of it. Not under a status-bar column at the side (iPhone Duo).
+                // scrolls the page clear of it. The container also runs to the screen's edges at the
+                // sides, for swipes that start there; the page in it doesn't (landscape, or a
+                // status-bar column at the side on the iPhone Duo).
                 WebViewContainer(webView: session.webView, barHeight: barHeight,
                                  backSwipeClose: backSwipeClose(for: session))
-                    .ignoresSafeArea(.container, edges: store.pageRunsUnderStatusBar ? [.top, .bottom] : .bottom)
+                    .ignoresSafeArea(.container, edges: store.pageRunsUnderStatusBar ? .all : [.horizontal, .bottom])
                     .ignoresSafeArea(.keyboard)
             }
             // Also while tabs load, so the launch screen's bird stays put until there's something to show.

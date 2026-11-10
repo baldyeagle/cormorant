@@ -226,9 +226,7 @@ final class MoveToSpaceTests: UITestCase {
         XCTAssertTrue(pressForLinkMenu(app.webViews.links["Next page"], until: app.buttons["Open in Background Tab"], in: app),
                       "no link menu")
         XCTAssertFalse(app.buttons["Open in Space"].exists, "Open in Space shows with only Home")
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tap()
-        XCTAssertTrue(app.buttons["Copy Link"].disappears(within: Ceiling.ui), "menu didn't close")
-        app.waitsForAnimations = true
+        dismissLinkMenu(beside: app.buttons["Copy Link"], in: app)
 
         openSwitcher(in: app)
         card("Tab /a", in: app).press(forDuration: 1.2)

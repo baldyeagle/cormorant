@@ -280,7 +280,7 @@ final class LinkContextMenuTests: UITestCase {
         openMenu(on: app.webViews.links["Linked image"].firstMatch, in: app)
         XCTAssertTrue(app.buttons["Open in Background Tab"].exists)
         XCTAssertTrue(app.buttons["Copy Link"].exists)
-        dismissMenu(in: app)
+        dismissLinkMenu(beside: app.buttons["Copy Link"], in: app)
 
         let plain = app.webViews.images["Plain image"]
         longPressForMenu(plain, in: app)
@@ -365,16 +365,9 @@ final class LinkContextMenuTests: UITestCase {
         app.waitsForAnimations = true
     }
 
-    /// Taps outside the menu, near the top of the screen.
-    private func dismissMenu(in app: XCUIApplication) {
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tap()
-        XCTAssertTrue(app.buttons["Copy Link"].disappears(within: Ceiling.ui), "menu didn't close")
-        app.waitsForAnimations = true
-    }
-
     /// Long-presses `element` once, for checks that no menu comes up (`openMenu` waits for one), with
     /// XCTest's animation wait off until the menu has closed again (see
-    /// `XCUIApplication.waitsForAnimations`); `choose` and `dismissMenu` turn it back on.
+    /// `XCUIApplication.waitsForAnimations`); `choose` and `dismissLinkMenu` turn it back on.
     private func longPressForMenu(_ element: XCUIElement, in app: XCUIApplication) {
         app.waitsForAnimations = false
         element.press(forDuration: 1.5)

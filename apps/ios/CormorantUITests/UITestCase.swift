@@ -76,6 +76,18 @@ class UITestCase: XCTestCase {
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
     }
 
+    /// Closes the link menu with a tap on the page beside `item`, one of its items (the fixtures' links
+    /// are on the page's left, and so is the menu), and turns XCTest's animation wait back on. Not a
+    /// tap near the top of the screen: on an iPhone 18 Pro that's the status bar, and a tap on it
+    /// leaves the menu up (Safari's too).
+    func dismissLinkMenu(beside item: XCUIElement, in app: XCUIApplication,
+                         file: StaticString = #filePath, line: UInt = #line) {
+        item.settledFrame()
+        item.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: 40, dy: 0)).tap()
+        XCTAssertTrue(item.disappears(within: Ceiling.ui), "menu didn't close", file: file, line: line)
+        app.waitsForAnimations = true
+    }
+
     private static func attachScreen(to issue: inout XCTIssue) {
         issue.add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()))
         let app = XCUIApplication()

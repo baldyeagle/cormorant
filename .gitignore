@@ -90,3 +90,4 @@ apps/site/dist/
 # Cloudflare
 .wrangler/
 .dev.vars
+__pycache__/

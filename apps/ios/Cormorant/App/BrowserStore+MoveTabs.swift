@@ -57,19 +57,25 @@ extension BrowserStore {
         }
     }
 
-    /// Moves the tab at once. The Space it left shows its next tab if it was on screen (or the search
-    /// panel, empty). A toast says where it went, with Undo and Show.
+    /// Moves the tab at once and goes with it: its new Space shows it. A toast says "Moved" (where to is
+    /// on its badge and the bar; VoiceOver hears it), led by Back to the Space you left (← and its badge;
+    /// the tab stays) and ending in Undo (back where you were, the tab with you).
     func moveTab(_ tabID: UUID, toSpace spaceID: UUID) {
         guard hasSpacesToSwitch, let tab = state.tab(tabID), let destination = state.space(spaceID) else { return }
         let from = tab.spaceID, wasActive = state.activeTabID == tabID, viewedAt = tab.lastViewedAt
-        guard applyMove(of: tabID, { $0.moveTab(tabID, toSpace: spaceID) }) != nil else { return }
-        showToast(Toast(icon: .space(destination), message: "Moved to \(destination.name)", actions: [
+        let left = state.activeSpace
+        guard applyMove(of: tabID, { $0.moveTabAndFollow(tabID, toSpace: spaceID) }) != nil else { return }
+        let back = left.id == spaceID ? nil : Toast.Action("Back to \(left.name)", space: left) { [weak self] in
+            self?.switchToSpace(left.id)
+        }
+        showToast(Toast(icon: .space(destination), message: "Moved", spokenText: "Moved to \(destination.name)",
+                        leadingAction: back, actions: [
             Toast.Action("Undo") { [weak self] in
                 self?.applyMove(of: tabID) {
-                    $0.moveTabBack(tabID, toSpace: from, wasActive: wasActive, lastViewedAt: viewedAt)
+                    $0.moveTabBack(tabID, toSpace: from, wasActive: wasActive, lastViewedAt: viewedAt,
+                                   returningTo: left.id)
                 }
             },
-            Toast.Action("Show") { [weak self] in self?.show(tabID, in: spaceID) },
         ]))
     }
 

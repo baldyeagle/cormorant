@@ -81,7 +81,9 @@ struct TabSwitcherView: View {
                 .id(store.state.activeSpaceID)
                 .transition(.opacity)
             }
-            // Above the bottom bar: a card moved to another Space says where it went.
+            // As switching Spaces here does, for a toast's Undo or Back, which switch from the store.
+            .animation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.25), value: store.state.activeSpaceID)
+            // Above the bottom bar: a card moved to another Space says so, with Undo and Back.
             .overlay(alignment: .bottom) {
                 ToastHost(isSuppressed: opening != nil)
                     .padding(.bottom, 8)
@@ -183,7 +185,7 @@ struct TabSwitcherView: View {
         }
     }
 
-    /// The card leaves as a closed one does; the toast says where it went.
+    /// The switcher goes with the card to its new Space, where it's on top; the toast says where it went.
     private func move(_ tab: CormorantCore.Tab, to spaceID: UUID) {
         guard opening == nil else { return }
         withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Self.closeAnimation) {

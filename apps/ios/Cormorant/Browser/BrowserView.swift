@@ -149,7 +149,7 @@ struct BrowserView: View {
         .onChange(of: store.moveRequest?.id) { _, id in
             guard id != nil else { return }
             // As for the caret sheet: the panel goes, and nothing is left for the sheet to hand first
-            // responder back to, so the panel can take focus if the move empties the Space.
+            // responder back to, so the panel can take focus should the Space be empty once it closes.
             dismissSearch()
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
@@ -228,9 +228,14 @@ struct BrowserView: View {
                 searchIfBlank()
             }
         }
-        // Into an empty Space from another empty one: no tab change above to bring the panel up.
+        // A Space change with no tab change above: into an empty Space from another empty one brings the
+        // panel up; a move's Undo, taking the page on screen back, closes it as switching tabs does.
         .onChange(of: store.state.activeSpaceID) {
-            if !showSwitcher { searchIfBlank() }
+            if store.activeTab?.url != nil {
+                dismissSearch()
+            } else if !showSwitcher {
+                searchIfBlank()
+            }
         }
         // The keyboard going away (interactive scroll, hardware dismiss) closes the panel with it.
         .onChange(of: searchFocused) { wasFocused, focused in

@@ -54,8 +54,8 @@ struct ActionsSheet: View {
             SettingsView()
         }
         .sheet(item: $moveRequest) { request in
-            // Moving the tab on screen changes the active tab, which closes this sheet and the Move
-            // sheet with it (`BrowserView`); dismissed here too, in case.
+            // The tab on screen goes to its new Space and stays on screen: closing this sheet takes the
+            // Move sheet with it.
             MoveToSpaceSheet(tabID: request.tabID, onMoved: { dismiss() })
         }
     }

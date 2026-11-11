@@ -2,17 +2,20 @@ import CormorantCore
 import SwiftUI
 import UIKit
 
-/// A short note that something happened somewhere you can't see (a tab moved to another Space, a link
-/// opened in one), with a button or two to act on it. Shown by `BrowserStore.showToast(_:)` and drawn by
+/// A short note that something happened between Spaces (a tab moved to another, taking you with it; a
+/// link opened in one), with a button or two to act on it. Shown by `BrowserStore.showToast(_:)` and drawn by
 /// `ToastHost`, which the browser puts above its bar and the switcher above its toolbar.
 struct Toast: Identifiable {
     struct Action: Identifiable {
         let title: String
+        /// Drawn as ← and this Space's badge in place of the title, which VoiceOver still reads.
+        let space: Space?
         let perform: @MainActor () -> Void
         var id: String { title }
 
-        init(_ title: String, perform: @escaping @MainActor () -> Void) {
+        init(_ title: String, space: Space? = nil, perform: @escaping @MainActor () -> Void) {
             self.title = title
+            self.space = space
             self.perform = perform
         }
     }
@@ -32,18 +35,32 @@ struct Toast: Identifiable {
     let id = UUID()
     let icon: Icon
     let message: String
+    /// What VoiceOver reads for a message cut short to leave its buttons room ("Moved to Work" for
+    /// "Moved"); nil when the message says it all.
+    var spokenText: String?
     var note: Note?
+    /// A button before the icon: back to the Space a move left.
+    var leadingAction: Action?
     let actions: [Action]
 
-    init(icon: Icon, message: String, note: Note? = nil, actions: [Action]) {
+    init(icon: Icon, message: String, spokenText: String? = nil, note: Note? = nil, leadingAction: Action? = nil,
+         actions: [Action]) {
         self.icon = icon
         self.message = message
+        self.spokenText = spokenText
         self.note = note
+        self.leadingAction = leadingAction
         self.actions = actions
     }
 
+    /// Every button, in the order they're drawn.
+    var allActions: [Action] { (leadingAction.map { [$0] } ?? []) + actions }
+
     /// The message and note, as VoiceOver announces them: "Opened in Work, Focus".
-    var spokenMessage: String { note.map { "\(message), \($0.text)" } ?? message }
+    var spokenMessage: String {
+        let text = spokenText ?? message
+        return note.map { "\(text), \($0.text)" } ?? text
+    }
 
     var tint: Swatch? {
         if case .space(let space) = icon { space.color } else { nil }
@@ -72,8 +89,8 @@ struct ToastHost: View {
     }
 }
 
-/// A glass capsule like the bar's controls: the icon, the message, then its buttons. At accessibility
-/// text sizes the buttons go under the message. Swipe down or sideways to dismiss it.
+/// A glass capsule like the bar's controls: any leading button, the icon, the message, then its buttons.
+/// At accessibility text sizes the buttons, the leading one first, go under the message. Swipe down or sideways to dismiss it.
 private struct ToastView: View {
     let toast: Toast
     let onDismiss: () -> Void
@@ -94,11 +111,13 @@ private struct ToastView: View {
             : AnyLayout(HStackLayout(spacing: 10))
         layout {
             HStack(spacing: 10) {
+                if !typeSize.isAccessibilitySize, let back = toast.leadingAction { button(back) }
                 icon
                 VStack(alignment: .leading, spacing: 1) {
                     Text(toast.message)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+                        .accessibilityLabel(toast.spokenText ?? toast.message)
                         .accessibilityFocused($focus, equals: "message")
                         .accessibilityAction(named: "Dismiss", onDismiss)
                     if let note = toast.note {
@@ -115,19 +134,13 @@ private struct ToastView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 6) {
-                ForEach(toast.actions) { action in
-                    Button(action.title) {
-                        onDismiss()
-                        action.perform()
-                    }
-                    .buttonStyle(ToastButtonStyle())
-                    .accessibilityFocused($focus, equals: action.title)
-                    .accessibilityAction(named: "Dismiss", onDismiss)
-                    .accessibilityIdentifier("Toast.\(action.title)")
-                }
+                if typeSize.isAccessibilitySize, let back = toast.leadingAction { button(back) }
+                ForEach(toast.actions) { button($0) }
             }
+            // The buttons take their room first; the message wraps in what's left.
+            .layoutPriority(1)
         }
-        .padding(.leading, 10)
+        .padding(.leading, toast.leadingAction == nil || typeSize.isAccessibilitySize ? 10 : 8)
         .padding(.trailing, 8)
         .padding(.vertical, 8)
         .frame(minHeight: minHeight)
@@ -149,6 +162,28 @@ private struct ToastView: View {
         .accessibilityIdentifier("Toast")
         .onChange(of: focus != nil) { _, held in onHold(held) }
         .onDisappear { if focus != nil { onHold(false) } }
+    }
+
+    private func button(_ action: Toast.Action) -> some View {
+        Button {
+            onDismiss()
+            action.perform()
+        } label: {
+            if let space = action.space {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.left")
+                    SpaceIconBadge(icon: space.icon, color: space.color, side: min(iconSide * 0.75, 33))
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(action.title)
+            } else {
+                Text(action.title)
+            }
+        }
+        .buttonStyle(ToastButtonStyle())
+        .accessibilityFocused($focus, equals: action.title)
+        .accessibilityAction(named: "Dismiss", onDismiss)
+        .accessibilityIdentifier("Toast.\(action.title)")
     }
 
     @ViewBuilder private var icon: some View {

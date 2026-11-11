@@ -138,12 +138,13 @@ jobs:
           # and timed them out. Disable both, so launchd never starts them again, and boot out the
           # running ones, which takes their extensions with them. (Shutting down and booting again
           # instead cost 2.5-3.5 minutes a shard.) The rest stayed busy for minutes after a boot and
-          # nothing under test uses them: the log streamer (diagnosticd; `log show` below reads logd's
-          # store without it), App Store engagement, Health, mail and calendar accounts, and Siri's
-          # suggestions. Off, the simulator used a quarter less CPU over its first five minutes (235
-          # to 175 CPU-seconds, locally). `disable` succeeds even for a label that doesn't exist, so
-          # check afterwards: a runtime that renames one gets a warning, not a failed run.
-          PRIVATE_SERVICES="user/$(id -u)/com.apple.PosterBoard system/com.apple.chronod system/com.apple.diagnosticd
+          # nothing under test uses them: App Store engagement, Health, mail and calendar accounts, and
+          # Siri's suggestions. Not the log streamer (diagnosticd), though it's busy too: without it
+          # every process, the app included, kept looking it up, up to ~2,800 failed lookups a second,
+          # each logged by launchd (half of a stress run's simulator log). `disable` succeeds even for a
+          # label that doesn't exist, so check afterwards: a runtime that renames one gets a warning,
+          # not a failed run.
+          PRIVATE_SERVICES="user/$(id -u)/com.apple.PosterBoard system/com.apple.chronod
             system/com.apple.amsengagementd system/com.apple.healthappd system/com.apple.dataaccess.dataaccessd
             system/com.apple.siriinferenced"
           for service in $PRIVATE_SERVICES; do

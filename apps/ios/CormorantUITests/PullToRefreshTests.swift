@@ -29,7 +29,9 @@ final class PullToRefreshTests: UITestCase {
         """
     }
 
-    private static let filler = String(repeating: "<p>Filler paragraph.</p>\n", count: 150)
+    /// Length as a blank spacer, not text: every query snapshots the page's accessibility tree, and
+    /// paragraphs of text (300 in a benchmark) made each one ~15x slower, the app's own buttons included.
+    private static let filler = #"<div style="height: 5000px"></div>"#
 
     func testPullAtTopReloadsAndSettles() throws {
         let server = try FixtureServer(html: Self.page(body: Self.filler))

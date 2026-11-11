@@ -162,6 +162,8 @@ final class StatusBarTests: UITestCase {
     /// status bar, out of reach (flydubaitraining.com). Only where the status bar runs along the top:
     /// there's no top inset to get wrong beside a column, so CI's iPhone Duo skips it.
     func testCoverPageRestsBelowTheStatusBar() throws {
+        // Asked first, so CI's Duo doesn't launch the app and load a page only to skip.
+        try XCTSkipIf(Self.statusBarRunsDownTheSide, "the status bar isn't along the top")
         let server = try FixtureServer(html: """
             <!doctype html>
             <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -202,6 +204,9 @@ final class StatusBarTests: UITestCase {
         XCTAssertTrue(app.webViews.staticTexts["Loads 1"].exists, "the page reloaded")
         withExtendedLifetime(server) {}
     }
+
+    /// CI's iPhone Duo, where the status bar is a column beside the page (`Shot.statusBarRegion`).
+    private static let statusBarRunsDownTheSide = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] == "iPhone19,4"
 
     // MARK: Driving
 
@@ -264,7 +269,10 @@ final class StatusBarTests: UITestCase {
         // Below the default-browser and search-engine sections, off a short screen, where the form
         // hasn't made its row yet: drag the form up (no fling) until it has.
         let toggle = app.switches["Page Under Status Bar"]
-        let top = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1))
+        // From the bar's frame read once: a coordinate on the bar itself looked it up again five
+        // times a drag, which took up to 17 s of a CI run.
+        let bar = title.frame
+        let top = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bar.midX, dy: bar.maxY))
         for _ in 0..<4 where !toggle.exists {
             top.withOffset(CGVector(dx: 0, dy: 360))
                 .press(forDuration: 0.05, thenDragTo: top.withOffset(CGVector(dx: 0, dy: 60)),

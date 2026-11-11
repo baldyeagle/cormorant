@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    # `labeled`: adding the ui-stress label runs the UI tests several times over (see ui-tests).
+    # `labeled`: adding the ui-stress label runs the UI tests several times over (see ios).
     types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
@@ -20,9 +20,59 @@ permissions:
   contents: read
 
 jobs:
-  kit:
-    name: CormorantKit (swift test)
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      ios: ${{ steps.diff.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          # The PR's merge commit and its parents.
+          fetch-depth: 2
+      - name: Does this touch the app, the package or CI?
+        id: diff
+        # A PR that changes none of them (the site, docs) skips the macOS jobs. Pushes to main, runs
+        # by hand and ui-stress PRs always run them.
+        env:
+          STRESS: ${{ contains(github.event.pull_request.labels.*.name, 'ui-stress') }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] || [ "$STRESS" = true ]; then
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Against the base branch's tip: everything the PR would change, both sides of a move.
+          CHANGED=$(git diff --name-only --no-renames HEAD^1 HEAD)
+          echo "$CHANGED"
+          if echo "$CHANGED" | grep -qE '^(apps/ios|packages|Cormorant\.xcworkspace|scripts|\.github)/'; then
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ios=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  ios:
+    # Shard 1 also runs the package's tests and checks the built app; the others only test.
+    name: ${{ matrix.shard == 1 && 'iOS app, CormorantKit and UI tests (shard 1)' || format('UI tests (shard {0})', matrix.shard) }}
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: xcode-27
+    # The slowest single run of a shard seen took 21 minutes, before shards built for themselves
+    # (a build adds 1-2); a stress run (see ITERATIONS below)
+    # gets a hosted runner's maximum. Expressions have no arithmetic, so it can't scale.
+    timeout-minutes: ${{ (inputs.iterations || contains(github.event.pull_request.labels.*.name, 'ui-stress')) && 360 || 30 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Tests are dealt out by scripts/ui-test-shard.py, balanced by the times in
+        # scripts/ui-test-durations.txt. Five, as many as GitHub Free runs on macOS at once: a sixth
+        # shard would wait for one of these to finish, and so does any other run started meanwhile.
+        shard: [1, 2, 3, 4, 5]
+    env:
+      # The simulator's iOS, so a run doesn't depend on which image a shard lands on: the 2026-11-04
+      # image added iOS 27.2, where three caret-sheet tests failed (docs/product/todo.md). Absent,
+      # the newest iOS is used, with a warning.
+      SIMULATOR_IOS: '27.1'
     steps:
       - uses: actions/checkout@v4
       - name: Select newest Xcode on the runner
@@ -31,111 +81,9 @@ jobs:
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
           swift --version
-      - name: Build
-        run: swift build --package-path packages/CormorantKit
-      - name: Test
-        # Live filter-list download is opt-in (CORMORANT_LIVE_TESTS=1) and stays off in CI.
-        run: swift test --package-path packages/CormorantKit
-
-  ios:
-    name: iOS app (simulator build, default-browser checklist)
-    runs-on: xcode-27
-    timeout-minutes: 30
-    outputs:
-      xcode: ${{ steps.xcode.outputs.path }}
-      xcode-version: ${{ steps.xcode.outputs.version }}
-      xcode-build: ${{ steps.xcode.outputs.build }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Select newest Xcode on the runner
-        id: xcode
-        run: |
-          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
-          sudo xcode-select -s "$XCODE"
-          xcodebuild -version
-          echo "path=$XCODE" >> "$GITHUB_OUTPUT"
-          echo "version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$XCODE/Contents/Info.plist")" >> "$GITHUB_OUTPUT"
-          echo "build=$(/usr/libexec/PlistBuddy -c 'Print ProductBuildVersion' "$XCODE/Contents/version.plist")" >> "$GITHUB_OUTPUT"
-      - name: Default-browser plist checklist (source)
-        run: scripts/check-default-browser-plist.sh
-      - name: Build for testing
-        # Builds the app and the UI tests once; the ui-tests shards run them without building.
-        # arm64 only: the generic destination would also build x86_64, which no Apple silicon runner uses.
-        run: |
-          mkdir -p build
-          xcodebuild -workspace Cormorant.xcworkspace -scheme Cormorant \
-            -destination 'generic/platform=iOS Simulator' -configuration Debug \
-            -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO ARCHS=arm64 \
-            build-for-testing | tee build/xcodebuild.log | grep -E "error:|warning:|BUILD" | grep -v appintentsmetadataprocessor || true
-          grep -q "TEST BUILD SUCCEEDED" build/xcodebuild.log
-      - name: Default-browser plist checklist (built app)
-        run: scripts/check-default-browser-plist.sh build/DerivedData/Build/Products/Debug-iphonesimulator/Cormorant.app
-      - name: Fail on warnings in app code
-        run: |
-          if grep -E "apps/ios/.*warning:" build/xcodebuild.log; then
-            echo "Compiler warnings in apps/ios"; exit 1
-          fi
-      - name: Package the build
-        # A tarball keeps the executables' permissions, which upload-artifact drops.
-        run: tar -czf build/products.tgz -C build/DerivedData/Build Products
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ios-products
-          path: build/products.tgz
-          compression-level: 0
-          retention-days: 1
-
-  ui-tests:
-    name: UI tests (shard ${{ matrix.shard }})
-    needs: ios
-    runs-on: xcode-27
-    # The slowest single run of a shard seen took 21 minutes; a stress run (see ITERATIONS below)
-    # gets a hosted runner's maximum. Expressions have no arithmetic, so it can't scale.
-    timeout-minutes: ${{ (inputs.iterations || contains(github.event.pull_request.labels.*.name, 'ui-stress')) && 360 || 30 }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # Tests are dealt out by scripts/ui-test-shard.py; add an entry here for another shard.
-        shard: [1, 2, 3, 4]
-    env:
-      # The simulator's iOS, so a run doesn't depend on which image a shard lands on: the 2026-11-04
-      # image added iOS 27.2, where three caret-sheet tests failed (docs/product/todo.md). Absent,
-      # the newest iOS is used, with a warning.
-      SIMULATOR_IOS: '27.1'
-    steps:
-      - uses: actions/checkout@v4
-      - name: Select the Xcode that built the tests
-        # A runner from another image in a rollout may not have that path: it then takes the same Xcode
-        # version under another name (a release candidate replaced by the release, same SDK), and fails
-        # rather than run with a different version.
-        env:
-          XCODE: ${{ needs.ios.outputs.xcode }}
-          VERSION: ${{ needs.ios.outputs.xcode-version }}
-          BUILD: ${{ needs.ios.outputs.xcode-build }}
-        run: |
-          if [ ! -d "$XCODE" ]; then
-            XCODE=""
-            for candidate in /Applications/Xcode_*.app; do
-              if [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$candidate/Contents/Info.plist")" = "$VERSION" ]; then
-                XCODE=$candidate
-                break
-              fi
-            done
-            if [ -z "$XCODE" ]; then
-              echo "::error::No Xcode $VERSION on this runner: $(ls -d /Applications/Xcode_*.app | tr '\n' ' ')"
-              exit 1
-            fi
-            echo "::notice::Built with Xcode $VERSION ($BUILD), not on this runner; testing with $XCODE ($(/usr/libexec/PlistBuddy -c 'Print ProductBuildVersion' "$XCODE/Contents/version.plist"))"
-          fi
-          sudo xcode-select -s "$XCODE"
-          xcodebuild -version
-      - uses: actions/download-artifact@v4
-        with:
-          name: ios-products
-          path: build
-      - name: Unpack the build
-        run: tar -xzf build/products.tgz -C build
-      - name: Boot a simulator
+      - name: Start booting a simulator
+        # A boot takes minutes on these runners: the build and the package's tests run meanwhile, and
+        # "Finish booting" waits for it.
         run: |
           # First iPhone on iOS $SIMULATOR_IOS, else on the newest iOS; the runner's simulator names
           # change with each Xcode.
@@ -148,27 +96,69 @@ jobs:
               print("::warning::No iOS " + os.environ["SIMULATOR_IOS"] + " simulator; using the newest", file=sys.stderr)
           print(next(d["udid"] for k in reversed(pinned or ios) for d in devices[k] if d["name"].startswith("iPhone")))
           ')
-          # Boot first: a cold boot under xcodebuild can outlast the app launch ("does not have a
-          # process ID").
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          # Booted before xcodebuild needs it: a cold boot under xcodebuild can outlast the app launch
+          # ("does not have a process ID"). A boot that fails here is tried again by `bootstatus -b`.
           xcrun simctl boot "$UDID" || true
+      - name: Default-browser plist checklist (source)
+        if: matrix.shard == 1
+        run: scripts/check-default-browser-plist.sh
+      - name: Build for testing
+        id: build
+        # Each shard builds for itself, while its simulator boots, rather than wait on one build job.
+        # arm64 only: the generic destination would also build x86_64, which no Apple silicon runner uses.
+        run: |
+          mkdir -p build
+          xcodebuild -workspace Cormorant.xcworkspace -scheme Cormorant \
+            -destination 'generic/platform=iOS Simulator' -configuration Debug \
+            -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO ARCHS=arm64 \
+            build-for-testing | tee build/xcodebuild.log | grep -E "error:|warning:|BUILD" | grep -v appintentsmetadataprocessor || true
+          grep -q "TEST BUILD SUCCEEDED" build/xcodebuild.log
+      - name: Default-browser plist checklist (built app)
+        if: matrix.shard == 1
+        run: scripts/check-default-browser-plist.sh build/DerivedData/Build/Products/Debug-iphonesimulator/Cormorant.app
+      - name: Fail on warnings in app code
+        if: matrix.shard == 1
+        run: |
+          if grep -E "apps/ios/.*warning:" build/xcodebuild.log; then
+            echo "Compiler warnings in apps/ios"; exit 1
+          fi
+      - name: CormorantKit (swift test)
+        if: matrix.shard == 1
+        # Live filter-list download is opt-in (CORMORANT_LIVE_TESTS=1) and stays off in CI.
+        run: |
+          swift build --package-path packages/CormorantKit
+          swift test --package-path packages/CormorantKit
+      # Shard 1's checks above failing (a warning, a package test) doesn't keep its UI tests from running.
+      - name: Finish booting the simulator
+        id: boot
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
           xcrun simctl bootstatus "$UDID" -b
           # A fresh simulator renders its whole wallpaper gallery (PosterBoard) and its widgets
           # (chronod): 100+ extension launches in bursts that took this 3-core runner from the tests
-          # and timed them out. Disable both, then boot again so neither starts; the setting lasts
-          # for the simulator's life. `disable` succeeds even for a label that doesn't exist, so
-          # check afterwards: a runtime that renames either gets a warning, not a failed run.
-          PRIVATE_SERVICES="user/$(id -u)/com.apple.PosterBoard system/com.apple.chronod"
-          for service in $PRIVATE_SERVICES; do xcrun simctl spawn "$UDID" launchctl disable "$service"; done
-          xcrun simctl shutdown "$UDID"
-          xcrun simctl boot "$UDID"
-          xcrun simctl bootstatus "$UDID" -b
+          # and timed them out. Disable both, so launchd never starts them again, and boot out the
+          # running ones, which takes their extensions with them. (Shutting down and booting again
+          # instead cost 2.5-3.5 minutes a shard.) The rest stayed busy for minutes after a boot and
+          # nothing under test uses them: the log streamer (diagnosticd; `log show` below reads logd's
+          # store without it), App Store engagement, Health, mail and calendar accounts, and Siri's
+          # suggestions. Off, the simulator used a quarter less CPU over its first five minutes (235
+          # to 175 CPU-seconds, locally). `disable` succeeds even for a label that doesn't exist, so
+          # check afterwards: a runtime that renames one gets a warning, not a failed run.
+          PRIVATE_SERVICES="user/$(id -u)/com.apple.PosterBoard system/com.apple.chronod system/com.apple.diagnosticd
+            system/com.apple.amsengagementd system/com.apple.healthappd system/com.apple.dataaccess.dataaccessd
+            system/com.apple.siriinferenced"
+          for service in $PRIVATE_SERVICES; do
+            xcrun simctl spawn "$UDID" launchctl disable "$service"
+            xcrun simctl spawn "$UDID" launchctl bootout "$service" || true
+          done
           for service in $PRIVATE_SERVICES; do
             if xcrun simctl spawn "$UDID" launchctl print "$service" > /dev/null 2>&1; then
-              echo "::warning::$service is still running; the simulator may take the runner from the tests"
+              echo "::warning::$service is still loaded; the simulator may take the runner from the tests"
             fi
           done
-          echo "UDID=$UDID" >> "$GITHUB_ENV"
       - name: UI tests
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
         env:
           # Once normally. To look for flaky tests, run the workflow by hand or add the ui-stress
           # label to the PR: each test runs that many times and every run must pass. Nothing is
@@ -176,7 +166,7 @@ jobs:
           ITERATIONS: ${{ inputs.iterations || (contains(github.event.pull_request.labels.*.name, 'ui-stress') && '5') || '1' }}
         run: |
           ONLY_TESTING=$(scripts/ui-test-shard.py ${{ strategy.job-index }} ${{ strategy.job-total }})
-          XCTESTRUN=$(ls build/Products/*.xctestrun)
+          XCTESTRUN=$(ls build/DerivedData/Build/Products/*.xctestrun)
           # No screen recording: XCTest encodes video of every test in software (on a 3-core VM, with
           # no GPU) and keeps it only on failure, and automatic screenshots would cost an image per
           # action. UITestCase attaches its own screenshot and accessibility tree at a failure.

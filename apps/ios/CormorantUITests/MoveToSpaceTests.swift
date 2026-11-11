@@ -2,7 +2,8 @@ import XCTest
 
 /// Moving a tab to another Space (a switcher card's long-press menu, the caret sheet's Move to Space
 /// row), opening a link in another Space (the link menu's Open in Space), and the toasts that say where
-/// the tab went: Undo, Show, and Move… for a link from another app. `-uiTestingSpaces` seeds Work (on
+/// the tab went: Undo and Back to the Space left after a move (which takes you with the tab), Show
+/// after Open in Space, and Move… for a link from another app. `-uiTestingSpaces` seeds Work (on
 /// the Vialumi profile, so moving there reloads) and Projects with one tab each, and an empty Trip,
 /// beside Home. With only Home none of it shows.
 @MainActor
@@ -22,9 +23,9 @@ final class MoveToSpaceTests: UITestCase {
         \(selectionReport)
         """
 
-    /// From the card's menu: the card leaves Home's stack, the toast's Undo brings it back, and its
-    /// Show switches the switcher to where it went.
-    func testMoveFromCardMenuThenUndoAndShow() throws {
+    /// From the card's menu: the switcher goes with the card to Work, the toast's Undo brings both back
+    /// to Home, and its Back to Home leaves the card where it went.
+    func testMoveFromCardMenuThenUndoAndBack() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launchWithSpaces(server)
         open(server.url.appending(path: "a"), path: "/a", in: app)
@@ -43,32 +44,37 @@ final class MoveToSpaceTests: UITestCase {
         chooseInMenu(work, in: app)
 
         let toast = self.toast(in: app)
+        let title = app.buttons["SpaceTitleMenu"]
         XCTAssertTrue(toast.appears(within: Ceiling.ui), "no toast after the move")
         XCTAssertTrue(app.staticTexts["Moved to Work"].exists, "the toast doesn't say where the tab went")
-        XCTAssertTrue(card("Tab /a", in: app).disappears(within: Ceiling.ui), "the card stayed in Home")
-        XCTAssertEqual(app.buttons["SpaceTitleMenu"].label, "Space, Home", "the move switched Spaces")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { title.label == "Space, Work" }, "the switcher didn't go to Work")
+        XCTAssertTrue(card("Tab /a", in: app).appears(within: Ceiling.ui), "the moved card isn't in Work")
+        XCTAssertFalse(toast.buttons["Show"].exists, "the toast still offers Show")
 
-        // Undo: back in Home.
+        // Undo: back in Home, the card with it.
         toast.buttons["Undo"].tap()
+        XCTAssertTrue(waitUntil(Ceiling.ui) { title.label == "Space, Home" }, "Undo didn't go back to Home")
         XCTAssertTrue(card("Tab /a", in: app).appears(within: Ceiling.ui), "Undo didn't bring the card back")
+        XCTAssertTrue(card("Tab /b", in: app).exists, "Home lost its other card")
         XCTAssertTrue(toast.disappears(within: Ceiling.ui), "the toast stayed after Undo")
 
-        // Again to Projects, then Show: the switcher shows Projects, the tab with it.
+        // Again to Projects, then Back to Home: the card stays in Projects.
         openCardMenu(on: "Tab /a", in: app)
         chooseInMenu(submenuItem("Projects", in: app), in: app)
         XCTAssertTrue(toast.appears(within: Ceiling.ui), "no toast after the second move")
-        toast.buttons["Show"].tap()
-        let title = app.buttons["SpaceTitleMenu"]
-        XCTAssertTrue(waitUntil(Ceiling.ui) { title.label == "Space, Projects" }, "Show didn't switch to Projects")
-        XCTAssertTrue(card("Tab /a", in: app).appears(within: Ceiling.ui), "the moved tab isn't in Projects")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { title.label == "Space, Projects" }, "the switcher didn't go to Projects")
+        toast.buttons["Back to Home"].tap()
+        XCTAssertTrue(waitUntil(Ceiling.ui) { title.label == "Space, Home" }, "Back didn't go to Home")
+        XCTAssertTrue(card("Tab /b", in: app).appears(within: Ceiling.ui), "Home's other card isn't there")
+        XCTAssertFalse(card("Tab /a", in: app).exists, "the moved card came back with Back")
         app.buttons["Done"].tap()
-        XCTAssertTrue(heading("/a", in: app).appears(within: Ceiling.load), "Show didn't land on the moved tab")
+        XCTAssertTrue(heading("/b", in: app).appears(within: Ceiling.load), "Home didn't show its tab")
         withExtendedLifetime(server) {}
     }
 
-    /// From the caret sheet: the page on screen moves, Home shows its next tab, and the toast's Undo
-    /// puts the page back on screen; Show follows it to Projects.
-    func testMoveFromCaretSheetThenUndoAndShow() throws {
+    /// From the caret sheet: the page on screen goes to Projects and stays on screen, the toast's Undo
+    /// takes it back to Home, and its Back to Home shows Home's other tab, leaving it in Projects.
+    func testMoveFromCaretSheetThenUndoAndBack() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launchWithSpaces(server)
         open(server.url.appending(path: "a"), path: "/a", in: app)
@@ -84,46 +90,73 @@ final class MoveToSpaceTests: UITestCase {
         destination("Projects", in: app).tap()
 
         XCTAssertTrue(app.navigationBars["Move to Space"].disappears(within: Ceiling.ui), "the Move sheet stayed")
-        XCTAssertTrue(heading("/a", in: app).appears(within: Ceiling.load), "Home didn't show its next tab")
+        XCTAssertTrue(app.buttons["Find on Page"].disappears(within: Ceiling.ui), "the caret sheet stayed")
         let toast = self.toast(in: app)
         XCTAssertTrue(toast.appears(within: Ceiling.ui), "no toast after the move")
         XCTAssertTrue(app.staticTexts["Moved to Projects"].exists)
-        XCTAssertTrue(tabsButton(in: app).label == "Tabs, 1 open", tabsButton(in: app).label)
+        XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).value as? String == "Projects" }, "the move didn't go to Projects")
+        XCTAssertTrue(heading("/b", in: app).exists, "the moved page left the screen")
+        XCTAssertEqual(tabsButton(in: app).label, "Tabs, 2 open", "Projects doesn't have the moved tab")
 
         toast.buttons["Undo"].tap()
-        XCTAssertTrue(heading("/b", in: app).appears(within: Ceiling.load), "Undo didn't put the page back")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).value as? String == "Home" }, "Undo didn't go back to Home")
+        XCTAssertTrue(heading("/b", in: app).appears(within: Ceiling.load), "Undo didn't keep the page on screen")
         XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).label == "Tabs, 2 open" }, "Home's tabs didn't come back")
 
         openMoveSheet(in: app)
         destination("Projects", in: app).tap()
         XCTAssertTrue(toast.appears(within: Ceiling.ui), "no toast after the second move")
-        toast.buttons["Show"].tap()
-        XCTAssertTrue(heading("/b", in: app).appears(within: Ceiling.load), "Show didn't show the moved page")
-        XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).value as? String == "Projects" }, "Show didn't switch to Projects")
+        toast.buttons["Back to Home"].tap()
+        XCTAssertTrue(heading("/a", in: app).appears(within: Ceiling.load), "Back didn't show Home's other tab")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).value as? String == "Home" }, "Back didn't go to Home")
+        XCTAssertEqual(tabsButton(in: app).label, "Tabs, 1 open", "the moved tab came back with Back")
         withExtendedLifetime(server) {}
     }
 
-    /// Moving a Space's last tab leaves it empty, which brings up the search panel; the toast sits
-    /// above it, out of the field's way, and Undo still brings the page back.
-    func testMovingTheLastTabKeepsTheToastAboveTheSearchPanel() throws {
+    /// Moving a Space's last tab goes with it; Back to the Space left, empty now, brings up the search
+    /// panel there.
+    func testBackToASpaceLeftEmptyBringsUpTheSearchPanel() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launchWithSpaces(server)
         open(server.url.appending(path: "a"), path: "/a", in: app)
 
         openMoveSheet(in: app)
         destination("Work", in: app).tap()
-        let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.appears(within: Ceiling.ui), "the empty Space didn't bring up the search panel")
         let toast = self.toast(in: app)
-        XCTAssertTrue(toast.appears(within: Ceiling.ui), "no toast over the search panel")
+        XCTAssertTrue(toast.appears(within: Ceiling.ui), "no toast after the move")
+        XCTAssertTrue(heading("/a", in: app).appears(within: Ceiling.load), "the moved page isn't on screen in Work")
+        let field = app.textFields["Search or enter address"]
+        XCTAssertFalse(field.exists, "the search panel came up over the moved page")
+
+        toast.buttons["Back to Home"].tap()
+        XCTAssertTrue(field.appears(within: Ceiling.ui), "the empty Space didn't bring up the search panel")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).value as? String == "Home" }, "Back didn't go to Home")
+        withExtendedLifetime(server) {}
+    }
+
+    /// The toast stays above the search panel, out of the field's way, when a new tab is begun after a
+    /// move; its Undo takes the page back to Home and closes the panel, as switching tabs does.
+    func testUndoOverTheSearchPanelClosesIt() throws {
+        let server = try FixtureServer(html: Self.page)
+        let app = launchWithSpaces(server)
+        open(server.url.appending(path: "a"), path: "/a", in: app)
+        open(server.url.appending(path: "b"), path: "/b", in: app)
+
+        openMoveSheet(in: app)
+        destination("Projects", in: app).tap()
+        let toast = self.toast(in: app)
+        XCTAssertTrue(toast.appears(within: Ceiling.ui), "no toast after the move")
+        app.buttons["NewTabPill"].tapWhenSettled()
+        let field = app.textFields["Search or enter address"]
+        XCTAssertTrue(field.appears(within: Ceiling.ui), "New Tab didn't bring up the search panel")
         let undo = toast.buttons["Undo"]
         XCTAssertTrue(waitUntil(Ceiling.ui) { undo.isHittable }, "Undo can't be tapped over the search panel")
-        let panelTop = field.frame.minY
-        XCTAssertLessThanOrEqual(toast.settledFrame().maxY, panelTop, "the toast covers the search field")
+        XCTAssertLessThanOrEqual(toast.settledFrame().maxY, field.frame.minY, "the toast covers the search field")
 
         undo.tap()
-        XCTAssertTrue(heading("/a", in: app).appears(within: Ceiling.load), "Undo didn't bring the page back")
         XCTAssertTrue(field.disappears(within: Ceiling.ui), "the search panel stayed over the page")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).value as? String == "Home" }, "Undo didn't go back to Home")
+        XCTAssertTrue(heading("/b", in: app).appears(within: Ceiling.load), "Undo didn't keep the page on screen")
         withExtendedLifetime(server) {}
     }
 
@@ -165,7 +198,7 @@ final class MoveToSpaceTests: UITestCase {
     }
 
     /// A link from another app opens in the Space you're in, straight to the page; the toast says which
-    /// and its Move… moves it on. The toast can be swiped away.
+    /// and its Move… moves it on, the page with you. The toast can be swiped away.
     func testLinkFromAnotherAppShowsWhereItOpened() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launchWithSpaces(server)
@@ -180,8 +213,9 @@ final class MoveToSpaceTests: UITestCase {
         toast.buttons["Move…"].tap()
         XCTAssertTrue(app.navigationBars["Move to Space"].appears(within: Ceiling.ui), "Move… didn't open the Move sheet")
         destination("Work", in: app).tap()
-        XCTAssertTrue(heading("/a", in: app).appears(within: Ceiling.load), "Home didn't go back to its tab")
         XCTAssertTrue(app.staticTexts["Moved to Work"].appears(within: Ceiling.ui), "no toast after Move…")
+        XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).value as? String == "Work" }, "Move… didn't go to Work")
+        XCTAssertTrue(heading("/shared", in: app).appears(within: Ceiling.load), "the moved page left the screen")
 
         toast.swipeDown()
         XCTAssertTrue(toast.disappears(within: Ceiling.ui), "the toast didn't swipe away")

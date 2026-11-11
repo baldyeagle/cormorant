@@ -520,7 +520,7 @@ final class BrowserStore {
     func showToast(_ toast: Toast) {
         self.toast = toast
         toastsShown += 1
-        let actions = toast.actions.map(\.title).joined(separator: ", ")
+        let actions = toast.allActions.map(\.title).joined(separator: ", ")
         let announcement = NSAttributedString(string: actions.isEmpty ? toast.spokenMessage : "\(toast.spokenMessage). \(actions).",
                                               attributes: [.accessibilitySpeechQueueAnnouncement: true])
         UIAccessibility.post(notification: .announcement, argument: announcement)
@@ -549,11 +549,13 @@ final class BrowserStore {
         }
     }
 
-    /// A toast about a Space goes once that Space can't be switched to, or there's only one Space left:
-    /// its buttons would act on a Space out of reach, and with one Space no toast names one.
+    /// A toast about a Space goes once that Space, or the one its back button goes to, can't be switched
+    /// to, or there's only one Space left: its buttons would act on a Space out of reach, and with one
+    /// Space no toast names one.
     private func dismissStaleToast() {
-        guard case .space(let space)? = toast?.icon else { return }
-        if !hasSpacesToSwitch || state.space(space.id)?.isArchived != false { dismissToast() }
+        guard let toast, case .space(let space) = toast.icon else { return }
+        let spaces = [space.id] + (toast.leadingAction?.space.map { [$0.id] } ?? [])
+        if !hasSpacesToSwitch || spaces.contains(where: { state.space($0)?.isArchived != false }) { dismissToast() }
     }
 
     /// Takes the toast down: the one with `id`, or any.
@@ -566,7 +568,7 @@ final class BrowserStore {
 
     // MARK: Moves
 
-    /// Applies `move` (a `moveTab` or `moveTabBack` of `tabID`, returning its result) and shows the
+    /// Applies `move` (a `moveTabAndFollow` or `moveTabBack` of `tabID`, returning its result) and shows the
     /// result. A tab that changed profile loses its web view (`releaseSessionsOnOtherProfiles`),
     /// keeping its history and settings, so it's rebuilt, and reloads, signed in with the new
     /// profile's accounts when it's next shown. Returns the move's result: nil when nothing moved.

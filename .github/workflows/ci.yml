@@ -58,8 +58,8 @@ jobs:
     if: needs.changes.outputs.ios == 'true'
     runs-on: xcode-27
     # The slowest single run of a shard seen took 21 minutes, before shards built for themselves
-    # (a build adds 1-2); a stress run (see ITERATIONS below)
-    # gets a hosted runner's maximum. Expressions have no arithmetic, so it can't scale.
+    # (a build adds 1-2); a stress run (see ITERATIONS below) gets a hosted runner's maximum.
+    # Expressions have no arithmetic, so it can't scale.
     timeout-minutes: ${{ (inputs.iterations || contains(github.event.pull_request.labels.*.name, 'ui-stress')) && 360 || 30 }}
     strategy:
       fail-fast: false
@@ -81,9 +81,41 @@ jobs:
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
           swift --version
-      - name: Start booting a simulator
-        # A boot takes minutes on these runners: the build and the package's tests run meanwhile, and
-        # "Finish booting" waits for it.
+      - name: Build for testing
+        id: build
+        # Each shard builds for itself rather than wait on one build job and its artifact.
+        # arm64 only: the generic destination would also build x86_64, which no Apple silicon runner uses.
+        run: |
+          mkdir -p build
+          xcodebuild -workspace Cormorant.xcworkspace -scheme Cormorant \
+            -destination 'generic/platform=iOS Simulator' -configuration Debug \
+            -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO ARCHS=arm64 \
+            build-for-testing | tee build/xcodebuild.log | grep -E "error:|warning:|BUILD" | grep -v appintentsmetadataprocessor || true
+          grep -q "TEST BUILD SUCCEEDED" build/xcodebuild.log
+      # Shard 1's checks: each runs even when another fails, and none keeps its UI tests from running.
+      - name: Default-browser plist checklist (source)
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        run: scripts/check-default-browser-plist.sh
+      - name: Default-browser plist checklist (built app)
+        if: ${{ !cancelled() && matrix.shard == 1 && steps.build.outcome == 'success' }}
+        run: scripts/check-default-browser-plist.sh build/DerivedData/Build/Products/Debug-iphonesimulator/Cormorant.app
+      - name: Fail on warnings in app code
+        if: ${{ !cancelled() && matrix.shard == 1 && steps.build.outcome == 'success' }}
+        run: |
+          if grep -E "apps/ios/.*warning:" build/xcodebuild.log; then
+            echo "Compiler warnings in apps/ios"; exit 1
+          fi
+      - name: CormorantKit (swift test)
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        # Live filter-list download is opt-in (CORMORANT_LIVE_TESTS=1) and stays off in CI.
+        run: |
+          swift build --package-path packages/CormorantKit
+          swift test --package-path packages/CormorantKit
+      - name: Boot a simulator
+        id: boot
+        # After the build, not during it: on these 3-core, 7 GB runners a build beside a booting
+        # simulator took 7-13 minutes instead of 1.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           # First iPhone on iOS $SIMULATOR_IOS, else on the newest iOS; the runner's simulator names
           # change with each Xcode.
@@ -97,43 +129,9 @@ jobs:
           print(next(d["udid"] for k in reversed(pinned or ios) for d in devices[k] if d["name"].startswith("iPhone")))
           ')
           echo "UDID=$UDID" >> "$GITHUB_ENV"
-          # Booted before xcodebuild needs it: a cold boot under xcodebuild can outlast the app launch
-          # ("does not have a process ID"). A boot that fails here is tried again by `bootstatus -b`.
+          # Boot first: a cold boot under xcodebuild can outlast the app launch ("does not have a
+          # process ID"). A boot that fails here is tried again by `bootstatus -b`.
           xcrun simctl boot "$UDID" || true
-      - name: Default-browser plist checklist (source)
-        if: matrix.shard == 1
-        run: scripts/check-default-browser-plist.sh
-      - name: Build for testing
-        id: build
-        # Each shard builds for itself, while its simulator boots, rather than wait on one build job.
-        # arm64 only: the generic destination would also build x86_64, which no Apple silicon runner uses.
-        run: |
-          mkdir -p build
-          xcodebuild -workspace Cormorant.xcworkspace -scheme Cormorant \
-            -destination 'generic/platform=iOS Simulator' -configuration Debug \
-            -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO ARCHS=arm64 \
-            build-for-testing | tee build/xcodebuild.log | grep -E "error:|warning:|BUILD" | grep -v appintentsmetadataprocessor || true
-          grep -q "TEST BUILD SUCCEEDED" build/xcodebuild.log
-      - name: Default-browser plist checklist (built app)
-        if: matrix.shard == 1
-        run: scripts/check-default-browser-plist.sh build/DerivedData/Build/Products/Debug-iphonesimulator/Cormorant.app
-      - name: Fail on warnings in app code
-        if: matrix.shard == 1
-        run: |
-          if grep -E "apps/ios/.*warning:" build/xcodebuild.log; then
-            echo "Compiler warnings in apps/ios"; exit 1
-          fi
-      - name: CormorantKit (swift test)
-        if: matrix.shard == 1
-        # Live filter-list download is opt-in (CORMORANT_LIVE_TESTS=1) and stays off in CI.
-        run: |
-          swift build --package-path packages/CormorantKit
-          swift test --package-path packages/CormorantKit
-      # Shard 1's checks above failing (a warning, a package test) doesn't keep its UI tests from running.
-      - name: Finish booting the simulator
-        id: boot
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: |
           xcrun simctl bootstatus "$UDID" -b
           # A fresh simulator renders its whole wallpaper gallery (PosterBoard) and its widgets
           # (chronod): 100+ extension launches in bursts that took this 3-core runner from the tests
@@ -165,7 +163,8 @@ jobs:
           # retried, so a flaky test fails CI rather than hiding behind a second try.
           ITERATIONS: ${{ inputs.iterations || (contains(github.event.pull_request.labels.*.name, 'ui-stress') && '5') || '1' }}
         run: |
-          ONLY_TESTING=$(scripts/ui-test-shard.py ${{ strategy.job-index }} ${{ strategy.job-total }})
+          # Shard 1 deals itself less, for the ~90 s of package tests and checks it runs first.
+          ONLY_TESTING=$(scripts/ui-test-shard.py ${{ strategy.job-index }} ${{ strategy.job-total }} 90)
           XCTESTRUN=$(ls build/DerivedData/Build/Products/*.xctestrun)
           # No screen recording: XCTest encodes video of every test in software (on a 3-core VM, with
           # no GPU) and keeps it only on failure, and automatic screenshots would cost an image per
@@ -193,7 +192,7 @@ jobs:
       - name: Save the simulator's log
         # The system's side of a failure: XCTest sometimes couldn't terminate the app, and why is
         # only in the launch and termination services' logs.
-        if: failure() || cancelled()
+        if: (failure() || cancelled()) && env.UDID != ''
         timeout-minutes: 5
         run: |
           xcrun simctl spawn "$UDID" log show --last 6h --info --style compact --predicate \
@@ -206,6 +205,7 @@ jobs:
         with:
           name: ui-test-results-${{ matrix.shard }}
           path: |
+            build/xcodebuild.log
             build/UITests.xcresult
             build/xcodebuild-test.log
             build/simulator-log.txt.gz

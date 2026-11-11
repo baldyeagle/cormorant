@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Prints the xcodebuild -only-testing flags for one shard of the UI tests.
 
-    scripts/ui-test-shard.py INDEX COUNT
+    scripts/ui-test-shard.py INDEX COUNT [HEAD_START]
     scripts/ui-test-shard.py --record LOG...
 
 Finds every `test...` method of every XCTestCase or UITestCase subclass in
 apps/ios/CormorantUITests and deals them out so each of COUNT shards gets about the same run time:
 the longest test first, each onto the shard with the least so far, with the times in
 scripts/ui-test-durations.txt (seconds per test, from CI). A test the file doesn't know gets the
-median, so a new test lands in a shard with no config change. Shards split by test rather than by
-class: each test launches the app on its own, and one class alone would otherwise set the floor.
+median, so a new test lands in a shard with no config change. HEAD_START is seconds of other work
+the first shard does before its tests (CI's shard 1 also runs the package tests), counted as load it
+starts with. Shards split by test rather than by class: each test launches the app on its own, and
+one class alone would otherwise set the floor.
 
 `--record` rewrites the durations file from xcodebuild logs (`Test Case '...' passed (N seconds)`
 lines), such as `gh run view --job ID --log` for each shard of a CI run; a test in no log keeps its
@@ -68,12 +70,12 @@ def durations() -> dict[str, float]:
     return known
 
 
-def shards(tests: list[str], count: int, known: dict[str, float]) -> list[list[str]]:
+def shards(tests: list[str], count: int, known: dict[str, float], head_start: float = 0) -> list[list[str]]:
     """Longest first, each onto the lightest shard; ties (and unknown tests) go by name, so the split
     is the same on every runner."""
     default = statistics.median(known.values()) if known else 1.0
     weight = {test: known.get(test, default) for test in tests}
-    loads = [0.0] * count
+    loads = [head_start] + [0.0] * (count - 1)
     result: list[list[str]] = [[] for _ in range(count)]
     for test in sorted(tests, key=lambda t: (-weight[t], t)):
         index = min(range(count), key=lambda i: (loads[i], i))
@@ -104,9 +106,10 @@ def main() -> None:
     if sys.argv[1:2] == ["--record"]:
         return record([Path(arg) for arg in sys.argv[2:]])
     index, count = (int(arg) for arg in sys.argv[1:3])
+    head_start = float(sys.argv[3]) if len(sys.argv) > 3 else 0
     if not 0 <= index < count:
         sys.exit(f"shard index {index} is outside 0..<{count}")
-    shard = shards(tests(), count, durations())[index]
+    shard = shards(tests(), count, durations(), head_start)[index]
     if not shard:
         sys.exit(f"shard {index} of {count} has no tests")
     print(" ".join(f"-only-testing:{test}" for test in shard))

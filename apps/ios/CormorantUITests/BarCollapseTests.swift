@@ -3,13 +3,15 @@ import XCTest
 /// Scrolling down shrinks the bar to the host capsule; the page must keep taking touches after that.
 @MainActor
 final class BarCollapseTests: UITestCase {
+    /// Room to scroll is a blank spacer, not text: every query snapshots the page's accessibility
+    /// tree, and 300 paragraphs made each one ~15x slower, the app's own buttons included.
     private static let page = """
         <!doctype html>
         <meta name="viewport" content="width=device-width">
         <title>Fixture</title>
         <style>#y { position: fixed; top: 0; right: 0; background: #ff0; padding: 4px; }</style>
         <p id="y">Scrolled 0</p>
-        \(String(repeating: "<p>Filler paragraph.</p>\n", count: 300))
+        <div style="height: 10000px"></div>
         <script>
           addEventListener("scroll", () => { y.textContent = "Scrolled " + Math.round(scrollY); }, { passive: true });
         </script>

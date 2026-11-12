@@ -6,7 +6,9 @@ import XCTest
 @MainActor
 final class TabSwitcherTests: UITestCase {
     /// Every path serves this page. It reports where it's scrolled and the last touch it saw, and has
-    /// an in-page link to its very end, so a scroll position is set without a fling.
+    /// an in-page link to its very end, so a scroll position is set without a fling. The length is a
+    /// blank spacer, not text: every query snapshots the page's accessibility tree, and 300
+    /// paragraphs made each one ~15x slower, the app's own buttons included.
     private static let page = """
         <!doctype html>
         <meta name="viewport" content="width=device-width">
@@ -16,7 +18,7 @@ final class TabSwitcherTests: UITestCase {
         <h1 id="path">Path</h1>
         <p id="report">Scrolled 0</p>
         <a href="#far">Far down</a>
-        \(String(repeating: "<p>Filler paragraph, line after line.</p>\n", count: 300))
+        <div style="height: 10000px"></div>
         <p id="far">Far paragraph</p>
         <script>
           document.getElementById('path').textContent = 'Path ' + location.pathname;

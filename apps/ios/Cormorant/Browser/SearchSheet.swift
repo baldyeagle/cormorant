@@ -52,6 +52,8 @@ struct SearchSheet: View {
     @State private var completionHosts: [String] = []
     /// History and engine results, for `lookup.text`.
     @State private var lookup = Lookup()
+    /// This panel, to `PasteAndGo`.
+    @State private var pasteOwner = UUID()
     @ScaledMetric(relativeTo: .body) private var fieldHeight: CGFloat = 48
     @ScaledMetric(relativeTo: .body) private var iconSide: CGFloat = 18
 
@@ -98,6 +100,18 @@ struct SearchSheet: View {
             Task { selectAll() }
         }
         .onChange(of: text) { old, new in textDidChange(from: old, to: new) }
+        // Searching tabs only, Return picks a tab: Paste and Go would read as leaving for a page.
+        .onChange(of: isTabSearch, initial: true) { _, tabsOnly in
+            if tabsOnly {
+                PasteAndGo.release(pasteOwner)
+            } else {
+                PasteAndGo.target = PasteAndGo.Target(owner: pasteOwner) { pasted in
+                    store.submit(pasted)
+                    onDismiss()
+                }
+            }
+        }
+        .onDisappear { PasteAndGo.release(pasteOwner) }
         .task(id: store.activeProfileID) {
             completionHosts = await store.browsingHistory?.completionHosts(profile: store.activeProfileID) ?? []
         }

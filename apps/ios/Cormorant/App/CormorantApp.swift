@@ -69,11 +69,16 @@ struct CormorantApp: App {
             let suite = "dev.baldyeagle.cormorant.ui-testing" + (session.map { ".\($0)" } ?? "")
             if session == nil { UserDefaults.standard.removePersistentDomain(forName: suite) }
             let defaults = UserDefaults(suiteName: suite) ?? .standard
+            let settings = AppSettings(defaults: defaults)
+            // `-uiTestingSearchEngine <template>`: searches go to the test's FixtureServer, not the network.
+            if let template = UserDefaults.standard.string(forKey: "uiTestingSearchEngine") {
+                settings.searchEngine = SearchEngine(id: AppSettings.customEngineID, name: "Fixture", queryTemplate: template)
+            }
             return BrowserStore(
                 stateStore: JSONBrowserStateStore(fileURL: run.appendingPathExtension("json")),
                 historyStore: TabHistoryStore(directory: run.appending(path: "History")),
                 blocking: BlockingService(usesFilterLists: false),
-                settings: AppSettings(defaults: defaults),
+                settings: settings,
                 favicons: FaviconStore(directory: run.appending(path: "Favicons")),
                 defaultBrowser: DefaultBrowserStatus(isLive: false),
                 browsingHistory: BrowserStore.openBrowsingHistory(at: run.appending(path: "browsing-history.sqlite")),

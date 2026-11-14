@@ -10,12 +10,13 @@ extension BrowserStore {
 
     /// What's behind the status bar for the tab on screen: its page's background, nil for the default
     /// chrome. Also nil with the setting off, away from a page (the empty state, a load error), which
-    /// draw their own backgrounds, and while the page's color is from the other appearance (it was
-    /// just switched): until it's re-read, the system's own style is the better guess.
+    /// draw their own backgrounds, while the wash is over a page that hasn't drawn yet (its color is
+    /// WebKit's placeholder), and while the page's color is from the other appearance (it was just
+    /// switched): until it's re-read, the system's own style is the better guess.
     func statusBarTint(in colorScheme: ColorScheme) -> ChromeTint? {
         let style: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
         guard settings.pageUnderStatusBar, activeTab?.url != nil,
-              let session = activeSession, session.loadError == nil,
+              let session = activeSession, session.loadError == nil, !session.isAwaitingFirstPaint,
               session.pageBackgroundStyle == style else { return nil }
         let traits = UITraitCollection(userInterfaceStyle: style)
         return ChromeTint(pageBackground: RGBColor(session.pageBackground, in: traits),

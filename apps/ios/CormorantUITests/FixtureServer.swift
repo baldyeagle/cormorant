@@ -3,7 +3,7 @@ import Network
 
 /// Serves one fixed HTML page on 127.0.0.1 so the tests need no network. The app and the test
 /// runner share the simulator's loopback. Every path gets the same page; `delays` holds back the
-/// first request for some.
+/// first request for some, `holds` every request for some until the test calls `release(_:)`.
 /// Counts requests by path, so a test can tell a page that was loaded again from one that wasn't.
 final class FixtureServer {
     struct StartFailed: Error {}
@@ -11,11 +11,13 @@ final class FixtureServer {
     let port: UInt16
     private let listener: NWListener
     private let counts: Counts
+    private let held: Held
 
     /// - Parameter delays: seconds to wait before answering the first request for a path (`/slow`).
     ///   Later ones are answered at once, so a test can hold a link preview's load back for longer than
     ///   a slow simulator takes to pick a menu item, without the tab's own load waiting too.
-    init(html: String, delays: [String: Double] = [:]) throws {
+    /// - Parameter holds: paths whose requests go unanswered until `release(_:)` is called for them.
+    init(html: String, delays: [String: Double] = [:], holds: Set<String> = []) throws {
         let body = Data(html.utf8)
         let header = [
             "HTTP/1.1 200 OK",
@@ -30,6 +32,7 @@ final class FixtureServer {
         let listener = try NWListener(using: parameters)
         let queue = DispatchQueue(label: "FixtureServer")
         let counts = Counts()
+        let held = Held(paths: holds)
         listener.newConnectionHandler = { connection in
             connection.start(queue: queue)
             // Answer once the request starts arriving; only its path matters.
@@ -39,7 +42,9 @@ final class FixtureServer {
                 let send: @Sendable () -> Void = {
                     connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
                 }
-                if nth == 1, let delay = path.flatMap({ delays[$0] }) {
+                if let path, held.hold(send, for: path) {
+                    // Sent by `release(_:)`.
+                } else if nth == 1, let delay = path.flatMap({ delays[$0] }) {
                     queue.asyncAfter(deadline: .now() + delay, execute: send)
                 } else {
                     send()
@@ -62,6 +67,12 @@ final class FixtureServer {
         self.listener = listener
         self.port = port
         self.counts = counts
+        self.held = held
+    }
+
+    /// Answers the requests held for `path` (one of `holds`), and any that come for it from now on.
+    func release(_ path: String) {
+        for send in held.release(path) { send() }
     }
 
     var url: URL { URL(string: "http://127.0.0.1:\(port)/")! }
@@ -96,6 +107,31 @@ final class FixtureServer {
 
         var log: String { lock.withLock { "requests:\n" + lines.joined(separator: "\n") } }
         func count(for path: String) -> Int { lock.withLock { byPath[path, default: 0] } }
+    }
+
+    private final class Held: @unchecked Sendable {
+        private let lock = NSLock()
+        private var paths: Set<String>
+        private var waiting: [String: [@Sendable () -> Void]] = [:]
+
+        init(paths: Set<String>) { self.paths = paths }
+
+        /// Keeps `send` for later if `path` is held; false if it isn't, to answer now.
+        func hold(_ send: @escaping @Sendable () -> Void, for path: String) -> Bool {
+            lock.withLock {
+                guard paths.contains(path) else { return false }
+                waiting[path, default: []].append(send)
+                return true
+            }
+        }
+
+        /// Stops holding `path`; returns the answers it was holding back.
+        func release(_ path: String) -> [@Sendable () -> Void] {
+            lock.withLock {
+                paths.remove(path)
+                return waiting.removeValue(forKey: path) ?? []
+            }
+        }
     }
 
     deinit {

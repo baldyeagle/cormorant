@@ -36,6 +36,16 @@ final class TabSession {
     /// The appearance `pageBackground` was read in. A page's colors can follow it, and a tab off screen
     /// only restyles once it's shown, so a color from the other appearance is out of date.
     private(set) var pageBackgroundStyle = UIUserInterfaceStyle.unspecified
+    /// The first page hasn't drawn yet (`coversFirstPage`): from its load until the page reports its
+    /// first contentful paint (`firstPaintScript`), loading stops, or a few seconds after it commits.
+    /// WebKit can show a white canvas for a moment before a page's own (dark) styles apply, so the
+    /// browser keeps the wash over the page until then (`BrowserStore.showsWash`). Only for the first
+    /// page: after that, WebKit keeps the last page up until the next one draws.
+    private(set) var isAwaitingFirstPaint = false
+    /// The first page gets the wash (`isAwaitingFirstPaint`). Set by the store for a tab's first web
+    /// view this run (a new tab, one restored at launch, a popup), before it loads; not for one rebuilt
+    /// after it was let go, which the snapshot taken while it was up covers instead.
+    @ObservationIgnored var coversFirstPage = false
     private(set) var loadError: LoadError?
     /// A main-frame response WebKit can't display (a download). Downloads come in build two.
     var blockedDownloadURL: URL?
@@ -96,6 +106,7 @@ final class TabSession {
     @ObservationIgnored let blocking: BlockingService
     @ObservationIgnored private let contentController: WKUserContentController
     @ObservationIgnored private let coordinator = WebViewCoordinator()
+    @ObservationIgnored private let firstPaintHandler = FirstPaintHandler()
     @ObservationIgnored private let pullToRefresh: PullToRefresh
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     /// Host and lists version the current rules were applied for; nil until the first successful apply.
@@ -111,6 +122,8 @@ final class TabSession {
     @ObservationIgnored private var lastInsetTop: CGFloat = 0
     @ObservationIgnored private var hasCommittedPage = false
     @ObservationIgnored private var pageBackgroundTask: Task<Void, Never>?
+    /// Takes the wash down if the page hasn't drawn in time (`awaitFirstPaint()`, `navigationDidCommit(_:)`).
+    @ObservationIgnored private var firstPaintDeadline: Task<Void, Never>?
     @ObservationIgnored private var traitRegistration: (any UITraitChangeRegistration)?
     /// The color behind the status bar for whichever tab is on screen, for an animation that hands
     /// over to it (the link preview's card growing into its new tab).
@@ -124,6 +137,24 @@ final class TabSession {
     private static let collapseDistance: CGFloat = 24
     private static let crashReloadLimit = 3
     private static let crashReloadWindow: TimeInterval = 5 * 60
+    /// Tells the app when the page first draws something (text, an image): a frame after its first
+    /// contentful paint, so that frame is on screen. In the app's own script world, out of the page's
+    /// reach, and added per session rather than in `makeConfiguration`: it needs the session's handler.
+    private static let firstPaintScript = WKUserScript(source: """
+        (() => {
+          let sent = false
+          const report = () => {
+            if (sent) return
+            sent = true
+            requestAnimationFrame(() => webkit.messageHandlers.firstPaint.postMessage(null))
+          }
+          try {
+            new PerformanceObserver((list) => {
+              if (list.getEntries().some((entry) => entry.name === 'first-contentful-paint')) report()
+            }).observe({ type: 'paint', buffered: true })
+          } catch {}
+        })()
+        """, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .defaultClient)
     /// Schemes WebKit loads itself. Anything else belongs to another app.
     static let webSchemes: Set<String> = ["http", "https", "about", "blob", "data", "javascript"]
     /// Never acted on from inside a page: our own scheme (pages must not drive the app) and local files.
@@ -213,6 +244,9 @@ final class TabSession {
         coordinator.session = self
         webView.navigationDelegate = coordinator
         webView.uiDelegate = coordinator
+        firstPaintHandler.session = self
+        contentController.addUserScript(Self.firstPaintScript)
+        contentController.add(firstPaintHandler, contentWorld: .defaultClient, name: "firstPaint")
         pullToRefresh.onRefresh = { [weak self] in self?.reload() }
         observe()
         // A page restyles for the new appearance without always changing its under-page color (a
@@ -237,6 +271,7 @@ final class TabSession {
         pendingHistory = interactionState
         // A reload after a content-process crash (which clears `webView.url`) needs it, history or not.
         lastRequestedURL = url
+        if url != nil { awaitFirstPaint() }
         Task {
             defer { pendingHistory = nil }
             await applyBlocking(host: host)
@@ -265,6 +300,7 @@ final class TabSession {
 
     func load(_ url: URL) {
         lastRequestedURL = url
+        awaitFirstPaint()
         let navigation = webView.load(URLRequest(url: url))
         typedNavigation = nextLoadIsTyped ? navigation : nil
         nextLoadIsTyped = false
@@ -467,6 +503,9 @@ final class TabSession {
     func navigationDidCommit(_ navigation: WKNavigation) {
         effectiveContentMode = navigation.effectiveContentMode
         hasCommittedPage = true
+        // A page can draw without a contentful paint (a canvas) while its load never ends (a request
+        // that hangs): it's not left under the wash, where taps still reach it, for long.
+        if isAwaitingFirstPaint { stopAwaitingFirstPaint(after: .seconds(3)) }
         pageBackgroundDidChange()
         // Consumed even when the page doesn't count as a new visit (the address of the page already
         // showing), so it doesn't carry over to the next link.
@@ -492,6 +531,9 @@ final class TabSession {
     func pageDidFinishLoading() { onPageLoaded?() }
     func pageDidRequestClose() { onClose?() }
 
+    /// The page drew its first text or image (`firstPaintScript`).
+    func pageDidPaint() { stopAwaitingFirstPaint() }
+
     func webContentProcessDidTerminate() {
         Logger.app.error("Web content process terminated for tab \(self.tabID, privacy: .public)")
         needsReload = true
@@ -516,6 +558,8 @@ final class TabSession {
     // MARK: Private
 
     private func reload() {
+        // The first page again after it failed or was stopped: covered as it was the first time.
+        awaitFirstPaint()
         // After a content-process crash `url` is nil but the history survives: reloading its current
         // item keeps the tab where it was, where loading `lastRequestedURL` would add an entry.
         if webView.url != nil || webView.backForwardList.currentItem != nil {
@@ -582,7 +626,7 @@ final class TabSession {
                 MainActor.assumeIsolated { self?.canGoForward = web.canGoForward }
             },
             webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] web, _ in
-                MainActor.assumeIsolated { self?.isLoading = web.isLoading }
+                MainActor.assumeIsolated { self?.loadingDidChange(web.isLoading) }
             },
             webView.observe(\.estimatedProgress, options: [.initial, .new]) { [weak self] web, _ in
                 MainActor.assumeIsolated { self?.progress = web.estimatedProgress }
@@ -621,6 +665,48 @@ final class TabSession {
                 MainActor.assumeIsolated { self?.scrollViewDidScroll(scrollView) }
             },
         ]
+    }
+
+    /// Puts the wash up for the first page's load, if this session covers it (`coversFirstPage`) and
+    /// nothing has committed yet: from its own loads, and from the store for a popup, which WebKit
+    /// loads itself. Comes down without a page if no load gets going (a popup its opener never
+    /// navigates): nothing loading a moment later means nothing is coming.
+    func awaitFirstPaint() {
+        guard coversFirstPage, !hasCommittedPage else { return }
+        isAwaitingFirstPaint = true
+        firstPaintDeadline?.cancel()
+        firstPaintDeadline = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard let self, !Task.isCancelled, !webView.isLoading, !hasCommittedPage else { return }
+            stopAwaitingFirstPaint()
+        }
+    }
+
+    /// Takes the wash down, now or `after` a while (unless something else does first).
+    private func stopAwaitingFirstPaint(after delay: Duration? = nil) {
+        firstPaintDeadline?.cancel()
+        guard let delay else {
+            if isAwaitingFirstPaint { isAwaitingFirstPaint = false }
+            return
+        }
+        firstPaintDeadline = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            stopAwaitingFirstPaint()
+        }
+    }
+
+    /// Loading stopped (finished, failed, cancelled, a download) without the page saying it drew, as a
+    /// page with nothing contentful never will: the wash goes after a moment for the last paint, unless
+    /// another load has started by then.
+    private func loadingDidChange(_ isLoading: Bool) {
+        self.isLoading = isLoading
+        guard !isLoading, isAwaitingFirstPaint else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard let self, !webView.isLoading else { return }
+            stopAwaitingFirstPaint()
+        }
     }
 
     /// Takes WebKit's under-page color once it has held for a moment. Around a load WebKit passes
@@ -671,5 +757,16 @@ final class TabSession {
     func setBarCollapsed(_ collapsed: Bool) {
         guard isBarCollapsed != collapsed else { return }
         withAnimation(.snappy(duration: 0.25)) { isBarCollapsed = collapsed }
+    }
+}
+
+/// Receives `firstPaintScript`'s message for its session. Held weakly: the content controller keeps
+/// its handlers for the web view's life.
+private final class FirstPaintHandler: NSObject, WKScriptMessageHandler {
+    weak var session: TabSession?
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame else { return }
+        session?.pageDidPaint()
     }
 }

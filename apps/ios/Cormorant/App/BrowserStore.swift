@@ -97,6 +97,10 @@ final class BrowserStore {
     /// Tabs opened for a page not yet shown, whose first load is a visit. Any other tab's first load
     /// (restored at launch, rebuilt after its web view was let go) brings back a page already counted.
     @ObservationIgnored private var unvisitedTabIDs: Set<UUID> = []
+    /// Tabs whose web view has been built this run. A tab's first one covers its page with the wash
+    /// until it draws (`TabSession.coversFirstPage`); a later one is a tab coming back after its web
+    /// view was let go, which the snapshot taken while it was up covers instead.
+    @ObservationIgnored private var builtTabIDs: Set<UUID> = []
     /// Zoom and desktop mode to give a tab's web view when it's next built: an evicted tab's own, or
     /// those a link-menu tab inherits from its opener. Memory only.
     @ObservationIgnored private var pendingViewSettings: [UUID: TabSession.ViewSettings] = [:]
@@ -786,6 +790,11 @@ final class BrowserStore {
         let session = makeSession(for: tab, configuration: configuration)
         // Before WebKit navigates it, so a popup from a desktop-mode tab opens in desktop mode too.
         if let opener { session.apply(opener.viewSettings) }
+        // Covered until its page draws, like any new tab's; not a blank one the opener writes into.
+        if requested != nil {
+            session.coversFirstPage = true
+            session.awaitFirstPaint()
+        }
         session.installCachedBlocking(for: requested)
         stateDidChange()
         return session.webView
@@ -910,9 +919,11 @@ final class BrowserStore {
 
     private func session(for tab: Tab) -> TabSession {
         if let existing = sessions[tab.id] { return existing }
+        let isFirstWebView = !builtTabIDs.contains(tab.id)
         let session = makeSession(for: tab)
         if let settings = pendingViewSettings.removeValue(forKey: tab.id) { session.apply(settings) }
         if unvisitedTabIDs.remove(tab.id) == nil { session.assumeVisited(tab.url) }
+        session.coversFirstPage = isFirstWebView
         session.start(loading: tab.url, restoring: interactionStates.removeValue(forKey: tab.id))
         return session
     }
@@ -925,6 +936,7 @@ final class BrowserStore {
         let profileID = state.profile(forSpace: tab.spaceID).id
         let session = handoff.map { TabSession(tabID: tab.id, blocking: blocking, adopting: $0) }
             ?? TabSession(tabID: tab.id, profileID: profileID, blocking: blocking, configuration: configuration)
+        builtTabIDs.insert(tab.id)
         session.activeStripColor = { [weak self] in self?.stripUIColor(for: $0) }
         let tabID = tab.id
         // History goes where the page was seen: the profile whose website data it loaded with.

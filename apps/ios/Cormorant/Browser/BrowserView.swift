@@ -23,6 +23,9 @@ struct BrowserView: View {
     /// to sit above.
     @State private var barTop: CGFloat?
     @State private var bannerTop: CGFloat?
+    /// The launch screen's bird is still up, over the wash, until the page the app opens on has drawn
+    /// or the search panel comes up.
+    @State private var isLaunching = true
     @FocusState private var searchFocused: Bool
 
     /// The page, the bar, the search panel and the toast, before the sheets and covers on them.
@@ -38,10 +41,22 @@ struct BrowserView: View {
                     .ignoresSafeArea(.container, edges: store.pageRunsUnderStatusBar ? .all : [.horizontal, .bottom])
                     .ignoresSafeArea(.keyboard)
             }
-            // Also while tabs load, so the launch screen's bird stays put until there's something to show.
-            if !store.isLoaded || store.activeTab?.url == nil {
-                emptyState
+            // Behind the bird at launch and on a blank tab, and over a new tab's page until it has drawn.
+            // Both are there at once (a new tab's web view is blank until it loads), and fade off the
+            // page once it has drawn.
+            ZStack {
+                if store.showsWash {
+                    SpaceWash(color: washColor)
+                        .transition(.asymmetric(insertion: .identity, removal: .opacity))
+                }
+                // Also while tabs load, and at launch until the tab it opens on has drawn, so the launch
+                // screen's bird stays put until there's something to show.
+                if !store.isLoaded || store.activeTab?.url == nil || (isLaunching && store.showsWash) {
+                    emptyState
+                        .transition(.asymmetric(insertion: .identity, removal: .opacity))
+                }
             }
+            .animation(.easeOut(duration: 0.35), value: store.showsWash)
             if let session = store.activeSession, let error = session.loadError {
                 LoadErrorView(error: error, onRetry: session.retry)
             }
@@ -195,6 +210,8 @@ struct BrowserView: View {
         }
         // The alerts take focus; the panel comes up once they're answered.
         .onChange(of: alertIsUp) { searchIfBlank() }
+        .onChange(of: store.showsWash) { _, shows in if !shows { isLaunching = false } }
+        .onChange(of: isSearching) { _, searching in if searching { isLaunching = false } }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { searchIfBlank() }
             // In case a hide never arrives. A keyboard still up on return reports its frame again.
@@ -298,9 +315,15 @@ struct BrowserView: View {
         store.loadFailure != nil || storageWarningPresented.wrappedValue
     }
 
-    /// No tabs (or a tab that hasn't loaded anything): the launch screen's bird, same asset and size.
-    /// At rest it's centered on the whole screen, exactly where the launch screen drew it. With the
-    /// search panel up it centers in the space above the panel instead, shrinking if that's short.
+    /// The launch screen's color until the tabs, and so the Space, are loaded; then the Space's.
+    private var washColor: SpaceWashPainter.RGB {
+        guard store.isLoaded else { return SpaceWashPainter.launchColor(dark: colorScheme == .dark) }
+        return SpaceWashPainter.RGB(store.state.activeSpace.color.rgb)
+    }
+
+    /// No tabs (or a tab that hasn't loaded anything): the launch screen's bird, same asset and size,
+    /// on the wash. At rest it's centered on the whole screen, exactly where the launch screen drew it.
+    /// With the search panel up it centers in the space above the panel instead, shrinking if that's short.
     private var emptyState: some View {
         // A reader rather than padding: it takes exactly the space offered, so a panel reaching the top
         // of the screen (landscape, many rows) shrinks the mark to nothing instead of growing the view.
@@ -319,7 +342,6 @@ struct BrowserView: View {
         // Screen-centered like the launch screen until the panel has a position to sit above; then
         // below the status bar.
         .ignoresSafeArea(.container, edges: searchPanelTop == nil ? .all : .bottom)
-        .background(Color(.launchBackground).ignoresSafeArea())
         .contentShape(.rect)
         .onTapGesture(perform: dismissSearch)
         // Keeps pace with the panel (which rides the keyboard) so the mark never trails under it.

@@ -153,7 +153,8 @@ final class ProfilesTests: UITestCase {
 
     func testDeletingAProfileMovesItsSpacesToDefault() throws {
         let server = try FixtureServer(html: Self.page)
-        let app = launchWithSpaces(server)
+        let session = UUID().uuidString
+        let app = launchWithSpaces(server, session: session)
         let home = token()
         open(server.url.appending(path: "set/\(home)"), path: "/set/\(home)", in: app)
         XCTAssertTrue(cookie(home, in: app).appears(within: Ceiling.load), "Home's cookie wasn't set")
@@ -186,13 +187,24 @@ final class ProfilesTests: UITestCase {
         XCTAssertTrue((profileRow("Default", in: app).value as? String)?.contains("Work") == true,
                       "Work isn't on Default: \(profileRow("Default", in: app).value ?? "nil")")
 
-        // Work's tab loaded again with Default's website data. Vialumi's is erased once nothing shows
-        // its old page (the caret sheet under Settings keeps the tab it opened with until it closes).
+        // Work's tab loaded again with Default's website data.
         leaveSettings(in: app)
         XCTAssertTrue(cookie(home, in: app).appears(within: Ceiling.load), "Work's tab isn't on Default: \(cookieText(in: app))")
-        let erasing = app.descendants(matching: .any)["UITesting.erasing"].firstMatch
-        // WebKit only lets a store go once the web views on it have: a load's ceiling, not the UI's.
-        XCTAssertTrue(waitUntil(Ceiling.load) { erasing.value as? String == "0" }, "Vialumi's data wasn't erased")
+
+        // Vialumi's data is erased by the next launch at the latest. While the app runs, WebKit lets
+        // go of the store some time after the last web view on it goes (seconds to most of a minute on
+        // CI), so the test doesn't wait on that; a relaunch starts with nothing holding it.
+        XCTAssertTrue(app.savesSettle(), "saves didn't land")
+        app.terminate()
+        let next = XCUIApplication()
+        next.launchArguments = app.launchArguments
+        next.launchEnvironment["CORMORANT_UI_TESTING_SESSION"] = session
+        next.launch()
+        XCTAssertTrue(heading("/work", in: next).appears(within: Ceiling.load), "the relaunch didn't come back to Work's tab")
+        // The probe says "loading" until the saved tabs, with Vialumi still to erase, are in.
+        let erasing = next.descendants(matching: .any)["UITesting.erasing"].firstMatch
+        XCTAssertTrue(waitUntil(Ceiling.load) { erasing.value as? String == "0" },
+                      "Vialumi's data wasn't erased: \(erasing.value as? String ?? "no probe")")
         withExtendedLifetime(server) {}
     }
 
@@ -233,9 +245,11 @@ final class ProfilesTests: UITestCase {
         return app
     }
 
-    private func launchWithSpaces(_ server: FixtureServer) -> XCUIApplication {
+    /// `session` keeps the app's saved tabs across relaunches of `app`.
+    private func launchWithSpaces(_ server: FixtureServer, session: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTesting", "-uiTestingSpaces", server.url.absoluteString]
+        if let session { app.launchEnvironment["CORMORANT_UI_TESTING_SESSION"] = session }
         app.launch()
         XCTAssertTrue(searchField(in: app).appears(within: Ceiling.launch), "no search panel at launch")
         return app

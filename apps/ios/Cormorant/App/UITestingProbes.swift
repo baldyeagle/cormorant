@@ -17,7 +17,8 @@ import UIKit
 /// - `UITesting.toasts`: how many toasts have been put up since launch, then "up" or "none", so a test
 ///   can see one come and go without having to catch it on screen.
 /// - `UITesting.erasing`: how many deleted profiles' website data and history are still to be
-///   erased (`BrowserState.profilesToErase`): "0" once a deleted profile's data is gone.
+///   erased (`BrowserState.profilesToErase`): "0" once a deleted profile's data is gone; "loading"
+///   until the saved tabs are in (and while they couldn't be read), whose list that is.
 /// - `UITesting.focus`: the name of the Space the Focus filter sends links to, or "off" (set by
 ///   `cormorant://ui-testing/focus`).
 /// - `UITesting.wash`: "up" while the wash is (`BrowserStore.showsWash`), else "down".
@@ -39,7 +40,9 @@ struct UITestingProbes: View {
             Probe(identifier: "UITesting.pull") { PullToRefresh.lastPull?.lastPullOutcome ?? "none" }
             Probe(identifier: "UITesting.keyboard") { KeyboardPresence.isUp ? "up" : "down" }
             Probe(identifier: "UITesting.wash") { [store] in store.showsWash ? "up" : "down" }
-            Probe(identifier: "UITesting.erasing") { [store] in "\(store.state.profilesToErase.count)" }
+            Probe(identifier: "UITesting.erasing") { [store] in
+                store.canSave ? "\(store.state.profilesToErase.count)" : "loading"
+            }
             Probe(identifier: "UITesting.toasts") { [store] in "\(store.toastsShown) \(store.toast == nil ? "none" : "up")" }
             Probe(identifier: "UITesting.focus") { [store] in
                 store.focusFilter.spaceID.map { id in store.state.space(id)?.name ?? "unknown" } ?? "off"

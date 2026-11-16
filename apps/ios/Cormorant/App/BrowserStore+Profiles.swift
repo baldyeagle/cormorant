@@ -67,9 +67,11 @@ extension BrowserStore {
     /// (`profilesToErase`), then takes it off the list once both are confirmed gone. Only once the
     /// state that deleted it is on disk (`savedState()`), and never from the empty state a load failure
     /// leaves (`canSave`), so a file that didn't load can't cause anything to be erased, and a deletion
-    /// can't come back at the next launch with its data gone. A store still in use (a web view not yet
-    /// gone) is tried again a few times, then left on the list for when the last web view on it goes
-    /// (`TabSession.onRelease`), the next return to the app, or the next launch.
+    /// can't come back at the next launch with its data gone. While a store is still in use, every
+    /// profile left is tried again after `profileErasureWaits`, or as soon as the pass running ends
+    /// when asked meanwhile (the last web view on it going, `TabSession.onRelease`); after that, and
+    /// when it's the history that couldn't go, it's left on the list for the next return to the app
+    /// or the next launch.
     func eraseDeletedProfiles() {
         guard canSave, !state.profilesToErase.isEmpty else { return }
         guard profileErasure == nil else {
@@ -77,55 +79,79 @@ extension BrowserStore {
             return
         }
         profileErasure = Task {
-            defer {
-                profileErasure = nil
+            var waits = Self.profileErasureWaits.makeIterator()
+            while true {
+                erasesProfilesAgain = false
+                let storeInUse = await eraseDeletedProfilesOnce()
                 if erasesProfilesAgain {
-                    erasesProfilesAgain = false
-                    eraseDeletedProfiles()
+                    // Something changed meanwhile (a profile deleted, a web view gone): again now.
+                    waits = Self.profileErasureWaits.makeIterator()
+                    continue
                 }
+                guard storeInUse, canSave, let wait = waits.next() else { break }
+                try? await Task.sleep(for: wait)
             }
-            var tried = Set<UUID>()
-            // Read each time round: a profile deleted meanwhile is erased in this pass too.
-            while canSave, let profileID = state.profilesToErase.first(where: { !tried.contains($0) }) {
-                tried.insert(profileID)
-                // `normalize` keeps these off the list; this keeps a store in use from ever being erased.
-                guard profileID != Profile.defaultID, state.profile(profileID) == nil,
-                      let saved = await savedState(), saved.profile(profileID) == nil,
-                      saved.profilesToErase.contains(profileID) else { continue }
-                // Both tried each time, whichever failed before.
-                let storeGone = await removeDataStore(of: profileID)
-                let historyGone = await afterBrowsingHistoryWrites { await $0.removeProfile(profileID) } == true
-                if storeGone, historyGone { changeState { $0.profileErased(profileID) } }
-            }
-            forgetFavicons()
+            profileErasure = nil
         }
     }
 
-    /// Removes the profile's website data store, trying again after 1, 2 and 4 seconds while it's in
-    /// use. Returns whether it's gone (or never existed: a profile never used has none).
-    private func removeDataStore(of profileID: UUID) async -> Bool {
-        for delay in [0, 1, 2, 4] {
-            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
-            // Looked up each time: one may have been made since the last look.
-            guard await WKWebsiteDataStore.allDataStoreIdentifiers.contains(profileID) else { return true }
-            guard canSave, !hasWebViews(usingProfile: profileID) else { continue }
-            do {
-                try await WKWebsiteDataStore.remove(forIdentifier: profileID)
-                return true
-            } catch {
-                Logger.app.notice("Couldn't erase a deleted profile's website data yet: \(error.localizedDescription, privacy: .public)")
+    /// How long a pass that left a store in use waits before the next, about two minutes in all.
+    /// WebKit lets go of a store some time after the last web view on it goes: once its web content
+    /// process has exited, then the network process's session on it. That took from a few seconds to
+    /// over forty on CI.
+    private static let profileErasureWaits: [Duration] = [1, 2, 4, 8].map(Duration.seconds)
+        + Array(repeating: .seconds(15), count: 8)
+
+    /// One try at each profile on the list. Returns whether one is left because its store was still in
+    /// use. History that couldn't go (no history database, a failed write) isn't tried again until the
+    /// next return to the app: waiting doesn't help it.
+    private func eraseDeletedProfilesOnce() async -> Bool {
+        var storeInUse = false
+        var erased = false
+        var tried = Set<UUID>()
+        // Read each time round: a profile deleted meanwhile is erased in this pass too.
+        while canSave, let profileID = state.profilesToErase.first(where: { !tried.contains($0) }) {
+            tried.insert(profileID)
+            // `normalize` keeps these off the list; this keeps a store in use from ever being erased.
+            guard profileID != Profile.defaultID, state.profile(profileID) == nil,
+                  let saved = await savedState(), saved.profile(profileID) == nil,
+                  saved.profilesToErase.contains(profileID) else { continue }
+            // Both tried each time, whichever failed before.
+            let storeGone = await removeDataStore(of: profileID)
+            let historyGone = await afterBrowsingHistoryWrites { await $0.removeProfile(profileID) } == true
+            if storeGone, historyGone {
+                changeState { $0.profileErased(profileID) }
+                erased = true
             }
+            if !storeGone { storeInUse = true }
         }
-        return false
+        if erased { forgetFavicons() }
+        return storeInUse
+    }
+
+    /// Removes the profile's website data store. Returns whether it's gone (or never existed: a
+    /// profile never used has none); false while a web view, or WebKit, still holds it.
+    private func removeDataStore(of profileID: UUID) async -> Bool {
+        // Looked up each time: one may have been made since the last look.
+        guard await WKWebsiteDataStore.allDataStoreIdentifiers.contains(profileID) else { return true }
+        guard canSave, !hasWebViews(usingProfile: profileID) else { return false }
+        do {
+            try await WKWebsiteDataStore.remove(forIdentifier: profileID)
+            return true
+        } catch {
+            Logger.app.notice("Couldn't erase a deleted profile's website data yet: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
     }
 
     #if DEBUG
     /// UI tests (`-uiTesting`) make a profile, and a store, in most runs, and the state they ran in is
     /// thrown away: remove every store the state just loaded doesn't use, so the simulator doesn't
-    /// collect them.
+    /// collect them. Not a deleted profile's: erasing that is `eraseDeletedProfiles`'s job, which a
+    /// relaunch test checks.
     func removeUITestingDataStores() {
         guard ProcessInfo.processInfo.arguments.contains("-uiTesting") else { return }
-        let profiles = Set(state.profiles.map(\.id))
+        let profiles = Set(state.profiles.map(\.id)).union(state.profilesToErase)
         Task {
             for id in await WKWebsiteDataStore.allDataStoreIdentifiers where !profiles.contains(id) {
                 try? await WKWebsiteDataStore.remove(forIdentifier: id)

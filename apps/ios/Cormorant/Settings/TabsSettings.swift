@@ -20,7 +20,7 @@ struct TabsSettings: View {
             ))
             // Dimmed while off, showing the time that comes back; not removed, so Time per Space stays
             // put when choosing Off there for the last Space turns the switch off.
-            if spaces.count == 1, let home = timesWhenOn.switchableSpaces.first {
+            if spaces.count == 1, let home = Self.timesWhenOn(state).switchableSpaces.first {
                 ArchiveTimePicker(space: home, offersOff: false) {
                     Text("After")
                 }
@@ -29,20 +29,21 @@ struct TabsSettings: View {
                 NavigationLink {
                     ArchiveTimesBySpace(opening: opening ?? [:])
                 } label: {
-                    LabeledContent("Time per Space", value: timesSummary)
+                    LabeledContent("Time per Space", value: Self.timesSummary(state))
                 }
                 .disabled(!state.archivesIdleTabs)
             }
         } header: {
             Text("Tabs")
         } footer: {
-            Text(footer)
+            Text(Self.footer(state, opening: opening, now: .now))
         }
         .onAppear { if opening == nil { opening = Dictionary(state.spaces.map { ($0.id, $0.archivePolicy) }) { a, _ in a } } }
     }
 
-    /// The state as it is with the switch on, or as turning it on would leave it.
-    private var timesWhenOn: BrowserState {
+    /// The state as it is with the switch on, or as turning it on would leave it: the times the
+    /// switch shows, dimmed, while it's off.
+    static func timesWhenOn(_ state: BrowserState) -> BrowserState {
         guard !state.archivesIdleTabs else { return state }
         var resumed = state
         resumed.resumeArchivingIdleTabs()
@@ -50,12 +51,15 @@ struct TabsSettings: View {
     }
 
     /// The time every Space you can switch to shares (with the switch on), or "Varies".
-    private var timesSummary: String {
-        let times = Set(timesWhenOn.switchableSpaces.map(\.archivePolicy))
+    static func timesSummary(_ state: BrowserState) -> String {
+        let times = Set(timesWhenOn(state).switchableSpaces.map(\.archivePolicy))
         return times.count == 1 ? times.first!.label : "Varies"
     }
 
-    private var footer: String {
+    /// The section's footer. `opening`: each Space's time when Settings opened, so the note says which
+    /// tabs a shorter time now takes.
+    static func footer(_ state: BrowserState, opening: [UUID: ArchivePolicy]?, now: Date) -> String {
+        let spaces = state.switchableSpaces
         let several = spaces.count > 1
         let base = switch (state.archivesIdleTabs, several) {
         case (true, false): "Tabs you haven't looked at for this long move to the tab archive."
@@ -64,7 +68,6 @@ struct TabsSettings: View {
         case (false, true): "Tabs in every Space stay open until you close them."
         }
         var text = several ? base + " Spaces never archive on their own." : base
-        let now = Date.now
         let due = spaces.reduce(0) { $0 + ArchiveNote.newlyDue(in: $1, of: state, opening: opening, now: now) }
         if let note = ArchiveNote.text(due: due, in: nil, eachSpace: several) { text += " " + note }
         return text

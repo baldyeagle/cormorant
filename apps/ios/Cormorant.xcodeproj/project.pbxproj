@@ -28,6 +28,13 @@
 			remoteGlobalIDString = 6BFD5DBDDB5B0941D0A25AFB;
 			remoteInfo = Cormorant;
 		};
+		5A1C0E7B3D2F4A6B8C9D0E19 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = EF05CD92DAC02081F20C8815 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6BFD5DBDDB5B0941D0A25AFB;
+			remoteInfo = Cormorant;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -46,6 +53,7 @@
 		FA6C646AE948F63157255329 /* Cormorant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cormorant.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B7745DF524857147A30AFBC /* CormorantShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CormorantShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B623B2C9109DDA277E8287A2 /* CormorantUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CormorantUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5A1C0E7B3D2F4A6B8C9D0E11 /* CormorantTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CormorantTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -87,6 +95,16 @@
 			path = CormorantUITests;
 			sourceTree = "<group>";
 		};
+		5A1C0E7B3D2F4A6B8C9D0E12 /* CormorantTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CormorantTests;
+			sourceTree = "<group>";
+		};
+		5A1C0E7B3D2F4A6B8C9D0E13 /* TestSupport */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = TestSupport;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -108,6 +126,11 @@
 			files = (
 			);
 		};
+		5A1C0E7B3D2F4A6B8C9D0E14 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -117,6 +140,8 @@
 				96D225691B45973F382B2DF1 /* Cormorant */,
 				0D406D6F3AB00575DAE3A2A7 /* CormorantShare */,
 				2054A4AA8C1D28459283A38C /* CormorantUITests */,
+				5A1C0E7B3D2F4A6B8C9D0E12 /* CormorantTests */,
+				5A1C0E7B3D2F4A6B8C9D0E13 /* TestSupport */,
 				99407D1EB9637DA81E930788 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -127,6 +152,7 @@
 				FA6C646AE948F63157255329 /* Cormorant.app */,
 				3B7745DF524857147A30AFBC /* CormorantShare.appex */,
 				B623B2C9109DDA277E8287A2 /* CormorantUITests.xctest */,
+				5A1C0E7B3D2F4A6B8C9D0E11 /* CormorantTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -196,11 +222,34 @@
 			);
 			fileSystemSynchronizedGroups = (
 				2054A4AA8C1D28459283A38C /* CormorantUITests */,
+				5A1C0E7B3D2F4A6B8C9D0E13 /* TestSupport */,
 			);
 			name = CormorantUITests;
 			productName = CormorantUITests;
 			productReference = B623B2C9109DDA277E8287A2 /* CormorantUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		5A1C0E7B3D2F4A6B8C9D0E17 /* CormorantTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5A1C0E7B3D2F4A6B8C9D0E1C /* Build configuration list for PBXNativeTarget "CormorantTests" */;
+			buildPhases = (
+				5A1C0E7B3D2F4A6B8C9D0E16 /* Sources */,
+				5A1C0E7B3D2F4A6B8C9D0E14 /* Frameworks */,
+				5A1C0E7B3D2F4A6B8C9D0E15 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5A1C0E7B3D2F4A6B8C9D0E18 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5A1C0E7B3D2F4A6B8C9D0E12 /* CormorantTests */,
+				5A1C0E7B3D2F4A6B8C9D0E13 /* TestSupport */,
+			);
+			name = CormorantTests;
+			productName = CormorantTests;
+			productReference = 5A1C0E7B3D2F4A6B8C9D0E11 /* CormorantTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -220,6 +269,10 @@
 					};
 					9DA362F5ABEB86FB57837025 = {
 						CreatedOnToolsVersion = 27.1;
+						TestTargetID = 6BFD5DBDDB5B0941D0A25AFB;
+					};
+					5A1C0E7B3D2F4A6B8C9D0E17 = {
+						CreatedOnToolsVersion = 27.2;
 						TestTargetID = 6BFD5DBDDB5B0941D0A25AFB;
 					};
 				};
@@ -244,6 +297,7 @@
 				6BFD5DBDDB5B0941D0A25AFB /* Cormorant */,
 				19C6B5EB25118A48ECB95CAE /* CormorantShare */,
 				9DA362F5ABEB86FB57837025 /* CormorantUITests */,
+				5A1C0E7B3D2F4A6B8C9D0E17 /* CormorantTests */,
 			);
 		};
 /* End PBXProject section */
@@ -260,6 +314,11 @@
 			);
 		};
 		DC5BFEAC8339F7944F752C2A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		5A1C0E7B3D2F4A6B8C9D0E15 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -282,6 +341,11 @@
 			files = (
 			);
 		};
+		5A1C0E7B3D2F4A6B8C9D0E16 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -294,6 +358,11 @@
 			isa = PBXTargetDependency;
 			target = 6BFD5DBDDB5B0941D0A25AFB /* Cormorant */;
 			targetProxy = C455720136BF7D76B03F9213 /* PBXContainerItemProxy */;
+		};
+		5A1C0E7B3D2F4A6B8C9D0E18 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6BFD5DBDDB5B0941D0A25AFB /* Cormorant */;
+			targetProxy = 5A1C0E7B3D2F4A6B8C9D0E19 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -639,6 +708,58 @@
 			};
 			name = Release;
 		};
+		5A1C0E7B3D2F4A6B8C9D0E1A /* Debug configuration for PBXNativeTarget "CormorantTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = BLF43JKMGW;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.baldyeagle.cormorant.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Cormorant.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Cormorant";
+			};
+			name = Debug;
+		};
+		5A1C0E7B3D2F4A6B8C9D0E1B /* Release configuration for PBXNativeTarget "CormorantTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = BLF43JKMGW;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.baldyeagle.cormorant.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Cormorant.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Cormorant";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -671,6 +792,14 @@
 			buildConfigurations = (
 				5D44C911F1F0B5A211EF1694 /* Debug configuration for PBXNativeTarget "CormorantUITests" */,
 				0AD8DCE9B0F628A2A0081629 /* Release configuration for PBXNativeTarget "CormorantUITests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		5A1C0E7B3D2F4A6B8C9D0E1C /* Build configuration list for PBXNativeTarget "CormorantTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5A1C0E7B3D2F4A6B8C9D0E1A /* Debug configuration for PBXNativeTarget "CormorantTests" */,
+				5A1C0E7B3D2F4A6B8C9D0E1B /* Release configuration for PBXNativeTarget "CormorantTests" */,
 			);
 			defaultConfigurationName = Release;
 		};

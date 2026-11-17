@@ -52,8 +52,9 @@ jobs:
           fi
 
   ios:
-    # Shard 1 also runs the package's tests and checks the built app; the others only test.
-    name: ${{ matrix.shard == 1 && 'iOS app, CormorantKit and UI tests (shard 1)' || format('UI tests (shard {0})', matrix.shard) }}
+    # Shard 1 also runs the package's tests, the app's in-process tests and checks the built app; the
+    # others only run UI tests.
+    name: ${{ matrix.shard == 1 && 'iOS app, CormorantKit, app tests and UI tests (shard 1)' || format('UI tests (shard {0})', matrix.shard) }}
     needs: changes
     if: needs.changes.outputs.ios == 'true'
     runs-on: xcode-27
@@ -156,6 +157,24 @@ jobs:
               echo "::warning::$service is still loaded; the simulator may take the runner from the tests"
             fi
           done
+      - name: App tests (in-process)
+        # CormorantTests: Swift Testing inside the app, against a real BrowserStore and WebKit, nothing
+        # tapped. Most of what the app does is tested here; the UI tests keep what only the screen
+        # shows. Run as many times as the UI tests in a stress run.
+        if: ${{ !cancelled() && matrix.shard == 1 && steps.boot.outcome == 'success' }}
+        env:
+          ITERATIONS: ${{ inputs.iterations || (contains(github.event.pull_request.labels.*.name, 'ui-stress') && '5') || '1' }}
+        run: |
+          XCTESTRUN=$(ls build/DerivedData/Build/Products/*.xctestrun)
+          ITERATION_ARGS=()
+          if [ "$ITERATIONS" -gt 1 ]; then ITERATION_ARGS=(-test-iterations "$ITERATIONS"); fi
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -resultBundlePath build/AppTests.xcresult \
+            "${ITERATION_ARGS[@]}" -collect-test-diagnostics never \
+            -only-testing:CormorantTests \
+            | tee build/xcodebuild-app-tests.log | grep -E "error:|✘|✔|Test run|TEST" || true
+          grep -q "TEST EXECUTE SUCCEEDED" build/xcodebuild-app-tests.log
       - name: UI tests
         if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
         env:
@@ -164,15 +183,20 @@ jobs:
           # retried, so a flaky test fails CI rather than hiding behind a second try.
           ITERATIONS: ${{ inputs.iterations || (contains(github.event.pull_request.labels.*.name, 'ui-stress') && '5') || '1' }}
         run: |
-          # Shard 1 deals itself less, for the ~90 s of package tests and checks it runs first.
-          ONLY_TESTING=$(scripts/ui-test-shard.py ${{ strategy.job-index }} ${{ strategy.job-total }} 90)
+          # Shard 1 deals itself less, for the package tests, checks and app tests it runs first.
+          ONLY_TESTING=$(scripts/ui-test-shard.py ${{ strategy.job-index }} ${{ strategy.job-total }} 180)
           XCTESTRUN=$(ls build/DerivedData/Build/Products/*.xctestrun)
           # No screen recording: XCTest encodes video of every test in software (on a 3-core VM, with
           # no GPU) and keeps it only on failure, and automatic screenshots would cost an image per
           # action. UITestCase attaches its own screenshot and accessibility tree at a failure.
-          [ "$(plutil -extract TestConfigurations.0.TestTargets.0.BlueprintName raw "$XCTESTRUN")" = CormorantUITests ]
-          plutil -replace TestConfigurations.0.TestTargets.0.PreferredScreenCaptureFormat -string screenshots "$XCTESTRUN"
-          plutil -replace TestConfigurations.0.TestTargets.0.SystemAttachmentLifetime -string keepNever "$XCTESTRUN"
+          # The UI tests' entry among the test targets (CormorantTests is another), by name.
+          UI=$(plutil -convert json -o - "$XCTESTRUN" | python3 -c '
+          import json, sys
+          targets = json.load(sys.stdin)["TestConfigurations"][0]["TestTargets"]
+          print([t["BlueprintName"] for t in targets].index("CormorantUITests"))
+          ')
+          plutil -replace TestConfigurations.0.TestTargets.$UI.PreferredScreenCaptureFormat -string screenshots "$XCTESTRUN"
+          plutil -replace TestConfigurations.0.TestTargets.$UI.SystemAttachmentLifetime -string keepNever "$XCTESTRUN"
           # A mistyped manual stress run must fail, not quietly run each test once.
           case "$ITERATIONS" in
             '' | *[!0-9]* | 0 | 0*) echo "::error::iterations must be a positive integer, got '$ITERATIONS'"; exit 1 ;;
@@ -207,6 +231,8 @@ jobs:
           name: ui-test-results-${{ matrix.shard }}
           path: |
             build/xcodebuild.log
+            build/AppTests.xcresult
+            build/xcodebuild-app-tests.log
             build/UITests.xcresult
             build/xcodebuild-test.log
             build/simulator-log.txt.gz

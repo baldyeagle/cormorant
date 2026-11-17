@@ -132,6 +132,10 @@ final class BrowserStore {
     @ObservationIgnored var profileErasure: Task<Void, Never>?
     /// Erasing was asked for again while it ran: its next pass starts once this one (or its wait) ends.
     @ObservationIgnored var erasesProfilesAgain = false
+    #if DEBUG
+    /// Set by `terminateForTesting()`.
+    @ObservationIgnored private var isTerminated = false
+    #endif
 
     init(
         stateStore: (any BrowserStateStore)? = nil,
@@ -1099,7 +1103,12 @@ final class BrowserStore {
 
     /// Saving is off until the state is loaded, and while a load failure is unacknowledged.
     /// Erasing a deleted profile's data is too (`eraseDeletedProfiles`).
-    var canSave: Bool { isLoaded && loadFailure == nil }
+    var canSave: Bool {
+        #if DEBUG
+        if isTerminated { return false }
+        #endif
+        return isLoaded && loadFailure == nil
+    }
 
     /// Saving is allowed and the state differs from what's on disk (a fresh install with no tabs never writes).
     private var needsSave: Bool { canSave && state != lastSavedState }
@@ -1283,6 +1292,19 @@ final class BrowserStore {
             break
         }
         return true
+    }
+
+    /// CormorantTests' stand-in for the system killing the app: from here on this store writes nothing
+    /// and erases nothing, and its web views are gone, so a test that relaunches (a new store on the
+    /// same files) never has the old one writing under it.
+    func terminateForTesting() {
+        isTerminated = true
+        debouncedSave?.cancel()
+        debouncedSave = nil
+        profileErasure?.cancel()
+        toastExpiry?.cancel()
+        for timer in stagedLoads.values { timer.cancel() }
+        releaseSessions { _, _ in true }
     }
 
     /// For UI tests (`UITestingProbes`): whether something the app writes while browsing isn't on

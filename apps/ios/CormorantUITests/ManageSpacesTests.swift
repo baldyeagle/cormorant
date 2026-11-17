@@ -25,7 +25,7 @@ final class ManageSpacesTests: UITestCase {
         open(server.url.appending(path: "home"), path: "/home", in: app)
 
         openSpaces(in: app)
-        app.buttons["New Space"].tap()
+        app.buttons["New Space"].tapWhenSettled()
         let add = app.buttons["Add"]
         XCTAssertTrue(add.appears(within: Ceiling.ui), "New Space didn't open")
         XCTAssertFalse(add.isEnabled, "Add is enabled with no name")
@@ -33,7 +33,7 @@ final class ManageSpacesTests: UITestCase {
         XCTAssertTrue(waitUntil(Ceiling.ui) { name.value(forKey: "hasKeyboardFocus") as? Bool == true },
                       "the name field didn't take focus")
         name.typeText("Work")
-        add.tap()
+        add.tapWhenSettled()
 
         // Straight into Work: Manage Spaces gone, Home's page with it, and the search panel up.
         XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
@@ -56,7 +56,7 @@ final class ManageSpacesTests: UITestCase {
     func testHomeHasNoArchiveOrDelete() {
         let app = launch()
         openSpaces(in: app)
-        row("Home", in: app).tap()
+        row("Home", in: app).tapWhenSettled()
         XCTAssertTrue(app.buttons["Save"].appears(within: Ceiling.ui), "Edit Space didn't open")
         // Home always exists: never archived or deleted. Checked with the form scrolled to its end, the
         // archive time's footer, where Archive and Delete would follow.
@@ -71,20 +71,20 @@ final class ManageSpacesTests: UITestCase {
         let app = launch()
         createSpace("Work", in: app)
         openSpaces(in: app)
-        row("Work", in: app).tap()
+        row("Work", in: app).tapWhenSettled()
         XCTAssertTrue(app.buttons["Save"].appears(within: Ceiling.ui), "Edit Space didn't open")
 
-        app.buttons["Icon and Color"].tap()
+        app.buttons["Icon and Color"].tapWhenSettled()
         let airplane = app.buttons["Airplane"]
         XCTAssertTrue(airplane.appears(within: Ceiling.ui), "Icon and Color didn't open")
-        airplane.tap()
+        airplane.tapWhenSettled()
         XCTAssertTrue(waitUntil(Ceiling.ui) { airplane.isSelected }, "Airplane wasn't chosen")
         // Not in the navigation bar on every phone: the iPhone Duo's are in a column at the side.
-        topBackButton(in: app).tap()
+        topBackButton(in: app).tapWhenSettled()
         XCTAssertTrue(airplane.disappears(within: Ceiling.ui), "didn't go back to Edit Space")
 
         let save = app.buttons["Save"]
-        save.tap()
+        save.tapWhenSettled()
         XCTAssertTrue(save.disappears(within: Ceiling.ui), "Edit Space didn't close")
         XCTAssertTrue(waitUntil(Ceiling.ui) { (self.row("Work", in: app).value as? String)?.hasPrefix("Airplane icon") == true },
                       "the icon didn't change: \(row("Work", in: app).value ?? "nil")")
@@ -97,17 +97,17 @@ final class ManageSpacesTests: UITestCase {
         XCTAssertTrue(row("Work", in: app).isSelected, "Work, the Space you're in, isn't checked")
         XCTAssertFalse(row("Home", in: app).isSelected, "Home is checked though you're in Work")
 
-        row("Work", in: app).tap()
+        row("Work", in: app).tapWhenSettled()
         XCTAssertTrue(app.buttons["Save"].appears(within: Ceiling.ui), "Edit Space didn't open")
         // Below the Profile row on a short screen. On the preview: a swipe starting on a button can
         // land as a tap on it.
         app.otherElements["Preview"].firstMatch.swipeUp()
         let archive = app.buttons["Archive Space"]
         XCTAssertTrue(archive.appears(within: Ceiling.ui), "no Archive Space")
-        archive.tap()
+        archive.tapWhenSettled()
         let confirmArchive = app.buttons["Archive Work"]
         XCTAssertTrue(confirmArchive.appears(within: Ceiling.ui), "no archive confirmation")
-        confirmArchive.tap()
+        confirmArchive.tapWhenSettled()
         XCTAssertTrue(app.buttons["Save"].disappears(within: Ceiling.ui), "Edit Space didn't close")
         XCTAssertTrue(row("Home", in: app).isSelected, "archiving the Space you're in didn't check Home")
 
@@ -119,12 +119,12 @@ final class ManageSpacesTests: UITestCase {
         app.cells.containing(.button, identifier: "Restore Work").firstMatch.swipeLeft()
         let swipeDelete = app.buttons["Delete"]
         XCTAssertTrue(swipeDelete.appears(within: Ceiling.ui), "no Delete on the archived row")
-        swipeDelete.tap()
+        swipeDelete.tapWhenSettled()
         let confirm = app.buttons["Delete Work"]
         XCTAssertTrue(confirm.appears(within: Ceiling.ui), "no delete confirmation")
         XCTAssertTrue(app.staticTexts["It has no open tabs. The Space and its settings are gone."].exists,
                       "the confirmation doesn't say what goes")
-        confirm.tap()
+        confirm.tapWhenSettled()
         XCTAssertTrue(restore.disappears(within: Ceiling.ui), "Work is still under Archived")
         XCTAssertFalse(row("Work", in: app).exists, "Work came back to the list instead of going")
         XCTAssertFalse(archivedHeader.exists, "the empty Archived section stayed")
@@ -140,18 +140,18 @@ final class ManageSpacesTests: UITestCase {
 
         openSpaces(in: app)
         XCTAssertEqual(row("Work", in: app).value as? String, "Briefcase icon, Indigo, 1 tab")
-        row("Work", in: app).tap()
+        row("Work", in: app).tapWhenSettled()
         XCTAssertTrue(app.buttons["Save"].appears(within: Ceiling.ui), "Edit Space didn't open")
         // Below the fold on a short screen. On the preview: a swipe starting on a button can land as a
         // tap on it.
         app.otherElements["Preview"].firstMatch.swipeUp()
         let delete = app.buttons["Delete Space"]
         XCTAssertTrue(delete.appears(within: Ceiling.ui), "no Delete Space")
-        delete.tap()
+        delete.tapWhenSettled()
         XCTAssertTrue(app.staticTexts["Delete Work?"].appears(within: Ceiling.ui), "no delete confirmation")
         XCTAssertTrue(app.staticTexts["Its tab goes to the tab archive, where you can search for it and reopen it. The Space and its settings are gone."].exists,
                       "the confirmation doesn't say where the tab goes")
-        app.buttons["Delete Work"].tap()
+        app.buttons["Delete Work"].tapWhenSettled()
 
         XCTAssertTrue(app.buttons["Save"].disappears(within: Ceiling.ui), "Edit Space didn't close")
         XCTAssertTrue(row("Work", in: app).disappears(within: Ceiling.ui), "Work is still listed")
@@ -193,12 +193,14 @@ final class ManageSpacesTests: UITestCase {
         field.typeText(url.absoluteString + "\n")
         XCTAssertTrue(heading(path, in: app).appears(within: Ceiling.load), "\(path) didn't load")
         XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
+        // The keyboard takes taps meant for the bar until it has gone.
+        XCTAssertTrue(app.keyboardIsDown(), "the keyboard stayed up")
     }
 
     private func closeSearch(in app: XCUIApplication) {
         // Near its top: the button lies behind the whole panel, which a history row makes tall enough
         // to cover the button's middle.
-        app.buttons["Close search"].firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tap()
+        app.buttons["Close search"].firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tapWhenSettled()
         XCTAssertTrue(searchField(in: app).disappears(within: Ceiling.ui), "search panel didn't close")
         // The bar is back in the tree as soon as the keyboard starts down, but the keyboard is still
         // over it, taking taps meant for its buttons, until it has gone.
@@ -211,10 +213,10 @@ final class ManageSpacesTests: UITestCase {
         app.buttons["Page actions"].tapWhenSettled()
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.appears(within: Ceiling.ui), "caret sheet didn't open")
-        settings.tap()
+        settings.tapWhenSettled()
         let spaces = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Spaces'")).firstMatch
         XCTAssertTrue(spaces.appears(within: Ceiling.ui), "Settings didn't open")
-        spaces.tap()
+        spaces.tapWhenSettled()
         // Pushed in Settings, like its other pages.
         XCTAssertTrue(app.navigationBars["Spaces"].appears(within: Ceiling.ui), "Manage Spaces didn't open")
         // Its back button (beside the bar, not in it, on CI's iPhone Duo).
@@ -231,13 +233,13 @@ final class ManageSpacesTests: UITestCase {
     /// Adds a Space with the suggested look and lands in it, with the search panel up.
     private func createSpace(_ name: String, in app: XCUIApplication) {
         openSpaces(in: app)
-        app.buttons["New Space"].tap()
+        app.buttons["New Space"].tapWhenSettled()
         let field = app.textFields["Name"]
         XCTAssertTrue(field.appears(within: Ceiling.ui), "New Space didn't open")
         XCTAssertTrue(waitUntil(Ceiling.ui) { field.value(forKey: "hasKeyboardFocus") as? Bool == true },
                       "the name field didn't take focus")
         field.typeText(name)
-        app.buttons["Add"].tap()
+        app.buttons["Add"].tapWhenSettled()
         XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
         XCTAssertTrue(searchField(in: app).appears(within: Ceiling.ui), "no search panel in \(name)")
     }

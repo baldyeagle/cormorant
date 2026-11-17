@@ -51,7 +51,7 @@ final class MoveToSpaceTests: UITestCase {
         XCTAssertFalse(toast.buttons["Show"].exists, "the toast still offers Show")
 
         // Undo: back in Home, the card with it.
-        toast.buttons["Undo"].tap()
+        toast.buttons["Undo"].tapWhenSettled()
         XCTAssertTrue(waitUntil(Ceiling.ui) { title.label == "Space, Home" }, "Undo didn't go back to Home")
         XCTAssertTrue(card("Tab /a", in: app).appears(within: Ceiling.ui), "Undo didn't bring the card back")
         XCTAssertTrue(card("Tab /b", in: app).exists, "Home lost its other card")
@@ -62,11 +62,11 @@ final class MoveToSpaceTests: UITestCase {
         chooseInMenu(submenuItem("Projects", in: app), in: app)
         XCTAssertTrue(toast.appears(within: Ceiling.ui), "no toast after the second move")
         XCTAssertTrue(waitUntil(Ceiling.ui) { title.label == "Space, Projects" }, "the switcher didn't go to Projects")
-        toast.buttons["Back to Home"].tap()
+        toast.buttons["Back to Home"].tapWhenSettled()
         XCTAssertTrue(waitUntil(Ceiling.ui) { title.label == "Space, Home" }, "Back didn't go to Home")
         XCTAssertTrue(card("Tab /b", in: app).appears(within: Ceiling.ui), "Home's other card isn't there")
         XCTAssertFalse(card("Tab /a", in: app).exists, "the moved card came back with Back")
-        app.buttons["Done"].tap()
+        app.buttons["Done"].tapWhenSettled()
         XCTAssertTrue(heading("/b", in: app).appears(within: Ceiling.load), "Home didn't show its tab")
         withExtendedLifetime(server) {}
     }
@@ -80,7 +80,7 @@ final class MoveToSpaceTests: UITestCase {
         open(server.url.appending(path: "b"), path: "/b", in: app)
 
         openMoveSheet(in: app)
-        destination("Projects", in: app).tap()
+        destination("Projects", in: app).tapWhenSettled()
         let toast = self.toast(in: app)
         XCTAssertTrue(toast.appears(within: Ceiling.ui), "no toast after the move")
         app.buttons["NewTabPill"].tapWhenSettled()
@@ -90,7 +90,7 @@ final class MoveToSpaceTests: UITestCase {
         XCTAssertTrue(waitUntil(Ceiling.ui) { undo.isHittable }, "Undo can't be tapped over the search panel")
         XCTAssertLessThanOrEqual(toast.settledFrame().maxY, field.frame.minY, "the toast covers the search field")
 
-        undo.tap()
+        undo.tapWhenSettled()
         XCTAssertTrue(field.disappears(within: Ceiling.ui), "the search panel stayed over the page")
         XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).value as? String == "Home" }, "Undo didn't go back to Home")
         XCTAssertTrue(heading("/b", in: app).appears(within: Ceiling.load), "Undo didn't keep the page on screen")
@@ -129,7 +129,7 @@ final class MoveToSpaceTests: UITestCase {
         app.buttons["Page actions"].tapWhenSettled()
         let row = app.buttons["MoveToSpaceRow"]
         XCTAssertTrue(row.appears(within: Ceiling.ui), "no Move to Space row in the caret sheet")
-        row.tap()
+        row.tapWhenSettled()
         XCTAssertTrue(app.navigationBars["Move to Space"].appears(within: Ceiling.ui), "the Move sheet didn't open")
     }
 

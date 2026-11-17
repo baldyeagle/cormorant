@@ -115,18 +115,14 @@ final class LinkContextMenuTests: UITestCase {
 
     // MARK: Helpers
 
-    /// Launches with no saved tabs and opens `url` from the launch search panel.
+    /// Launches with no saved tabs but one on `url`.
     private func launchOnPage(_ url: URL) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-uiTesting"]
+        // On the page from the start (`-uiTestingOpen`): no typing, no keyboard to wait out.
+        app.launchArguments = ["-uiTesting", "-uiTestingOpen", url.absoluteString]
         app.launch()
-
-        let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
-        field.typeText(url.absoluteString + "\n")
         // Generous: the first page load on a fresh simulator is slow.
         XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "fixture page didn't load")
-        XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
         return app
     }
 
@@ -157,7 +153,7 @@ final class LinkContextMenuTests: UITestCase {
     }
 
     private func openSwitcher(in app: XCUIApplication, count: Int, file: StaticString = #filePath, line: UInt = #line) {
-        tabsButton(count: count, in: app).tap()
+        tabsButton(count: count, in: app).tapWhenSettled()
         XCTAssertTrue(app.staticTexts["\(count) Tabs"].appears(within: Ceiling.ui), "switcher didn't open", file: file, line: line)
     }
 

@@ -214,7 +214,7 @@ final class StatusBarTests: UITestCase {
         app.buttons["Page actions"].tapWhenSettled()
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.appears(within: Ceiling.ui), "caret sheet didn't open")
-        settings.tap()
+        settings.tapWhenSettled()
         let title = app.navigationBars["Settings"]
         XCTAssertTrue(title.appears(within: Ceiling.ui), "Settings didn't open")
         // Below the default-browser and search-engine sections, off a short screen, where the form
@@ -232,7 +232,7 @@ final class StatusBarTests: UITestCase {
         XCTAssertTrue(toggle.appears(within: Ceiling.ui), "no Page Under Status Bar setting")
         if (toggle.value as? String == "1") != on {
             // The switch itself, not the row's label.
-            toggle.switches.firstMatch.exists ? toggle.switches.firstMatch.tap() : toggle.tap()
+            toggle.switches.firstMatch.exists ? toggle.switches.firstMatch.tapWhenSettled() : toggle.tapWhenSettled()
         }
         XCTAssertTrue(waitUntil(Ceiling.ui) { toggle.value as? String == (on ? "1" : "0") }, "the setting didn't change")
         // Scrolled down, the sheet's bar shows no items: back up until Done is there again.

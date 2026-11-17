@@ -23,10 +23,10 @@ final class NewTabTests: UITestCase {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
 
-        app.buttons["Tabs, 1 open"].tap()
+        app.buttons["Tabs, 1 open"].tapWhenSettled()
         let newTab = app.buttons["SwitcherNewTab"]
         XCTAssertTrue(newTab.appears(within: Ceiling.ui))
-        newTab.tap()
+        newTab.tapWhenSettled()
 
         assertSearchPanelStaysUp(in: app)
         withExtendedLifetime(server) {}
@@ -48,7 +48,7 @@ final class NewTabTests: UITestCase {
         XCTAssertTrue(waitUntil(Ceiling.ui) { item.isHittable }, "the menu didn't settle")
         let itemFrame = item.settledFrame()
         let itemCenter = CGPoint(x: itemFrame.midX, y: itemFrame.midY)
-        app.webViews.staticTexts["Fixture page"].tap()
+        app.webViews.staticTexts["Fixture page"].tapWhenSettled()
         XCTAssertTrue(item.disappears(within: Ceiling.ui), "menu didn't close")
 
         let origin = app.coordinate(withNormalizedOffset: .zero)
@@ -63,7 +63,7 @@ final class NewTabTests: UITestCase {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
 
-        app.buttons["NewTabPill"].tap()
+        app.buttons["NewTabPill"].tapWhenSettled()
         assertSearchPanelStaysUp(in: app)
         // An empty field reports its placeholder as its value.
         let field = searchField(in: app)
@@ -79,11 +79,11 @@ final class NewTabTests: UITestCase {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
 
-        app.buttons["NewTabPill"].tap()
+        app.buttons["NewTabPill"].tapWhenSettled()
         assertSearchPanelStaysUp(in: app)
         let row = app.buttons["Edit address: Fixture"]
         XCTAssertTrue(row.appears(within: Ceiling.ui), "no row for the current tab")
-        row.tap()
+        row.tapWhenSettled()
 
         // The panel stays up with this tab's address in the field, selected, so typing replaces it.
         let field = searchField(in: app)
@@ -101,21 +101,17 @@ final class NewTabTests: UITestCase {
         app.textFields["Search or enter address"]
     }
 
-    /// Launches with no saved tabs, opens `url` from the launch search panel, and taps the page.
+    /// Launches with no saved tabs but one on `url`, and taps the page.
     private func launchOnPage(_ url: URL) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-uiTesting"]
+        // On the page from the start (`-uiTestingOpen`): no typing, no keyboard to wait out.
+        app.launchArguments = ["-uiTesting", "-uiTestingOpen", url.absoluteString]
         app.launch()
-
-        let field = searchField(in: app)
-        XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
-        field.typeText(url.absoluteString + "\n")
 
         let paragraph = app.webViews.staticTexts["Tap this paragraph so the web view becomes first responder."]
         // Generous: the first page load on a fresh simulator is slow.
         XCTAssertTrue(paragraph.appears(within: Ceiling.load), "fixture page didn't load")
-        XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
-        paragraph.tap()
+        paragraph.tapWhenSettled()
         return app
     }
 

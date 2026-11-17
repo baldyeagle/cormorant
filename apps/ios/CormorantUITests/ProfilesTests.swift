@@ -23,7 +23,7 @@ final class ProfilesTests: UITestCase {
         XCTAssertTrue((profileRow("Default", in: app).value as? String)?.hasSuffix("Home") == true,
                       "Default doesn't list Home: \(profileRow("Default", in: app).value ?? "nil")")
 
-        app.buttons["New Space"].tap()
+        app.buttons["New Space"].tapWhenSettled()
         let name = app.textFields["Name"]
         XCTAssertTrue(name.appears(within: Ceiling.ui), "New Space didn't open")
         XCTAssertTrue(waitUntil(Ceiling.ui) { name.value(forKey: "hasKeyboardFocus") as? Bool == true },
@@ -35,27 +35,27 @@ final class ProfilesTests: UITestCase {
         let profile = app.buttons["SpaceProfile"]
         XCTAssertTrue(profile.appears(within: Ceiling.ui), "no Profile row")
         XCTAssertEqual(profile.label, "Default")
-        profile.tap()
+        profile.tapWhenSettled()
         let newProfile = app.buttons["New Profile…"]
         XCTAssertTrue(newProfile.appears(within: Ceiling.ui), "the profile picker didn't open")
         XCTAssertTrue(choice("Default", in: app).isSelected, "Default isn't checked")
-        newProfile.tap()
+        newProfile.tapWhenSettled()
 
         XCTAssertTrue(app.staticTexts["The Space you're creating"].appears(within: Ceiling.ui), "New Profile didn't open")
         let profileName = app.textFields["ProfileName"]
         XCTAssertTrue(waitUntil(Ceiling.ui) { profileName.value(forKey: "hasKeyboardFocus") as? Bool == true },
                       "the name field didn't take focus")
         profileName.typeText("Vialumi")
-        app.buttons["Indigo"].tap()
-        app.buttons["Add"].tap()
+        app.buttons["Indigo"].tapWhenSettled()
+        app.buttons["Add"].tapWhenSettled()
 
         // Back on the picker, the new profile chosen (a new Space has no tabs to warn about).
         let vialumi = choice("Vialumi", in: app)
         XCTAssertTrue(vialumi.appears(within: Ceiling.ui), "the new profile isn't in the picker")
         XCTAssertTrue(waitUntil(Ceiling.ui) { vialumi.isSelected }, "the new profile isn't chosen")
-        topBackButton(in: app).tap()
+        topBackButton(in: app).tapWhenSettled()
         XCTAssertTrue(waitUntil(Ceiling.ui) { profile.label == "Vialumi" }, "the Profile row says \(profile.label)")
-        app.buttons["Add"].tap()
+        app.buttons["Add"].tapWhenSettled()
         XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
 
         // Listed under Profiles, used by Work.
@@ -73,46 +73,46 @@ final class ProfilesTests: UITestCase {
         let server = try FixtureServer(html: Self.page)
         let app = launchWithSpaces(server)
         openSpaces(in: app)
-        app.buttons["Work"].firstMatch.tap()
+        app.buttons["Work"].firstMatch.tapWhenSettled()
         let profile = app.buttons["SpaceProfile"]
         XCTAssertTrue(profile.appears(within: Ceiling.ui), "Edit Space didn't open")
         XCTAssertEqual(profile.label, "Vialumi")
-        profile.tap()
+        profile.tapWhenSettled()
 
         let personal = choice("Default", in: app)
         XCTAssertTrue(personal.appears(within: Ceiling.ui), "the profile picker didn't open")
-        personal.tap()
+        personal.tapWhenSettled()
         let alert = app.alerts["Switch Work to Default?"]
         XCTAssertTrue(alert.appears(within: Ceiling.ui), "no confirmation")
         XCTAssertTrue(alert.staticTexts["Work's tab reloads with Default's logins and cookies. Nothing in Vialumi is deleted."].exists,
                       "the confirmation doesn't say what happens")
-        alert.buttons["Cancel"].tap()
+        alert.buttons["Cancel"].tapWhenSettled()
         XCTAssertTrue(alert.disappears(within: Ceiling.ui), "the confirmation didn't close")
         XCTAssertTrue(choice("Vialumi", in: app).isSelected, "Cancel changed the profile")
 
         // A profile made from here is confirmed too, once the picker is back.
-        app.buttons["New Profile…"].tap()
+        app.buttons["New Profile…"].tapWhenSettled()
         let name = app.textFields["ProfileName"]
         XCTAssertTrue(name.appears(within: Ceiling.ui), "New Profile didn't open")
         XCTAssertTrue(waitUntil(Ceiling.ui) { name.value(forKey: "hasKeyboardFocus") as? Bool == true },
                       "the name field didn't take focus")
         name.typeText("Clients")
-        app.buttons["Add"].tap()
+        app.buttons["Add"].tapWhenSettled()
         let clients = app.alerts["Switch Work to Clients?"]
         XCTAssertTrue(clients.appears(within: Ceiling.ui), "no confirmation for the new profile")
-        clients.buttons["Cancel"].tap()
+        clients.buttons["Cancel"].tapWhenSettled()
         XCTAssertTrue(clients.disappears(within: Ceiling.ui), "the confirmation didn't close")
         XCTAssertTrue(choice("Clients", in: app).exists, "the new profile isn't in the picker")
         XCTAssertTrue(choice("Vialumi", in: app).isSelected, "Cancel changed the profile")
 
-        personal.tap()
+        personal.tapWhenSettled()
         XCTAssertTrue(alert.appears(within: Ceiling.ui), "no confirmation the second time")
-        alert.buttons["Switch"].tap()
+        alert.buttons["Switch"].tapWhenSettled()
         XCTAssertTrue(waitUntil(Ceiling.ui) { personal.isSelected }, "Switch didn't choose Default")
-        topBackButton(in: app).tap()
+        topBackButton(in: app).tapWhenSettled()
         XCTAssertTrue(waitUntil(Ceiling.ui) { profile.label == "Default" }, "the Profile row says \(profile.label)")
         XCTAssertEqual(profile.value as? String, "Blue, Its tab reloads when you save")
-        app.buttons["Save"].tap()
+        app.buttons["Save"].tapWhenSettled()
         XCTAssertTrue(app.buttons["Save"].disappears(within: Ceiling.ui), "Edit Space didn't close")
         XCTAssertTrue(waitUntil(Ceiling.ui) { (self.profileRow("Default", in: app).value as? String)?.contains("Work") == true },
                       "Work isn't on Default: \(profileRow("Default", in: app).value ?? "nil")")
@@ -124,7 +124,7 @@ final class ProfilesTests: UITestCase {
         let server = try FixtureServer(html: Self.page)
         let app = launchWithSpaces(server)
         openSpaces(in: app)
-        profileRow("Vialumi", in: app).tap()
+        profileRow("Vialumi", in: app).tapWhenSettled()
         let monogram = app.descendants(matching: .any)["Monogram"].firstMatch
         XCTAssertTrue(monogram.appears(within: Ceiling.ui), "Edit Profile didn't open")
         let usedBy = app.descendants(matching: .any).matching(identifier: "ProfileSpace").firstMatch
@@ -135,13 +135,13 @@ final class ProfilesTests: UITestCase {
         let footer = "Deleting signs you out of every site in Vialumi and erases its cookies, website data and history. Work switches to Default."
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", footer)).firstMatch.exists,
                       "the footer doesn't say what goes")
-        delete.tap()
+        delete.tapWhenSettled()
         let alert = app.alerts["Delete Vialumi?"]
         XCTAssertTrue(alert.appears(within: Ceiling.ui), "no delete confirmation")
         let message = "You'll be signed out of every site in this profile, and its cookies, website data and history are erased. Work switches to Default and reloads. This can't be undone."
         XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label == %@", message)).firstMatch.exists,
                       "the alert doesn't name the data loss")
-        alert.buttons["Delete"].tap()
+        alert.buttons["Delete"].tapWhenSettled()
 
         // Back in Manage Spaces: Vialumi gone, Work on Default.
         XCTAssertTrue(profileRow("Vialumi", in: app).disappears(within: Ceiling.ui), "Vialumi is still listed")
@@ -185,7 +185,7 @@ final class ProfilesTests: UITestCase {
     private func closeSearch(in app: XCUIApplication) {
         // Near its top: the button lies behind the whole panel, which history rows make tall enough
         // to cover the button's middle.
-        app.buttons["Close search"].firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tap()
+        app.buttons["Close search"].firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tapWhenSettled()
         XCTAssertTrue(searchField(in: app).disappears(within: Ceiling.ui), "search panel didn't close")
         XCTAssertTrue(app.keyboardIsDown(), "the keyboard stayed up")
     }
@@ -196,10 +196,10 @@ final class ProfilesTests: UITestCase {
         app.buttons["Page actions"].tapWhenSettled()
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.appears(within: Ceiling.ui), "caret sheet didn't open")
-        settings.tap()
+        settings.tapWhenSettled()
         let spaces = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Spaces'")).firstMatch
         XCTAssertTrue(spaces.appears(within: Ceiling.ui), "Settings didn't open")
-        spaces.tap()
+        spaces.tapWhenSettled()
         XCTAssertTrue(app.navigationBars["Spaces"].appears(within: Ceiling.ui), "Manage Spaces didn't open")
     }
 

@@ -32,7 +32,7 @@ final class BackSwipeCloseTests: UITestCase {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
 
-        app.webViews.links["Blank target"].tap()
+        app.webViews.links["Blank target"].tapWhenSettled()
         XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
         let popup = heading("/popup", in: app)
         XCTAssertTrue(popup.appears(within: Ceiling.load))
@@ -55,7 +55,7 @@ final class BackSwipeCloseTests: UITestCase {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
 
-        app.webViews.links["Blank target"].tap()
+        app.webViews.links["Blank target"].tapWhenSettled()
         XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
         XCTAssertTrue(heading("/popup", in: app).appears(within: Ceiling.load))
 
@@ -118,15 +118,15 @@ final class BackSwipeCloseTests: UITestCase {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
 
-        app.webViews.links["Blank target"].tap()
+        app.webViews.links["Blank target"].tapWhenSettled()
         XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
         XCTAssertTrue(heading("/popup", in: app).appears(within: Ceiling.load))
 
-        app.buttons["Page actions"].tap()
+        app.buttons["Page actions"].tapWhenSettled()
         let back = app.buttons["Back"]
         XCTAssertTrue(back.appears(within: Ceiling.ui), "caret sheet didn't open")
         XCTAssertTrue(back.isEnabled, "Back is disabled on a tab's first page")
-        back.tap()
+        back.tapWhenSettled()
 
         XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "Back didn't close the tab")
         XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab; \(server.requestLog)")
@@ -135,18 +135,14 @@ final class BackSwipeCloseTests: UITestCase {
 
     // MARK: Helpers
 
-    /// Launches with no saved tabs and opens `url` from the launch search panel.
+    /// Launches with no saved tabs but one on `url`.
     private func launchOnPage(_ url: URL) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-uiTesting"]
+        // On the page from the start (`-uiTestingOpen`): no typing, no keyboard to wait out.
+        app.launchArguments = ["-uiTesting", "-uiTestingOpen", url.absoluteString]
         app.launch()
-
-        let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
-        field.typeText(url.absoluteString + "\n")
         // Generous: the first page load on a fresh simulator is slow.
         XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "fixture page didn't load")
-        XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
         return app
     }
 

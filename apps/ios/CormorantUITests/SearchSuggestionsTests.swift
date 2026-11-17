@@ -50,7 +50,7 @@ final class SearchSuggestionsTests: UITestCase {
         field.typeText("127")
         XCTAssertTrue(waitUntil(Ceiling.ui) { field.value as? String == site }, "no completion: \(field.value ?? "nil")")
         // Past the text's end, short of the clear button: the caret goes to the end.
-        field.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tap()
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tapWhenSettled()
         field.typeText(XCUIKeyboardKey.delete.rawValue)
         let shortened = String(site.dropLast())
         XCTAssertTrue(waitUntil(Ceiling.ui) { field.value as? String == shortened }, "backspace left \(field.value ?? "nil")")
@@ -69,7 +69,7 @@ final class SearchSuggestionsTests: UITestCase {
         newTabField(in: app).typeText("alpha")
         let row = app.buttons.matching(NSPredicate(format: "label == 'Page alpha' AND value ENDSWITH 'open tab'")).firstMatch
         XCTAssertTrue(row.appears(within: Ceiling.ui), "no open-tab row for /alpha")
-        row.tap()
+        row.tapWhenSettled()
 
         XCTAssertTrue(heading("/alpha", in: app).appears(within: Ceiling.ui), "didn't switch to /alpha")
         XCTAssertTrue(app.buttons["Tabs, 2 open"].exists, "switching opened another tab")
@@ -86,7 +86,7 @@ final class SearchSuggestionsTests: UITestCase {
         app.buttons["SwitcherSearchTabs"].tapWhenSettled()
         let token = app.buttons["Open tabs only"]
         XCTAssertTrue(token.appears(within: Ceiling.ui), "no Tabs token")
-        token.tap()
+        token.tapWhenSettled()
 
         let field = searchField(in: app)
         XCTAssertTrue(field.appears(within: Ceiling.ui), "the field still searches tabs only")

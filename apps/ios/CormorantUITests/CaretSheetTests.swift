@@ -19,7 +19,7 @@ final class CaretSheetTests: UITestCase {
         let app = launchOnPage(server.url)
 
         openCaretSheet(in: app)
-        sheetHost(in: app).tap()
+        sheetHost(in: app).tapWhenSettled()
 
         let field = searchField(in: app)
         XCTAssertTrue(field.appears(within: Ceiling.ui), "the host didn't open the search panel")
@@ -47,7 +47,7 @@ final class CaretSheetTests: UITestCase {
 
         let field = searchField(in: app)
         XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
-        app.buttons["Close search"].firstMatch.tap()
+        app.buttons["Close search"].firstMatch.tapWhenSettled()
         XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close")
 
         openCaretSheet(in: app)
@@ -73,21 +73,17 @@ final class CaretSheetTests: UITestCase {
         app.textFields["Search or enter address"]
     }
 
-    /// Launches with no saved tabs, opens `url` from the launch search panel, and taps the page.
+    /// Launches with no saved tabs but one on `url`, and taps the page.
     private func launchOnPage(_ url: URL) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-uiTesting"]
+        // On the page from the start (`-uiTestingOpen`): no typing, no keyboard to wait out.
+        app.launchArguments = ["-uiTesting", "-uiTestingOpen", url.absoluteString]
         app.launch()
-
-        let field = searchField(in: app)
-        XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
-        field.typeText(url.absoluteString + "\n")
 
         let paragraph = app.webViews.staticTexts["Tap this paragraph so the web view becomes first responder."]
         // Generous: the first page load on a fresh simulator is slow.
         XCTAssertTrue(paragraph.appears(within: Ceiling.load), "fixture page didn't load")
-        XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
-        paragraph.tap()
+        paragraph.tapWhenSettled()
         return app
     }
 
@@ -105,10 +101,10 @@ final class CaretSheetTests: UITestCase {
     }
 
     private func openSettingsAndClose(in app: XCUIApplication) {
-        app.buttons["Settings"].tap()
+        app.buttons["Settings"].tapWhenSettled()
         let done = app.navigationBars["Settings"].buttons["Done"]
         XCTAssertTrue(done.appears(within: Ceiling.ui), "Settings didn't open")
-        done.tap()
+        done.tapWhenSettled()
         XCTAssertTrue(done.disappears(within: Ceiling.ui), "Settings didn't close")
     }
 }

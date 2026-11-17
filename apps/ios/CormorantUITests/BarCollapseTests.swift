@@ -20,11 +20,8 @@ final class BarCollapseTests: UITestCase {
     func testPageScrollsAfterBarCollapses() throws {
         let server = try FixtureServer(html: Self.page)
         let app = XCUIApplication()
-        app.launchArguments = ["-uiTesting"]
+        app.launchArguments = ["-uiTesting", "-uiTestingOpen", server.url.absoluteString]
         app.launch()
-        let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
-        field.typeText(server.url.absoluteString + "\n")
         XCTAssertTrue(app.webViews.staticTexts["Scrolled 0"].appears(within: Ceiling.load), "fixture page didn't load")
 
         // One continuous drag that collapses the bar partway through.

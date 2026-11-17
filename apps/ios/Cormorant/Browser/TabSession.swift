@@ -309,6 +309,16 @@ final class TabSession {
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
 
+    /// The pages Back would step through, nearest first. Not observed: a view reading it re-renders
+    /// only for what else it reads (the caret sheet's row also reads the URL, `canGoBack` and
+    /// `isLoading`, so its list can trail a page's own navigation until that load finishes).
+    var backHistory: [WKBackForwardListItem] { webView.backForwardList.backList.reversed() }
+    /// The pages Forward would step through, nearest first.
+    var forwardHistory: [WKBackForwardListItem] { webView.backForwardList.forwardList }
+
+    /// Jumps straight to a page in the tab's history (the Back / Forward long-press menu).
+    func go(to item: WKBackForwardListItem) { webView.go(to: item) }
+
     func reloadOrStop() {
         if isLoading { webView.stopLoading() } else { reload() }
     }

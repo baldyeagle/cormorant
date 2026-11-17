@@ -139,7 +139,8 @@ extension BrowserStore {
             : "Opened \(links.count) tabs in \(names.formatted(.list(type: .and)))"
         let actions = links.count == 1 ? [Toast.Action("Move…") { [weak self] in self?.requestMove(of: last.tabID) }] : []
         let note = links.contains { $0.reason == .focus } ? Toast.Note(text: "Focus", symbol: "moon.fill") : nil
-        showToast(Toast(icon: .space(space), message: message, note: note, actions: actions))
+        showToast(Toast(icon: .space(space), message: message, note: note, actions: actions,
+                        tabID: links.count == 1 ? last.tabID : nil))
     }
 }
 

@@ -193,6 +193,28 @@ final class LinksFromOtherAppsTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
+    /// Its toast's Move… acts on the link's tab, so the toast comes down when a back swipe closes the
+    /// tab, not left up with a button that would do nothing.
+    func testClosingTheLinksTabTakesItsToastDown() throws {
+        let server = try FixtureServer(html: Self.page)
+        let app = launchWithSpaces(server)
+        open(server.url.appending(path: "a"), path: "/a", in: app)
+
+        openFromAnotherApp(server.url.appending(path: "linked"), in: app)
+        XCTAssertTrue(heading("/linked", in: app).appears(within: Ceiling.load), "the link didn't open")
+        XCTAssertTrue(waitForToast(1, in: app), "no toast for the link")
+        XCTAssertTrue(toast(in: app).buttons["Move…"].appears(within: Ceiling.ui), "no Move… for the link")
+
+        // From the left edge, once the page is done loading (its back history settled).
+        XCTAssertTrue(app.savesSettle(), "the page was still loading")
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 2, dy: 0))
+        edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)),
+                   withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(heading("/a", in: app).appears(within: Ceiling.load), "the swipe didn't close the link's tab")
+        XCTAssertTrue(toast(in: app).disappears(within: Ceiling.ui), "the toast stayed up for a closed tab")
+        withExtendedLifetime(server) {}
+    }
+
     // MARK: Helpers
 
     private func launchWithSpaces(_ server: FixtureServer, session: String? = nil) -> XCUIApplication {

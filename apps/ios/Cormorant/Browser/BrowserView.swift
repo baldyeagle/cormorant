@@ -276,11 +276,11 @@ struct BrowserView: View {
         #endif
     }
 
-    /// A tab a link opened closes when swiped back from its first page. Not while its history is still
-    /// being restored: it would look like a first page.
+    /// Any tab closes when swiped back from its first page. Not while its history is still being
+    /// restored: it would look like a first page.
     private func backSwipeClose(for session: TabSession) -> WebViewContainer.BackSwipeClose? {
         let tabID = session.tabID
-        guard store.closesOnBackSwipe(tabID), !session.isRestoringHistory else { return nil }
+        guard !session.isRestoringHistory else { return nil }
         return .init(destinationSnapshot: { store.backSwipeSnapshot(for: tabID) },
                      close: { store.close(tabID) })
     }

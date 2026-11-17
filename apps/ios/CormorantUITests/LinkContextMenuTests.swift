@@ -122,7 +122,7 @@ final class LinkContextMenuTests: UITestCase {
     }
 
     /// A tab that adopted the preview's page keeps its history like any tab: across a relaunch, back
-    /// returns to that first page, and (a link opened the tab) swiping back from there closes it.
+    /// returns to that first page, and swiping back from there closes it.
     func testAdoptedTabHistorySurvivesRelaunch() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url, session: UUID().uuidString)

@@ -42,15 +42,19 @@ struct Toast: Identifiable {
     /// A button before the icon: back to the Space a move left.
     var leadingAction: Action?
     let actions: [Action]
+    /// The tab every button acts on: the toast comes down once that tab closes (a back swipe can close
+    /// it with the toast still up).
+    var tabID: UUID?
 
     init(icon: Icon, message: String, spokenText: String? = nil, note: Note? = nil, leadingAction: Action? = nil,
-         actions: [Action]) {
+         actions: [Action], tabID: UUID? = nil) {
         self.icon = icon
         self.message = message
         self.spokenText = spokenText
         self.note = note
         self.leadingAction = leadingAction
         self.actions = actions
+        self.tabID = tabID
     }
 
     /// Every button, in the order they're drawn.

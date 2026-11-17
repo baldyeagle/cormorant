@@ -29,7 +29,7 @@ import Testing
         var state = BrowserState()
         _ = state.openTab(url: url("https://a.com/path?q=1"), title: "A", now: now)
         let b = state.openTab(url: url("https://b.com"), title: "B", now: now + 0.000_123)
-        _ = state.openTab(url: url("https://c.com"), fromLink: true, now: now)
+        _ = state.openTab(url: url("https://c.com"), now: now)
         _ = state.openTab(url: nil, now: .now)
         state.tabs.append(Tab(url: url("https://pinned.com"), kind: .pinned))
         state.archive(tabID: b.id, now: .now)
@@ -99,7 +99,6 @@ import Testing
         #expect(state.spaces.first?.createdAt == .distantPast)
         let tab = try #require(state.tabs.first)
         #expect(tab.id == tabID && tab.spaceID == Space.defaultID && tab.kind == .today && tab.title == "A")
-        #expect(!tab.openedFromLink)
         let entry = try #require(state.archived.first)
         #expect(entry.id == archivedID && entry.spaceID == Space.defaultID && entry.url == url("https://b.com"))
 
@@ -108,6 +107,16 @@ import Testing
         #expect(minimal.spaces.map(\.id) == [Space.defaultID])
         #expect(minimal.tabs.first?.url == nil)
         #expect(minimal.tabs.first?.createdAt == .distantPast)
+    }
+
+    /// Builds before back-to-close covered every tab saved `openedFromLink` on each tab; their files
+    /// still load.
+    @Test func decodingIgnoresRetiredTabFields() throws {
+        let tabID = UUID()
+        let json = "{\"tabs\":[{\"id\":\"\(tabID)\",\"url\":\"https://a.com\",\"openedFromLink\":true}]}"
+        let state = try CoreJSON.decoder().decode(BrowserState.self, from: Data(json.utf8))
+        #expect(state.tabs.map(\.id) == [tabID])
+        #expect(state.tabs.first?.url == url("https://a.com"))
     }
 
     @Test func encodingWritesTheCurrentSchemaVersion() throws {

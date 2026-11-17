@@ -49,8 +49,8 @@ struct WebViewContainer: UIViewRepresentable {
         private var swipe: BackSwipe?
         /// A committed swipe whose snapshot is still fading off the destination.
         private var fading: BackSwipe?
-        /// Tapped as a swipe that will close the tab starts, after Arc.
-        private lazy var closeHaptic = UIImpactFeedbackGenerator(style: .medium, view: self)
+        /// Tapped as a swipe that will close the tab starts, after Arc. Heavy: medium was too faint on a device.
+        private lazy var closeHaptic = UIImpactFeedbackGenerator(style: .heavy, view: self)
 
         override init(frame: CGRect) {
             super.init(frame: frame)

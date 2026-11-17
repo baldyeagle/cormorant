@@ -6,6 +6,10 @@ on:
     types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
+  schedule:
+    # Nightly stress run on main, 08:23 UTC (after midnight Pacific; off the hour, which GitHub may
+    # delay or drop under load): every UI test 5 times, quarantined ones too (see ios).
+    - cron: '23 8 * * *'
   workflow_dispatch:
     inputs:
       iterations:
@@ -13,7 +17,8 @@ on:
         default: '5'
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The nightly run has a group of its own, so a push to main doesn't cancel it (or it the push).
+  group: ci-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -25,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ios: ${{ steps.diff.outputs.ios }}
+      new_tests: ${{ steps.new.outputs.tests }}
+      new_tests_timeout: ${{ steps.new.outputs.timeout }}
     steps:
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request'
@@ -50,6 +57,31 @@ jobs:
           else
             echo "ios=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Which UI tests does this PR add?
+        id: new
+        # New or renamed: in the merge commit but not on the base branch. ios runs each 10 more times,
+        # spread over the shards, so its timeout grows ~12 minutes for every 5. A failure here mustn't
+        # skip the macOS jobs: their dealing step fails the same way.
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          NEW=$(scripts/ui-test-shard.py --new-since HEAD^1)
+          echo "${NEW:-none}"
+          echo "tests=$NEW" >> "$GITHUB_OUTPUT"
+          COUNT=$(echo $NEW | wc -w)
+          if [ "$COUNT" -gt 0 ]; then
+            MINUTES=$(( 40 + 12 * ((COUNT + 4) / 5) ))
+            echo "timeout=$(( MINUTES > 360 ? 360 : MINUTES ))" >> "$GITHUB_OUTPUT"
+          fi
+
+  quarantine:
+    name: UI test quarantine
+    # Its own job, so an entry past its 14 days (or one naming no test) fails in seconds, build or not.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No quarantined UI test past its 14 days
+        run: scripts/ui-test-shard.py --check-quarantine
 
   ios:
     # Shard 1 also runs the package's tests and checks the built app; the others only test.
@@ -58,9 +90,10 @@ jobs:
     if: needs.changes.outputs.ios == 'true'
     runs-on: xcode-27
     # The slowest single run of a shard seen took 21 minutes, before shards built for themselves
-    # (a build adds 1-2); a stress run (see ITERATIONS below) gets a hosted runner's maximum.
-    # Expressions have no arithmetic, so it can't scale.
-    timeout-minutes: ${{ (inputs.iterations || contains(github.event.pull_request.labels.*.name, 'ui-stress')) && 360 || 30 }}
+    # (a build adds 1-2); a stress run (see ITERATIONS below) gets a hosted runner's maximum, and a PR
+    # that adds UI tests the time changes works out for their extra runs. Expressions have no
+    # arithmetic, so a stress run can't scale.
+    timeout-minutes: ${{ (inputs.iterations || github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'ui-stress')) && 360 || fromJSON(needs.changes.outputs.new_tests_timeout || '30') }}
     strategy:
       fail-fast: false
       matrix:
@@ -81,6 +114,20 @@ jobs:
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
           swift --version
+      - name: Deal this shard's tests
+        # Before the build, so a bad quarantine entry stops the shard in seconds (shard 1's package tests
+        # and source checks still run, on the right Xcode). Shard 1 deals itself less, for
+        # the ~90 s of package tests and checks it runs first. Tests in scripts/ui-test-quarantine.txt
+        # sit out, except nightly and by hand, so a fix shows. The PR's new tests weigh their extra runs.
+        env:
+          QUARANTINED: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '--include-quarantined' || '' }}
+          NEW_TESTS: ${{ needs.changes.outputs.new_tests }}
+        run: |
+          DEAL="${{ strategy.job-index }} ${{ strategy.job-total }} 90 $QUARANTINED"
+          ONLY_TESTING=$(scripts/ui-test-shard.py $DEAL --new "$NEW_TESTS")
+          NEW_ONLY_TESTING=$(scripts/ui-test-shard.py $DEAL --new "$NEW_TESTS" --only-new)
+          echo "ONLY_TESTING=$ONLY_TESTING" >> "$GITHUB_ENV"
+          echo "NEW_ONLY_TESTING=$NEW_ONLY_TESTING" >> "$GITHUB_ENV"
       - name: Build for testing
         id: build
         # Each shard builds for itself rather than wait on one build job and its artifact.
@@ -160,12 +207,13 @@ jobs:
         if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
         env:
           # Once normally. To look for flaky tests, run the workflow by hand or add the ui-stress
-          # label to the PR: each test runs that many times and every run must pass. Nothing is
-          # retried, so a flaky test fails CI rather than hiding behind a second try.
-          ITERATIONS: ${{ inputs.iterations || (contains(github.event.pull_request.labels.*.name, 'ui-stress') && '5') || '1' }}
+          # label to the PR: each test runs that many times and every run must pass. The nightly run
+          # does 5. Nothing is retried, so a flaky test fails CI rather than hiding behind a second try.
+          ITERATIONS: ${{ inputs.iterations || ((github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'ui-stress')) && '5') || '1' }}
         run: |
-          # Shard 1 deals itself less, for the ~90 s of package tests and checks it runs first.
-          ONLY_TESTING=$(scripts/ui-test-shard.py ${{ strategy.job-index }} ${{ strategy.job-total }} 90)
+          # When the tests started, for the simulator's log. No tests dealt would run them all.
+          echo "TESTS_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+          [ -n "$ONLY_TESTING" ] || { echo "::error::No tests were dealt to this shard"; exit 1; }
           XCTESTRUN=$(ls build/DerivedData/Build/Products/*.xctestrun)
           # No screen recording: XCTest encodes video of every test in software (on a 3-core VM, with
           # no GPU) and keeps it only on failure, and automatic screenshots would cost an image per
@@ -188,17 +236,50 @@ jobs:
             -resultBundlePath build/UITests.xcresult \
             "${ITERATION_ARGS[@]}" -collect-test-diagnostics never \
             $ONLY_TESTING \
-            | tee build/xcodebuild-test.log | grep -E "error:|Test Case .*(passed|failed)|TEST" || true
+            | tee build/xcodebuild-test.log | grep --line-buffered -E "error:|Test Case .*(passed|failed)|TEST" || true
           grep -q "TEST EXECUTE SUCCEEDED" build/xcodebuild-test.log
+      - name: New UI tests, 10 more times each
+        # A test this PR adds or renames proves itself before it gates other PRs: after the shard's own
+        # run, each new test it was dealt runs 10 more times (scripts/ui-test-shard.py weighs them for
+        # it), and one failure fails CI. The UI tests step has set up the xctestrun.
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' && env.NEW_ONLY_TESTING != '' }}
+        run: |
+          XCTESTRUN=$(ls build/DerivedData/Build/Products/*.xctestrun)
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -resultBundlePath build/NewUITests.xcresult \
+            -test-iterations 10 -collect-test-diagnostics never \
+            $NEW_ONLY_TESTING \
+            | tee build/xcodebuild-new-tests.log | grep --line-buffered -E "error:|Test Case .*(passed|failed)|TEST" || true
+          grep -q "TEST EXECUTE SUCCEEDED" build/xcodebuild-new-tests.log
+      - name: List the failed UI tests
+        # Each failed test and its message on the run's summary page, so nobody digs through logs.
+        if: (failure() || cancelled()) && env.UDID != ''
+        run: |
+          {
+            scripts/flake-report.py --summary --title "Failed UI tests (shard ${{ matrix.shard }})" build/xcodebuild-test.log
+            scripts/flake-report.py --summary --title "Failed new UI tests, 10 runs each (shard ${{ matrix.shard }})" build/xcodebuild-new-tests.log
+          } >> "$GITHUB_STEP_SUMMARY" || true
       - name: Save the simulator's log
         # The system's side of a failure: XCTest sometimes couldn't terminate the app, and why is
         # only in the launch and termination services' logs.
         if: (failure() || cancelled()) && env.UDID != ''
         timeout-minutes: 5
         run: |
-          xcrun simctl spawn "$UDID" log show --last 6h --info --style compact --predicate \
+          # Since the tests started, not the last 6 hours, and cut off after 4 minutes: a stress run's
+          # log outlasted the step's timeout and left nothing. `log show` prints oldest first, so a cut
+          # keeps the run's start (where a stress run's failures most often are) and loses its end.
+          MINUTES=$(( ($(date +%s) - ${TESTS_STARTED_AT:-0}) / 60 + 2 ))
+          if [ "$MINUTES" -gt 360 ]; then MINUTES=360; fi
+          xcrun simctl spawn "$UDID" log show --last "${MINUTES}m" --info --style compact --predicate \
             'process IN {"Cormorant", "SpringBoard", "runningboardd", "testmanagerd", "backboardd", "launchd_sim"}' \
-            | gzip > build/simulator-log.txt.gz || true
+            > build/simulator-log.txt &
+          LOG_SHOW=$!
+          ( sleep 240; kill "$LOG_SHOW" ) > /dev/null 2>&1 &
+          WATCHDOG=$!
+          wait "$LOG_SHOW" || true
+          kill "$WATCHDOG" 2> /dev/null || true
+          gzip -f build/simulator-log.txt || true
       - name: Upload UI test results
         # Cancelled too: a shard that hits its timeout is cancelled, not failed.
         if: failure() || cancelled()
@@ -209,6 +290,8 @@ jobs:
             build/xcodebuild.log
             build/UITests.xcresult
             build/xcodebuild-test.log
+            build/NewUITests.xcresult
+            build/xcodebuild-new-tests.log
             build/simulator-log.txt.gz
 
   site:

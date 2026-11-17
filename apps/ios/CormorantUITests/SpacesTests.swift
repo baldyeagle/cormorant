@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// Switching Spaces: from the tabs button's long-press menu, the switcher's Space strip and its title

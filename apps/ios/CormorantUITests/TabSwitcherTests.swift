@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// The switcher leaves pages as they were: a tab keeps its scroll position through the switcher and

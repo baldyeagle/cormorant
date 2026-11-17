@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// The caret sheet's handoffs: the host opens the search panel, and Settings stacks on the sheet

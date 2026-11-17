@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// Profiles, on screen: made from a Space's profile picker, which lists them under Manage Spaces;

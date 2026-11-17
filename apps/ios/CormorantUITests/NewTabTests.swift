@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// New Tab must bring up the search panel even after the page has been tapped. Tapping makes the

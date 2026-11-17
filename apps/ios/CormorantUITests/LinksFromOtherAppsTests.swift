@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// A link from another app opens full screen on its page, wherever the app was left. Where it opens

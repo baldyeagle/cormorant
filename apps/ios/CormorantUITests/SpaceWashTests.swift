@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// The wash covers a new tab until its page has drawn: WebKit can paint a white canvas for a moment

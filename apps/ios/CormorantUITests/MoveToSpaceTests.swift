@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// Moving a tab to another Space from the screen: a switcher card's long-press menu, and the toast's

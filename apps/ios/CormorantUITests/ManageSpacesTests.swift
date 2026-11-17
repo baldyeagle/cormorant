@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// Manage Spaces, reached from Settings: adding a Space lands in it, empty, with the search panel up;

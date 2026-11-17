@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// Typing in the search panel: the field completes to a visited site, and backspace takes the

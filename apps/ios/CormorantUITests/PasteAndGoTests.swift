@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// The search field's edit menu pastes and loads in one step: Paste and Go, last in the menu, after

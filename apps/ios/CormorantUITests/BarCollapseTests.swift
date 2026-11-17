@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// Scrolling down shrinks the bar to the host capsule; the page must keep taking touches after that.

@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// Arc's back-to-close: swiping in from the left edge on the first page of any tab closes it and

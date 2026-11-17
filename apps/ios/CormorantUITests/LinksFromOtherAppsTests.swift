@@ -165,6 +165,34 @@ final class LinksFromOtherAppsTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
+    /// A link from another app opens full screen on its page, not under a switcher left up when the app
+    /// was last used (where the new tab showed only as a card).
+    func testLinkFromAnotherAppClosesTheSwitcher() throws {
+        let server = try FixtureServer(html: Self.page)
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTesting"]
+        app.launch()
+        open(server.url.appending(path: "a"), path: "/a", in: app)
+        tabsButton(in: app).tapWhenSettled()
+        let done = app.buttons["Done"]
+        XCTAssertTrue(done.appears(within: Ceiling.ui), "switcher didn't open")
+
+        // Away to another app, and back by a link from it.
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.activate()
+        XCTAssertTrue(settings.wait(for: .runningForeground, timeout: Ceiling.ui), "Settings didn't come up")
+        openFromAnotherApp(server.url.appending(path: "linked"), in: app)
+        // A query on an app still in the background finds nothing, which would pass the check below.
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: Ceiling.ui), "the link didn't bring the app back")
+
+        XCTAssertTrue(done.disappears(within: Ceiling.ui), "the switcher stayed up over the link's page")
+        XCTAssertTrue(heading("/linked", in: app).appears(within: Ceiling.load), "the link's page isn't showing")
+        XCTAssertFalse(done.exists, "the switcher came back over the link's page")
+        XCTAssertEqual(tabsButton(in: app).label, "Tabs, 2 open", "the link didn't open in a new tab")
+        XCTAssertTrue(tabsButton(in: app).isHittable, "the bar isn't on screen")
+        withExtendedLifetime(server) {}
+    }
+
     // MARK: Helpers
 
     private func launchWithSpaces(_ server: FixtureServer, session: String? = nil) -> XCUIApplication {

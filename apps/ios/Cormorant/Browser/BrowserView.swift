@@ -227,6 +227,13 @@ struct BrowserView: View {
             // Settings, if stacked on the sheet, goes with it; `actionsDidDismiss` brings the panel up
             // in an empty Space.
             showActions = false
+            // A link from another app opens full screen, not under a switcher left up when the app was
+            // last used. No slide: the page is what the app should come up showing.
+            if showSwitcher {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { showSwitcher = false }
+            }
         }
         .onChange(of: store.state.activeTabID) { _, _ in
             // Archiving, deleting or switching Spaces in Settings' Manage Spaces: Settings stays.

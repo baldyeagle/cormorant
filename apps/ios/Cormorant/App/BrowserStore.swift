@@ -52,8 +52,8 @@ final class BrowserStore {
     /// Manage Spaces is showing as a page in Settings. While it is, a change of active tab (from
     /// archiving, deleting or switching Spaces there) leaves the caret sheet and Settings up.
     @ObservationIgnored var isManagingSpacesInSettings = false
-    /// Bumped to ask the browser to close the search panel, the caret sheet and Settings on it: a Space
-    /// just added (so you land in it) and a link from another app (straight to the page).
+    /// Bumped to ask the browser to close the search panel, the caret sheet and Settings on it, and the
+    /// switcher: a Space just added (so you land in it) and a link from another app (straight to the page).
     var closeSheetsRequest = 0
     /// The toast on screen, if any (`showToast(_:)`).
     private(set) var toast: Toast?

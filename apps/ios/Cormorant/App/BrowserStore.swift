@@ -130,7 +130,7 @@ final class BrowserStore {
     @ObservationIgnored private var toastExpiry: Task<Void, Never>?
     /// Erasing deleted profiles' website data and history, while it runs (BrowserStore+Profiles.swift).
     @ObservationIgnored var profileErasure: Task<Void, Never>?
-    /// Erasing was asked for again while it ran: it runs once more when done.
+    /// Erasing was asked for again while it ran: its next pass starts once this one (or its wait) ends.
     @ObservationIgnored var erasesProfilesAgain = false
 
     init(

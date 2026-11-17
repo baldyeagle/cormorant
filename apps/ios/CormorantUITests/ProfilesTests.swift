@@ -1,28 +1,18 @@
 import XCTest
 
-/// Profiles keep website data apart: a cookie set in one profile isn't seen in another, and the search
-/// panel's history comes from the active Space's profile only. Made in Manage Spaces or from a Space's
-/// profile picker; changing a Space's profile is confirmed first; deleting a profile moves its Spaces to
-/// Default, whose website data their tabs then load with. `-uiTestingSpaces` seeds Work, on the
-/// profile Vialumi, and Projects, with one fixture tab each, and an empty Trip, beside an empty Home.
+/// Profiles, on screen: made from a Space's profile picker, which lists them under Manage Spaces;
+/// changing a Space's profile is confirmed first; deleting one says what goes, and moves its Spaces to
+/// Default. `-uiTestingSpaces` seeds Work, on the profile Vialumi, and Projects, with one fixture tab
+/// each, and an empty Trip, beside an empty Home. Cookies and history staying in their profile, and a
+/// deleted profile's data being erased, are CormorantTests' ProfilesTests.
 @MainActor
 final class ProfilesTests: UITestCase {
-    /// Every path serves this page. It names its path, sets the cookie `probe` to whatever follows
-    /// `/set/`, and shows the `probe` this profile's website data has.
+    /// The seeded tabs' page (none is shown here).
     private static let page = """
         <!doctype html>
         <meta name="viewport" content="width=device-width">
         <title>Fixture</title>
-        <h1 id="path">Path</h1>
-        <p id="cookie">Cookie</p>
-        <script>
-          const set = location.pathname.match(/^\\/set\\/(\\w+)$/)
-          if (set) document.cookie = 'probe=' + set[1] + '; path=/; max-age=86400'
-          const probe = document.cookie.split('; ').find(c => c.startsWith('probe='))
-          document.getElementById('path').textContent = 'Path ' + location.pathname
-          document.getElementById('cookie').textContent = 'Cookie ' + (probe || 'none')
-          document.title = 'Page ' + location.pathname.slice(1)
-        </script>
+        <h1>Fixture</h1>
         """
 
     func testCreatingAProfileFromNewSpace() {
@@ -130,38 +120,9 @@ final class ProfilesTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
-    func testCookiesStayInTheirProfile() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchWithSpaces(server)
-        let home = token(), work = token()
-        open(server.url.appending(path: "set/\(home)"), path: "/set/\(home)", in: app)
-        XCTAssertTrue(cookie(home, in: app).appears(within: Ceiling.load), "Home's cookie wasn't set")
-
-        // Work is on Vialumi: Home's cookie isn't there.
-        switchTo("Work", in: app)
-        XCTAssertTrue(heading("/work", in: app).appears(within: Ceiling.load), "Work's tab didn't show")
-        XCTAssertTrue(cookie(nil, in: app).appears(within: Ceiling.load), "Work sees a cookie: \(cookieText(in: app))")
-        open(server.url.appending(path: "set/\(work)"), path: "/set/\(work)", in: app)
-        XCTAssertTrue(cookie(work, in: app).appears(within: Ceiling.load), "Work's cookie wasn't set")
-
-        // And Work's isn't in Default: Home still has its own.
-        switchTo("Home", in: app)
-        open(server.url.appending(path: "check"), path: "/check", in: app)
-        XCTAssertTrue(cookie(home, in: app).appears(within: Ceiling.load), "Home's cookie changed: \(cookieText(in: app))")
-        withExtendedLifetime(server) {}
-    }
-
     func testDeletingAProfileMovesItsSpacesToDefault() throws {
         let server = try FixtureServer(html: Self.page)
-        let session = UUID().uuidString
-        let app = launchWithSpaces(server, session: session)
-        let home = token()
-        open(server.url.appending(path: "set/\(home)"), path: "/set/\(home)", in: app)
-        XCTAssertTrue(cookie(home, in: app).appears(within: Ceiling.load), "Home's cookie wasn't set")
-        switchTo("Work", in: app)
-        XCTAssertTrue(heading("/work", in: app).appears(within: Ceiling.load), "Work's tab didn't show")
-        XCTAssertTrue(cookie(nil, in: app).appears(within: Ceiling.load), "Work sees a cookie: \(cookieText(in: app))")
-
+        let app = launchWithSpaces(server)
         openSpaces(in: app)
         profileRow("Vialumi", in: app).tap()
         let monogram = app.descendants(matching: .any)["Monogram"].firstMatch
@@ -182,56 +143,10 @@ final class ProfilesTests: UITestCase {
                       "the alert doesn't name the data loss")
         alert.buttons["Delete"].tap()
 
-        // Back in Manage Spaces: Vialumi gone, Work on Default, and its data erased.
+        // Back in Manage Spaces: Vialumi gone, Work on Default.
         XCTAssertTrue(profileRow("Vialumi", in: app).disappears(within: Ceiling.ui), "Vialumi is still listed")
         XCTAssertTrue((profileRow("Default", in: app).value as? String)?.contains("Work") == true,
                       "Work isn't on Default: \(profileRow("Default", in: app).value ?? "nil")")
-
-        // Work's tab loaded again with Default's website data.
-        leaveSettings(in: app)
-        XCTAssertTrue(cookie(home, in: app).appears(within: Ceiling.load), "Work's tab isn't on Default: \(cookieText(in: app))")
-
-        // Vialumi's data is erased by the next launch at the latest. While the app runs, WebKit lets
-        // go of the store some time after the last web view on it goes (seconds to most of a minute on
-        // CI), so the test doesn't wait on that; a relaunch starts with nothing holding it.
-        XCTAssertTrue(app.savesSettle(), "saves didn't land")
-        app.terminate()
-        let next = XCUIApplication()
-        next.launchArguments = app.launchArguments
-        next.launchEnvironment["CORMORANT_UI_TESTING_SESSION"] = session
-        next.launch()
-        XCTAssertTrue(heading("/work", in: next).appears(within: Ceiling.load), "the relaunch didn't come back to Work's tab")
-        // The probe says "loading" until the saved tabs, with Vialumi still to erase, are in.
-        let erasing = next.descendants(matching: .any)["UITesting.erasing"].firstMatch
-        XCTAssertTrue(waitUntil(Ceiling.load) { erasing.value as? String == "0" },
-                      "Vialumi's data wasn't erased: \(erasing.value as? String ?? "no probe")")
-        withExtendedLifetime(server) {}
-    }
-
-    func testHistoryFollowsTheProfile() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchWithSpaces(server)
-        // A page only in each profile's history: visited, then left in the same tab.
-        open(server.url.appending(path: "alpha"), path: "/alpha", in: app)
-        replacePage("alpha", with: server.url.appending(path: "gamma"), in: app)
-        switchTo("Work", in: app)
-        XCTAssertTrue(heading("/work", in: app).appears(within: Ceiling.load), "Work's tab didn't show")
-        open(server.url.appending(path: "beta"), path: "/beta", in: app)
-        replacePage("beta", with: server.url.appending(path: "delta"), in: app)
-
-        // In Work, Vialumi's history: beta, not alpha.
-        var field = newTabField(in: app)
-        field.typeText("page")
-        XCTAssertTrue(historyRow("beta", in: app).appears(within: Ceiling.ui), "Work's history doesn't have beta")
-        XCTAssertFalse(historyRow("alpha", in: app).exists, "Work suggests Home's history")
-        closeSearch(in: app)
-
-        // In Home, Default's: alpha, not beta.
-        switchTo("Home", in: app)
-        field = newTabField(in: app)
-        field.typeText("page")
-        XCTAssertTrue(historyRow("alpha", in: app).appears(within: Ceiling.ui), "Home's history doesn't have alpha")
-        XCTAssertFalse(historyRow("beta", in: app).exists, "Home suggests Work's history")
         withExtendedLifetime(server) {}
     }
 
@@ -245,34 +160,16 @@ final class ProfilesTests: UITestCase {
         return app
     }
 
-    /// `session` keeps the app's saved tabs across relaunches of `app`.
-    private func launchWithSpaces(_ server: FixtureServer, session: String? = nil) -> XCUIApplication {
+    private func launchWithSpaces(_ server: FixtureServer) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTesting", "-uiTestingSpaces", server.url.absoluteString]
-        if let session { app.launchEnvironment["CORMORANT_UI_TESTING_SESSION"] = session }
         app.launch()
         XCTAssertTrue(searchField(in: app).appears(within: Ceiling.launch), "no search panel at launch")
         return app
     }
 
-    /// A cookie value no earlier run can have left in the simulator's default website data.
-    private func token() -> String { "t" + UUID().uuidString.prefix(8).lowercased() }
-
     private func searchField(in app: XCUIApplication) -> XCUIElement {
         app.textFields["Search or enter address"]
-    }
-
-    private func heading(_ path: String, in app: XCUIApplication) -> XCUIElement {
-        app.webViews.staticTexts["Path \(path)"].firstMatch
-    }
-
-    /// The page's report of its `probe` cookie: `value`, or none.
-    private func cookie(_ value: String?, in app: XCUIApplication) -> XCUIElement {
-        app.webViews.staticTexts["Cookie \(value.map { "probe=\($0)" } ?? "none")"].firstMatch
-    }
-
-    private func cookieText(in app: XCUIApplication) -> String {
-        app.webViews.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Cookie '")).firstMatch.label
     }
 
     /// A profile's row in Manage Spaces: its name, with its color and the Spaces using it as the value.
@@ -285,65 +182,12 @@ final class ProfilesTests: UITestCase {
         app.buttons.matching(identifier: "ProfileChoice")[name].firstMatch
     }
 
-    private func historyRow(_ page: String, in app: XCUIApplication) -> XCUIElement {
-        app.buttons.matching(NSPredicate(format: "label == %@ AND value ENDSWITH 'history'", "Page \(page)")).firstMatch
-    }
-
-    /// Opens `url` from the search panel, or in a new tab.
-    private func open(_ url: URL, path: String, in app: XCUIApplication) {
-        let field = searchField(in: app)
-        if !field.exists { app.buttons["NewTabPill"].tapWhenSettled() }
-        XCTAssertTrue(field.appears(within: Ceiling.ui), "no search panel")
-        field.typeText(url.absoluteString + "\n")
-        XCTAssertTrue(heading(path, in: app).appears(within: Ceiling.load), "\(path) didn't load")
-        XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
-        XCTAssertTrue(app.keyboardIsDown(), "the keyboard stayed up")
-    }
-
-    /// Loads `url` in the tab showing `/page`, so that page is left only in history.
-    private func replacePage(_ page: String, with url: URL, in app: XCUIApplication) {
-        app.buttons["NewTabPill"].tapWhenSettled()
-        let edit = app.buttons["Edit address: Page \(page)"]
-        XCTAssertTrue(edit.appears(within: Ceiling.ui), "no Edit row")
-        edit.tap()
-        let field = searchField(in: app)
-        field.typeText(url.absoluteString + "\n")
-        XCTAssertTrue(heading(url.path(), in: app).appears(within: Ceiling.load), "\(url.path()) didn't load")
-        XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
-        XCTAssertTrue(app.keyboardIsDown(), "the keyboard stayed up")
-    }
-
-    /// The bar's + panel's field, focused and empty.
-    private func newTabField(in app: XCUIApplication) -> XCUIElement {
-        app.buttons["NewTabPill"].tapWhenSettled()
-        let field = searchField(in: app)
-        XCTAssertTrue(field.appears(within: Ceiling.ui), "+ didn't open the search panel")
-        XCTAssertTrue(waitUntil(Ceiling.ui) { field.value(forKey: "hasKeyboardFocus") as? Bool == true }, "field not focused")
-        return field
-    }
-
     private func closeSearch(in app: XCUIApplication) {
         // Near its top: the button lies behind the whole panel, which history rows make tall enough
         // to cover the button's middle.
         app.buttons["Close search"].firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tap()
         XCTAssertTrue(searchField(in: app).disappears(within: Ceiling.ui), "search panel didn't close")
         XCTAssertTrue(app.keyboardIsDown(), "the keyboard stayed up")
-    }
-
-    /// Switches Space with the switcher's strip.
-    private func switchTo(_ space: String, in app: XCUIApplication) {
-        if searchField(in: app).exists { closeSearch(in: app) }
-        let tabs = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Tabs, '")).firstMatch
-        XCTAssertTrue(tabs.appears(within: Ceiling.ui), "no tabs button")
-        tabs.tapWhenSettled()
-        let done = app.buttons["Done"]
-        XCTAssertTrue(done.appears(within: Ceiling.ui), "switcher didn't open")
-        let glyph = app.buttons.matching(identifier: "SpaceStrip")[space]
-        glyph.tap()
-        XCTAssertTrue(waitUntil(Ceiling.ui) { app.buttons["SpaceTitleMenu"].label == "Space, \(space)" },
-                      "the strip didn't switch to \(space)")
-        done.tap()
-        XCTAssertTrue(done.disappears(within: Ceiling.ui), "the switcher didn't close")
     }
 
     /// Settings › Spaces, from wherever the browser is.
@@ -364,18 +208,5 @@ final class ProfilesTests: UITestCase {
     private func topBackButton(in app: XCUIApplication) -> XCUIElement {
         let buttons = app.buttons.matching(identifier: "BackButton")
         return buttons.count > 1 ? buttons.element(boundBy: buttons.count - 1) : buttons.firstMatch
-    }
-
-    /// Back out of Settings › Spaces: to Settings, Done, then the caret sheet swiped away by its grabber.
-    private func leaveSettings(in app: XCUIApplication) {
-        topBackButton(in: app).tap()
-        let done = app.navigationBars["Settings"].buttons["Done"]
-        XCTAssertTrue(done.appears(within: Ceiling.ui), "didn't go back to Settings")
-        done.tap()
-        let grabber = app.descendants(matching: .any)["Sheet Grabber"].firstMatch
-        XCTAssertTrue(grabber.appears(within: Ceiling.ui), "the caret sheet isn't up")
-        grabber.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
-        XCTAssertTrue(grabber.disappears(within: Ceiling.ui), "the caret sheet didn't close")
     }
 }

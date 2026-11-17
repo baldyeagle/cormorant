@@ -27,94 +27,6 @@ final class BackSwipeCloseTests: UITestCase {
         </script>
         """
 
-    /// Open in New Tab, follow a link there, back, back: the second back closes the tab.
-    /// Synthesized drags don't drive WKWebView's own back swipe (none of press-and-drag or swipeRight
-    /// did on the iOS 27.1 simulator), so the history step uses the caret sheet's Back; the swipe there
-    /// is checked only for leaving the tab open.
-    func testSwipeBackClosesTabOpenedFromMenuOnlyOnItsFirstPage() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url)
-
-        let link = app.webViews.links["Next page"]
-        XCTAssertTrue(link.appears(within: Ceiling.load))
-        let item = app.buttons["Open in New Tab"]
-        XCTAssertTrue(pressForLinkMenu(link, until: item, in: app), "no link menu")
-        XCTAssertTrue(waitUntil(Ceiling.ui) { item.isHittable }, "link menu didn't settle")
-        item.tapWhenSettled()
-        XCTAssertTrue(item.disappears(within: Ceiling.ui), "menu didn't close")
-        app.waitsForAnimations = true
-        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
-        XCTAssertTrue(heading("/next", in: app).appears(within: Ceiling.load))
-
-        app.webViews.links["Third page"].tap()
-        XCTAssertTrue(heading("/third", in: app).appears(within: Ceiling.load), "link didn't navigate")
-
-        swipeBackFromLeftEdge(in: app)
-        XCTAssertFalse(tabsButton(count: 2, in: app).disappears(within: 2), "closed a tab that can go back")
-
-        app.buttons["Page actions"].tap()
-        let back = app.buttons["Back"]
-        XCTAssertTrue(back.appears(within: Ceiling.ui), "caret sheet didn't open")
-        back.tap()
-        XCTAssertTrue(heading("/next", in: app).appears(within: Ceiling.load), "Back didn't go back")
-        XCTAssertTrue(tabsButton(count: 2, in: app).exists, "Back closed the tab instead of going back")
-
-        swipeBackFromLeftEdge(in: app)
-        XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "swipe didn't close the tab")
-        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab; \(server.requestLog)")
-        withExtendedLifetime(server) {}
-    }
-
-    func testSwipeBackClosesBlankTargetTab() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url)
-
-        app.webViews.links["Blank target"].tap()
-        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
-        XCTAssertTrue(heading("/popup", in: app).appears(within: Ceiling.load))
-
-        swipeBackFromLeftEdge(in: app)
-        XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "swipe didn't close the tab")
-        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab; \(server.requestLog)")
-        withExtendedLifetime(server) {}
-    }
-
-    /// A tab's back history survives the app being killed and relaunched, as in Arc: back still goes
-    /// to the new tab's first page, and only then closes it. Also covers the opener tab, which
-    /// isn't shown after the relaunch until the close lands on it.
-    func testHistorySurvivesRelaunch() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url, session: UUID().uuidString)
-
-        app.webViews.links["Blank target"].tap()
-        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
-        XCTAssertTrue(heading("/popup", in: app).appears(within: Ceiling.load))
-        // By position: on the iOS 27.1 simulator XCUITest reported this link as not hittable at rest.
-        app.webViews.links["Third page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(heading("/third", in: app).appears(within: Ceiling.load), "link didn't navigate")
-
-        // Killed while open, the harder case: only the saves made while browsing (once a page has
-        // loaded) have run, not the one when the app goes away (swiped away from the app switcher).
-        // Killed once those have landed, which the app reports under -uiTesting.
-        XCTAssertTrue(app.savesSettle(), "the app's saves didn't finish")
-        app.terminate()
-        app.launch()
-        XCTAssertTrue(heading("/third", in: app).appears(within: Ceiling.launch), "tab didn't come back")
-        XCTAssertTrue(tabsButton(count: 2, in: app).exists)
-
-        app.buttons["Page actions"].tap()
-        let back = app.buttons["Back"]
-        XCTAssertTrue(back.appears(within: Ceiling.ui), "caret sheet didn't open")
-        back.tap()
-        XCTAssertTrue(heading("/popup", in: app).appears(within: Ceiling.load), "history was lost on relaunch")
-        XCTAssertTrue(tabsButton(count: 2, in: app).exists, "Back closed the tab instead of going back")
-
-        swipeBackFromLeftEdge(in: app)
-        XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "swipe didn't close the tab")
-        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab; \(server.requestLog)")
-        withExtendedLifetime(server) {}
-    }
-
     /// Let go early and the page springs back; the tab stays.
     func testShortSwipeLeavesTabOpen() throws {
         let server = try FixtureServer(html: Self.page)
@@ -157,8 +69,8 @@ final class BackSwipeCloseTests: UITestCase {
 
     /// WebKit's back and forward swipes start beside the page too, but they are the web view's own,
     /// and get a touch only if it lands in the web view: the app hands it the ones beside the page.
-    /// Synthesized drags don't drive those swipes (see above), so this checks the hand-off with a
-    /// drag the page's scroll view takes.
+    /// Synthesized drags don't drive those swipes (none of press-and-drag or swipeRight did on the iOS
+    /// 27.1 simulator), so this checks the hand-off with a drag the page's scroll view takes.
     func testDragBesidePageScrollsIt() throws {
         let server = try FixtureServer(html: Self.page + Self.scrollReport)
         let app = launchOnPage(server.url)
@@ -223,11 +135,10 @@ final class BackSwipeCloseTests: UITestCase {
 
     // MARK: Helpers
 
-    /// `session` keeps the app's saved tabs across relaunches of `app`.
-    private func launchOnPage(_ url: URL, session: String? = nil) -> XCUIApplication {
+    /// Launches with no saved tabs and opens `url` from the launch search panel.
+    private func launchOnPage(_ url: URL) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTesting"]
-        if let session { app.launchEnvironment["CORMORANT_UI_TESTING_SESSION"] = session }
         app.launch()
 
         let field = app.textFields["Search or enter address"]

@@ -136,3 +136,35 @@ import Testing
         }
     }
 }
+
+/// The search panel's open tabs: which it offers to switch to, and Search Tabs' list and line.
+@Suite struct OpenTabSuggestionsTests {
+    private let current = Tab(url: url("http://127.0.0.1:8080/beta"), title: "Page beta")
+    private let other = Tab(url: url("http://127.0.0.1:8080/alpha"), title: "Page alpha")
+    private let blank = Tab(title: "")
+
+    @Test func editingLeavesTheActiveTabOutAndComposingListsItFirst() {
+        let tabs = [other, current, blank]
+        #expect(AddressSuggestions.openTabCandidates(tabs, activeTabID: current.id, composingNewTab: false) == [other])
+        #expect(AddressSuggestions.openTabCandidates(tabs, activeTabID: current.id, composingNewTab: true) == [current, other])
+        #expect(AddressSuggestions.openTabCandidates(tabs, activeTabID: nil, composingNewTab: true) == [other, current])
+    }
+
+    @Test func searchTabsListsEveryTabWithAPageTheCurrentOneToo() {
+        let search = TabSearch(tabs: [current, other, blank], query: nil)
+        #expect(search.header == "2 Open Tabs")
+        #expect(search.tabs == [current, other])
+        #expect(TabSearch(tabs: [current], query: nil).header == "1 Open Tab")
+    }
+
+    @Test func searchTabsFiltersAndCountsMatches() {
+        let tabs = [current, other]
+        let one = TabSearch(tabs: tabs, query: "alph")
+        #expect(one.header == "2 Open Tabs · 1 match")
+        #expect(one.tabs == [other])
+        #expect(TabSearch(tabs: tabs, query: "page").header == "2 Open Tabs · 2 matches")
+        let none = TabSearch(tabs: tabs, query: "gamma")
+        #expect(none.header == "2 Open Tabs · 0 matches")
+        #expect(none.tabs.isEmpty)
+    }
+}

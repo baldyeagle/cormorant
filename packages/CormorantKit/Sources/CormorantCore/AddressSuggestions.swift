@@ -93,6 +93,15 @@ public struct AddressSuggestions: Equatable, Sendable {
         for query in engineSuggestions { add(query, .engine) }
     }
 
+    /// The open tabs the panel offers, in the order given (most recently viewed first), each with a
+    /// page: the active tab is left out while editing its address, and listed first while composing a
+    /// new tab, as the way to edit its address instead.
+    public static func openTabCandidates(_ tabs: [Tab], activeTabID: UUID?, composingNewTab: Bool) -> [Tab] {
+        let others = tabs.filter { $0.id != activeTabID }
+        let candidates = composingNewTab ? tabs.filter { $0.id == activeTabID } + others : others
+        return candidates.filter { $0.url != nil }
+    }
+
     /// Whether every word of `text` appears (ignoring case) in `title` or `url`. A leading scheme or
     /// `www.` in the first word is ignored, as `url` is compared without them.
     public static func matches(_ text: String, title: String, url: URL?) -> Bool {
@@ -101,5 +110,28 @@ public struct AddressSuggestions: Equatable, Sendable {
         let address = url.flatMap(BrowsingHistory.key(for:)) ?? url?.absoluteString ?? ""
         let haystack = (title + " " + address).lowercased()
         return words.allSatisfy(haystack.contains)
+    }
+}
+
+/// Search Tabs: the open tabs with a page, those matching the typed text once there is some, and the
+/// line over them ("2 Open Tabs", "2 Open Tabs · 1 match"), which shows even for no match.
+public struct TabSearch: Equatable, Sendable {
+    public let header: String
+    public let tabs: [Tab]
+
+    /// - Parameters:
+    ///   - tabs: the Space's open tabs, in the order to list them.
+    ///   - query: what was typed, trimmed; nil for nothing yet.
+    public init(tabs: [Tab], query: String?) {
+        let all = tabs.filter { $0.url != nil }
+        let count = all.count == 1 ? "1 Open Tab" : "\(all.count) Open Tabs"
+        guard let query else {
+            header = count
+            self.tabs = all
+            return
+        }
+        let matching = all.filter { AddressSuggestions.matches(query, title: $0.displayTitle, url: $0.url) }
+        header = "\(count) · \(matching.count == 1 ? "1 match" : "\(matching.count) matches")"
+        self.tabs = matching
     }
 }

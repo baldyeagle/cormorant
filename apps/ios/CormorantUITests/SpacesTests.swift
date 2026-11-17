@@ -1,7 +1,8 @@
 import XCTest
 
 /// Switching Spaces: from the tabs button's long-press menu, the switcher's Space strip and its title
-/// menu, each landing on the tab last viewed in the Space, or the search panel in an empty one.
+/// menu, or the search panel in an empty Space. That a Space comes back on the tab last viewed in it is
+/// CormorantTests' SpacesTests.
 /// `-uiTestingSpaces` seeds Work (on a profile of its own) and Projects, with one fixture tab each, and
 /// an empty Trip, beside an empty Home. With only Home, all that shows is a Spaces button in the
 /// switcher, to Manage Spaces.
@@ -170,40 +171,6 @@ final class SpacesTests: UITestCase {
                until: { app.buttons["Save"].exists }, in: app)
         XCTAssertTrue(app.textFields["Name"].appears(within: Ceiling.ui), "Edit Space didn't open")
         XCTAssertEqual(app.textFields["Name"].value as? String, "Work", "Edit Space isn't Work's")
-        withExtendedLifetime(server) {}
-    }
-
-    /// Back in a Space, its last viewed tab shows, not its newest.
-    func testSwitchingBackReturnsToTheTabLeft() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchWithSpaces(server)
-        open(server.url.appending(path: "a"), path: "/a", in: app)
-        open(server.url.appending(path: "b"), path: "/b", in: app)
-
-        // Back to /a, the older tab, from its card.
-        openSwitcher(in: app)
-        let card = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH 'TabCard' AND label == 'Tab /a'")).firstMatch
-        XCTAssertTrue(card.appears(within: Ceiling.ui), "no card for /a")
-        let frame = card.settledFrame()
-        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: max(frame.minX, 0) + 20, dy: frame.midY)).tap()
-        XCTAssertTrue(app.buttons["Done"].disappears(within: Ceiling.ui), "the switcher didn't close")
-        XCTAssertTrue(heading("/a", in: app).appears(within: Ceiling.load), "the card didn't open /a")
-
-        // To Work and back, through the strip.
-        openSwitcher(in: app)
-        let strip = app.buttons.matching(identifier: "SpaceStrip")
-        strip["Work"].tap()
-        XCTAssertTrue(waitUntil(Ceiling.ui) { strip["Work"].isSelected }, "the strip didn't switch to Work")
-        app.buttons["Done"].tap()
-        XCTAssertTrue(heading("/work", in: app).appears(within: Ceiling.load), "Work's tab didn't show")
-
-        openSwitcher(in: app)
-        strip["Home"].tap()
-        XCTAssertTrue(waitUntil(Ceiling.ui) { strip["Home"].isSelected }, "the strip didn't switch to Home")
-        app.buttons["Done"].tap()
-        XCTAssertTrue(heading("/a", in: app).appears(within: Ceiling.load), "Home came back on another tab than /a")
-        XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).label == "Tabs, 2 open" }, "Home's tabs changed")
         withExtendedLifetime(server) {}
     }
 

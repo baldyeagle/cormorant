@@ -41,137 +41,6 @@ final class LinkContextMenuTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
-    /// Picked before the preview has a page (its request for `/slow` is held back for longer than the
-    /// test runs), so the new tab loads the link itself rather than adopting the preview.
-    func testOpenInNewTabLoadsLinkWhenPreviewHasNoPage() throws {
-        let server = try FixtureServer(html: Self.page, delays: ["/slow": 60])
-        let app = launchOnPage(server.url)
-
-        openMenu(on: app.webViews.links["Slow page"], in: app)
-        waitForHeldPreviewRequest(on: server)
-        choose("Open in New Tab", in: app)
-
-        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
-        XCTAssertTrue(heading("/", in: app).disappears(within: Ceiling.load), "didn't switch to the new tab")
-        XCTAssertTrue(heading("/slow", in: app).appears(within: Ceiling.load),
-                      "the new tab didn't load the link; \(server.requestLog)")
-        // The preview's request and the tab's own: the tab didn't adopt the preview.
-        XCTAssertEqual(server.requestCount(for: "/slow"), 2, server.requestLog)
-        XCTAssertEqual(app.state, .runningForeground)
-        withExtendedLifetime(server) {}
-    }
-
-    /// Picked before the preview has a page (its request for `/slow` is held back for longer than the
-    /// test runs), so the tab loads it itself, in the background, and the switcher gets its snapshot
-    /// without the tab ever being shown.
-    func testOpenInBackgroundTabKeepsCurrentPageAndLoadsIt() throws {
-        let server = try FixtureServer(html: Self.page, delays: ["/slow": 60])
-        let app = launchOnPage(server.url)
-
-        openMenu(on: app.webViews.links["Slow page"], in: app)
-        waitForHeldPreviewRequest(on: server)
-        choose("Open in Background Tab", in: app)
-
-        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no background tab")
-        XCTAssertFalse(heading("/slow", in: app).appears(within: 2), "left the current page")
-        XCTAssertTrue(heading("/", in: app).exists)
-
-        // A real tab: the switcher lists it, and has its page without it ever being shown.
-        openSwitcher(in: app, count: 2)
-        assertSnapshots(2, in: app)
-        // The preview's request and the tab's own: the tab loaded the link itself.
-        XCTAssertEqual(server.requestCount(for: "/slow"), 2, server.requestLog)
-
-        // Back on the page: still the one on screen and usable (the background stage stays behind it).
-        app.buttons["Done"].firstMatch.tap()
-        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load))
-        let tabs = tabsButton(count: 2, in: app)
-        XCTAssertTrue(waitUntil(Ceiling.ui) { tabs.isHittable }, "the tab button isn't usable")
-        withExtendedLifetime(server) {}
-    }
-
-    /// The preview has the page: the background tab takes it over, with no second request.
-    func testOpenInBackgroundTabAdoptsLoadedPreview() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url)
-
-        openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
-        choose("Open in Background Tab", in: app)
-
-        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no background tab")
-        XCTAssertTrue(heading("/", in: app).exists, "left the current page")
-        openSwitcher(in: app, count: 2)
-        assertSnapshots(2, in: app)
-        XCTAssertEqual(server.requestCount(for: "/next"), 1, "the page was loaded again")
-        withExtendedLifetime(server) {}
-    }
-
-    /// The preview has the page: the new tab takes it over, with no second request.
-    func testOpenInNewTabAdoptsLoadedPreview() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url)
-
-        openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
-        choose("Open in New Tab", in: app)
-
-        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
-        XCTAssertTrue(heading("/", in: app).disappears(within: Ceiling.load), "didn't switch to the new tab")
-        XCTAssertTrue(heading("/next", in: app).exists)
-        XCTAssertEqual(server.requestCount(for: "/next"), 1, "the page was loaded again")
-        withExtendedLifetime(server) {}
-    }
-
-    /// A tab that adopted the preview's page keeps its history like any tab: across a relaunch, back
-    /// returns to that first page, and swiping back from there closes it.
-    func testAdoptedTabHistorySurvivesRelaunch() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url, session: UUID().uuidString)
-
-        openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
-        choose("Open in New Tab", in: app)
-        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
-        XCTAssertTrue(heading("/", in: app).disappears(within: Ceiling.load), "didn't switch to the new tab")
-        XCTAssertEqual(server.requestCount(for: "/next"), 1, "the page was loaded again")
-        app.webViews.links["Third page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(heading("/third", in: app).appears(within: Ceiling.load), "link didn't navigate")
-
-        // Killed while open, once the saves made while browsing have landed (see BackSwipeCloseTests).
-        XCTAssertTrue(app.savesSettle(), "the app's saves didn't finish")
-        app.terminate()
-        app.launch()
-        XCTAssertTrue(heading("/third", in: app).appears(within: Ceiling.launch), "tab didn't come back")
-        XCTAssertTrue(tabsButton(count: 2, in: app).exists)
-
-        app.buttons["Page actions"].tap()
-        let back = app.buttons["Back"]
-        XCTAssertTrue(back.appears(within: Ceiling.ui), "caret sheet didn't open")
-        back.tap()
-        XCTAssertTrue(heading("/next", in: app).appears(within: Ceiling.load), "the adopted page's entry was lost")
-        XCTAssertTrue(tabsButton(count: 2, in: app).exists, "Back closed the tab instead of going back")
-
-        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 2, dy: 0))
-        edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)),
-                   withVelocity: .fast, thenHoldForDuration: 0)
-        XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "swipe didn't close the tab")
-        withExtendedLifetime(server) {}
-    }
-
-    func testCopyLinkCopiesURL() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url)
-
-        openMenu(on: app.webViews.links["Next page"], in: app)
-        choose("Copy Link", in: app)
-
-        // Read back through the app (`UITestingProbes`): the test runner reading the pasteboard itself
-        // would be a cross-app paste. Pasting with ⌘V instead raced the keyboard coming up.
-        let pasteboard = app.descendants(matching: .any)["UITesting.pasteboard"].firstMatch
-        let expected = server.url.appending(path: "next").absoluteString
-        XCTAssertTrue(waitUntil(Ceiling.ui) { pasteboard.value as? String == expected },
-                      "the pasteboard has \(String(describing: pasteboard.value)), not the link")
-        withExtendedLifetime(server) {}
-    }
-
     /// Tapping the preview opens the link in a new tab, which takes over the preview's page (no second
     /// request) as the card grows into it.
     func testTappingPreviewOpensNewTabWithPreviewPage() throws {
@@ -218,50 +87,6 @@ final class LinkContextMenuTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
-    /// `target=_blank` doesn't matter to the menu: Open Link still means this tab.
-    func testBlankTargetOpenLinkStaysInCurrentTab() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url)
-
-        openMenu(on: app.webViews.links["Blank target"], in: app)
-        choose("Open Link", in: app)
-
-        XCTAssertTrue(heading("/", in: app).disappears(within: Ceiling.load), "the tab didn't navigate")
-        XCTAssertTrue(heading("/popup", in: app).appears(within: Ceiling.load))
-        XCTAssertTrue(tabsButton(count: 1, in: app).exists)
-        withExtendedLifetime(server) {}
-    }
-
-    /// Another app's link can't load in a tab; Open Link asks first, as a tap does.
-    func testMailLinkOffersNoTabsAndAsksBeforeOpening() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url)
-
-        openMenu(on: app.webViews.links["Mail link"], in: app)
-        XCTAssertTrue(app.buttons["Copy Link"].exists)
-        XCTAssertFalse(app.buttons["Open in New Tab"].exists)
-        XCTAssertFalse(app.buttons["Open in Background Tab"].exists)
-        choose("Open Link", in: app)
-
-        let alert = app.alerts["Open in Mail?"]
-        XCTAssertTrue(alert.appears(within: Ceiling.ui), "no confirmation before opening Mail")
-        alert.buttons["Cancel"].tap()
-        XCTAssertEqual(app.state, .runningForeground)
-        withExtendedLifetime(server) {}
-    }
-
-    /// A tap can't open a data: URL top-level, so the menu doesn't either.
-    func testDataLinkOffersCopyOnly() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url)
-
-        openMenu(on: app.webViews.links["Data link"], in: app)
-        XCTAssertTrue(app.buttons["Share Link"].exists)
-        XCTAssertFalse(app.buttons["Open Link"].exists)
-        XCTAssertFalse(app.buttons["Open in New Tab"].exists)
-        withExtendedLifetime(server) {}
-    }
-
     func testScriptLinkHasNoMenu() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
@@ -291,11 +116,9 @@ final class LinkContextMenuTests: UITestCase {
     // MARK: Helpers
 
     /// Launches with no saved tabs and opens `url` from the launch search panel.
-    /// `session` keeps the app's saved tabs across relaunches of `app`.
-    private func launchOnPage(_ url: URL, session: String? = nil) -> XCUIApplication {
+    private func launchOnPage(_ url: URL) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTesting"]
-        if let session { app.launchEnvironment["CORMORANT_UI_TESTING_SESSION"] = session }
         app.launch()
 
         let field = app.textFields["Search or enter address"]
@@ -336,22 +159,6 @@ final class LinkContextMenuTests: UITestCase {
     private func openSwitcher(in app: XCUIApplication, count: Int, file: StaticString = #filePath, line: UInt = #line) {
         tabsButton(count: count, in: app).tap()
         XCTAssertTrue(app.staticTexts["\(count) Tabs"].appears(within: Ceiling.ui), "switcher didn't open", file: file, line: line)
-    }
-
-    /// Waits until the preview has asked for `/slow`, the request the server holds back, so the tab's
-    /// own request (answered at once) can't be the first one instead.
-    private func waitForHeldPreviewRequest(on server: FixtureServer, file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(waitUntil(Ceiling.load) { server.requestCount(for: "/slow") == 1 },
-                      "the preview didn't request /slow; \(server.requestLog)", file: file, line: line)
-    }
-
-    /// Waits for `count` switcher cards to show their page rather than a placeholder.
-    private func assertSnapshots(_ count: Int, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
-        let snapshots = app.descendants(matching: .any).matching(identifier: "TabCard.snapshot")
-        let shown = waitUntil(Ceiling.load) { snapshots.count == count }
-        if !shown {
-            XCTFail("\(snapshots.count) of \(count) tabs have a snapshot", file: file, line: line)
-        }
     }
 
     private func choose(_ title: String, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {

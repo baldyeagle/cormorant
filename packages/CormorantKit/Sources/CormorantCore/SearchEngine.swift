@@ -117,6 +117,14 @@ public enum AddressResolver {
         return .search(url, query: text)
     }
 
+    /// Pasted text as the address field takes it: its lines joined with spaces and trimmed, or nil
+    /// when that leaves nothing to load (Paste and Go, Paste and Search).
+    public static func pastedLine(_ text: String) -> String? {
+        let line = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return line.isEmpty ? nil : line
+    }
+
     static let navigableSchemes: Set<String> = ["http", "https", "about"]
 
     /// TLDs that, as the whole input `name.tld`, are far more likely a file name than a site.

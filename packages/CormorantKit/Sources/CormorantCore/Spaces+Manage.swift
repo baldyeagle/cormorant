@@ -33,6 +33,30 @@ extension BrowserState {
     }
 }
 
+extension Space {
+    /// Edit Space's Archive confirmation: what archiving the Space named `name`, with `tabCount` open
+    /// tabs, does with it and them, and how it comes back.
+    public static func archiveConfirmation(name: String, tabCount: Int) -> String {
+        let kept = switch tabCount {
+        case 0: "It has no open tabs."
+        case 1: "Its tab is kept, and doesn't archive while the Space is away."
+        default: "Its \(tabCount) tabs are kept, and don't archive while the Space is away."
+        }
+        return "\(kept) \(name) leaves the Spaces you switch between until you restore it from Archived in Spaces."
+    }
+
+    /// The Delete confirmation, in Edit Space and for an archived Space in Manage Spaces: where a Space's
+    /// `tabCount` open tabs go.
+    public static func deleteConfirmation(tabCount: Int) -> String {
+        let moved = switch tabCount {
+        case 0: "It has no open tabs."
+        case 1: "Its tab goes to the tab archive, where you can search for it and reopen it."
+        default: "Its \(tabCount) tabs go to the tab archive, where you can search for them and reopen them."
+        }
+        return "\(moved) The Space and its settings are gone."
+    }
+}
+
 // MARK: - Profiles (Manage Spaces' Profiles section, New and Edit Profile)
 
 extension BrowserState {

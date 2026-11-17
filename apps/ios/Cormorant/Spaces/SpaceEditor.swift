@@ -76,8 +76,9 @@ struct SpaceEditor: View {
                     .accessibilityIdentifier("SpaceProfile")
                 }
 
-                if !isNew, store.hasSpacesToSwitch, saved?.isArchived == false {
-                    focusSection
+                if !isNew, let focus = store.state.focusFilterGroup(editing: draft.id, named: confirmName,
+                                                                     focusSpace: store.focusFilter.spaceID) {
+                    focusSection(focus)
                 }
 
                 if !isNew {
@@ -138,12 +139,9 @@ struct SpaceEditor: View {
 
     // MARK: Edit Space only
 
-    /// Whether a Focus filter sends links from other apps here now. The app knows its filter is on and
-    /// which Space it names, not which Focus it belongs to, so it doesn't say.
-    private var isFocusTarget: Bool { store.focusFilter.spaceID == draft.id }
-
-    /// The Focus filter: on now for this Space, or how to set one up (that's in iOS Settings).
-    private var focusSection: some View {
+    /// The Focus filter: on now for this Space, or how to set one up (that's in iOS Settings). What it
+    /// says is `BrowserState.focusFilterGroup`.
+    private func focusSection(_ focus: FocusFilterGroup) -> some View {
         Section {
             HStack(spacing: 12) {
                 Image(systemName: "moon.fill")
@@ -154,12 +152,12 @@ struct SpaceEditor: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Focus Filter")
-                    Text(isFocusTarget ? "On now: links from other apps open in \(confirmName)" : "Off")
+                    Text(focus.status)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                if isFocusTarget {
+                if focus.isOn {
                     Circle()
                         .fill(.green)
                         .frame(width: 8, height: 8)
@@ -171,9 +169,7 @@ struct SpaceEditor: View {
         } header: {
             Text("Focus")
         } footer: {
-            Text(isFocusTarget
-                 ? "When the Focus ends, links open in the last Space you used."
-                 : "To open links from other apps in \(confirmName) during a Focus, go to Settings › Focus, choose a Focus, then Add Filter › Cormorant › \(saved?.name ?? confirmName).")
+            Text(focus.footer)
         }
     }
 
@@ -239,26 +235,9 @@ struct SpaceEditor: View {
     /// The name as it is in the field, or as saved while the field is blank.
     private var confirmName: String { trimmedName.isEmpty ? (saved?.name ?? "") : trimmedName }
 
-    private var archiveMessage: String {
-        let kept = switch tabCount {
-        case 0: "It has no open tabs."
-        case 1: "Its tab is kept, and doesn't archive while the Space is away."
-        default: "Its \(tabCount) tabs are kept, and don't archive while the Space is away."
-        }
-        return "\(kept) \(confirmName) leaves the Spaces you switch between until you restore it from Archived in Spaces."
-    }
+    private var archiveMessage: String { Space.archiveConfirmation(name: confirmName, tabCount: tabCount) }
 
-    private var deleteMessage: String { Self.deleteMessage(tabCount: tabCount) }
-
-    /// What deleting a Space does with its tabs: here and when Manage Spaces deletes an archived one.
-    static func deleteMessage(tabCount: Int) -> String {
-        let moved = switch tabCount {
-        case 0: "It has no open tabs."
-        case 1: "Its tab goes to the tab archive, where you can search for it and reopen it."
-        default: "Its \(tabCount) tabs go to the tab archive, where you can search for them and reopen them."
-        }
-        return "\(moved) The Space and its settings are gone."
-    }
+    private var deleteMessage: String { Space.deleteConfirmation(tabCount: tabCount) }
 
     // MARK: Actions
 

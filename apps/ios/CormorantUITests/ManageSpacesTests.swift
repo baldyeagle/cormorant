@@ -1,8 +1,10 @@
 import XCTest
 
 /// Manage Spaces, reached from Settings: adding a Space lands in it, empty, with the search panel up;
-/// Edit Space renames a Space and changes its icon; archiving keeps a Space for Restore; deleting sends
-/// its tabs to the tab archive; Home can't be archived or deleted.
+/// Edit Space changes a Space's icon; Home's offers no Archive or Delete; the Space you're in is
+/// checked; an archived Space deletes from the list; deleting the Space you're in leaves Settings up.
+/// What archiving, restoring, renaming and deleting do to the Spaces and their tabs is CormorantTests'
+/// ManageSpacesTests.
 @MainActor
 final class ManageSpacesTests: UITestCase {
     /// Every path serves this page, which names its path.
@@ -51,25 +53,18 @@ final class ManageSpacesTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
-    func testRenamingHomeAndNoArchiveOrDelete() {
+    func testHomeHasNoArchiveOrDelete() {
         let app = launch()
         openSpaces(in: app)
         row("Home", in: app).tap()
-        let save = app.buttons["Save"]
-        XCTAssertTrue(save.appears(within: Ceiling.ui), "Edit Space didn't open")
-        // Home always exists: renamed, never archived or deleted. Checked with the form scrolled to its
-        // end, the archive time's footer, where Archive and Delete would follow.
+        XCTAssertTrue(app.buttons["Save"].appears(within: Ceiling.ui), "Edit Space didn't open")
+        // Home always exists: never archived or deleted. Checked with the form scrolled to its end, the
+        // archive time's footer, where Archive and Delete would follow.
         app.otherElements["Preview"].firstMatch.swipeUp()
         let footer = app.staticTexts["Tabs you haven't looked at for this long move to the tab archive."]
         XCTAssertTrue(footer.appears(within: Ceiling.ui), "no archive time for Home")
         XCTAssertFalse(app.buttons["Archive Space"].exists, "Home offers Archive")
         XCTAssertFalse(app.buttons["Delete Space"].exists, "Home offers Delete")
-
-        replaceName(with: "Personal", in: app)
-        save.tap()
-        XCTAssertTrue(save.disappears(within: Ceiling.ui), "Edit Space didn't close")
-        XCTAssertTrue(row("Personal", in: app).appears(within: Ceiling.ui), "Home wasn't renamed")
-        XCTAssertFalse(row("Home", in: app).exists, "the old name is still listed")
     }
 
     func testChangingASpacesIcon() {
@@ -93,34 +88,6 @@ final class ManageSpacesTests: UITestCase {
         XCTAssertTrue(save.disappears(within: Ceiling.ui), "Edit Space didn't close")
         XCTAssertTrue(waitUntil(Ceiling.ui) { (self.row("Work", in: app).value as? String)?.hasPrefix("Airplane icon") == true },
                       "the icon didn't change: \(row("Work", in: app).value ?? "nil")")
-    }
-
-    func testArchivingAndRestoringASpace() {
-        let app = launch()
-        createSpace("Work", in: app)
-        openSpaces(in: app)
-        row("Work", in: app).tap()
-        XCTAssertTrue(app.buttons["Save"].appears(within: Ceiling.ui), "Edit Space didn't open")
-        // Below the Profile row on a short screen. On the preview: a swipe starting on a button can
-        // land as a tap on it.
-        app.otherElements["Preview"].firstMatch.swipeUp()
-        let archive = app.buttons["Archive Space"]
-        XCTAssertTrue(archive.appears(within: Ceiling.ui), "no Archive Space")
-        archive.tap()
-        let confirm = app.buttons["Archive Work"]
-        XCTAssertTrue(confirm.appears(within: Ceiling.ui), "no archive confirmation")
-        XCTAssertTrue(app.staticTexts["It has no open tabs. Work leaves the Spaces you switch between until you restore it from Archived in Spaces."].exists,
-                      "the confirmation doesn't say how to get it back")
-        confirm.tap()
-        XCTAssertTrue(app.buttons["Save"].disappears(within: Ceiling.ui), "Edit Space didn't close")
-
-        // Out of the list, into Archived.
-        let restore = app.buttons["Restore Work"]
-        XCTAssertTrue(restore.appears(within: Ceiling.ui), "Work isn't under Archived")
-        XCTAssertFalse(app.buttons["Work"].exists, "Work is still in the list")
-        restore.tap()
-        XCTAssertTrue(row("Work", in: app).appears(within: Ceiling.ui), "Restore didn't bring Work back")
-        XCTAssertTrue(restore.disappears(within: Ceiling.ui), "Work is still under Archived")
     }
 
     func testTheCurrentSpaceIsCheckedAndAnArchivedOneDeletesFromTheList() {
@@ -163,7 +130,9 @@ final class ManageSpacesTests: UITestCase {
         XCTAssertFalse(archivedHeader.exists, "the empty Archived section stayed")
     }
 
-    func testDeletingASpaceSendsItsTabsToTheArchive() throws {
+    /// Deleting the Space you're in, with a tab, from Settings › Spaces: confirmed, naming where the tab
+    /// goes, and Settings stays up through it, back in Home.
+    func testDeletingTheSpaceYoureInStaysInSettings() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launch()
         createSpace("Work", in: app)
@@ -188,18 +157,7 @@ final class ManageSpacesTests: UITestCase {
         XCTAssertTrue(row("Work", in: app).disappears(within: Ceiling.ui), "Work is still listed")
         // Settings stays up through it, back in Home.
         XCTAssertTrue(row("Home", in: app).isSelected, "Home isn't the current Space")
-        leaveSettings(in: app)
-
-        // Back in Home, empty; Work's page is in the tab archive.
-        XCTAssertTrue(searchField(in: app).appears(within: Ceiling.ui), "no search panel in empty Home")
-        closeSearch(in: app)
-        let tabs = app.buttons["Tabs, 0 open"]
-        XCTAssertTrue(tabs.appears(within: Ceiling.ui), "Home isn't empty")
-        let archiveLink = app.buttons["Archive"]
-        tabs.tapWhenSettled()
-        XCTAssertTrue(archiveLink.appears(within: Ceiling.ui), "the switcher didn't open")
-        archiveLink.tap()
-        XCTAssertTrue(app.staticTexts["Tab /work"].appears(within: Ceiling.ui), "Work's tab isn't in the archive")
+        XCTAssertTrue(app.navigationBars["Spaces"].exists, "Manage Spaces closed")
         withExtendedLifetime(server) {}
     }
 
@@ -270,19 +228,6 @@ final class ManageSpacesTests: UITestCase {
         return buttons.count > 1 ? buttons.element(boundBy: buttons.count - 1) : buttons.firstMatch
     }
 
-    /// Back out of Settings › Spaces: to Settings, Done, then the caret sheet swiped away by its grabber.
-    private func leaveSettings(in app: XCUIApplication) {
-        topBackButton(in: app).tap()
-        let done = app.navigationBars["Settings"].buttons["Done"]
-        XCTAssertTrue(done.appears(within: Ceiling.ui), "didn't go back to Settings")
-        done.tap()
-        let grabber = app.descendants(matching: .any)["Sheet Grabber"].firstMatch
-        XCTAssertTrue(grabber.appears(within: Ceiling.ui), "the caret sheet isn't up")
-        grabber.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
-        XCTAssertTrue(grabber.disappears(within: Ceiling.ui), "the caret sheet didn't close")
-    }
-
     /// Adds a Space with the suggested look and lands in it, with the search panel up.
     private func createSpace(_ name: String, in app: XCUIApplication) {
         openSpaces(in: app)
@@ -295,16 +240,5 @@ final class ManageSpacesTests: UITestCase {
         app.buttons["Add"].tap()
         XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
         XCTAssertTrue(searchField(in: app).appears(within: Ceiling.ui), "no search panel in \(name)")
-    }
-
-    /// Clears Edit Space's name field and types `name`.
-    private func replaceName(with name: String, in app: XCUIApplication) {
-        let field = app.textFields["Name"]
-        XCTAssertTrue(field.appears(within: Ceiling.ui))
-        field.tap()
-        XCTAssertTrue(waitUntil(Ceiling.ui) { field.value(forKey: "hasKeyboardFocus") as? Bool == true },
-                      "the name field didn't take focus")
-        let old = field.value as? String ?? ""
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count) + name)
     }
 }

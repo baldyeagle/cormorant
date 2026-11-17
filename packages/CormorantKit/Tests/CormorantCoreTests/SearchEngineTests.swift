@@ -171,4 +171,13 @@ import Testing
         let result = AddressResolver.resolve("tide pools", engine: broken)
         #expect(result == .search(SearchEngine.default.url(for: "tide pools")!, query: "tide pools"))
     }
+
+    /// Paste and Go / Paste and Search take copied text on one line, as the field would.
+    @Test func pastedTextGoesOnOneLine() {
+        #expect(AddressResolver.pastedLine("cormorant\nbird facts") == "cormorant bird facts")
+        #expect(AddressResolver.pastedLine("  https://example.com/a\r\n") == "https://example.com/a")
+        #expect(AddressResolver.pastedLine("one\n\ntwo") == "one two")
+        #expect(AddressResolver.pastedLine(" \n\t ") == nil)
+        #expect(AddressResolver.pastedLine("") == nil)
+    }
 }

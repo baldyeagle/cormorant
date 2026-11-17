@@ -62,7 +62,8 @@ struct SearchSheet: View {
     /// Typing pauses this long before the engine is asked, so a quick word is one request, not five.
     private static let engineDelay: Duration = .milliseconds(150)
 
-    private struct Lookup: Equatable {
+    /// History and engine results for some typed text (`text`).
+    struct Lookup: Equatable {
         var text = ""
         var pages: [HistoryEntry] = []
         var pastSearches: [String] = []
@@ -100,16 +101,8 @@ struct SearchSheet: View {
             Task { selectAll() }
         }
         .onChange(of: text) { old, new in textDidChange(from: old, to: new) }
-        // Searching tabs only, Return picks a tab: Paste and Go would read as leaving for a page.
-        .onChange(of: isTabSearch, initial: true) { _, tabsOnly in
-            if tabsOnly {
-                PasteAndGo.release(pasteOwner)
-            } else {
-                PasteAndGo.target = PasteAndGo.Target(owner: pasteOwner) { pasted in
-                    store.submit(pasted)
-                    onDismiss()
-                }
-            }
+        .onChange(of: isTabSearch, initial: true) {
+            Self.offerPaste(owner: pasteOwner, store: store, onDismiss: onDismiss)
         }
         .onDisappear { PasteAndGo.release(pasteOwner) }
         .task(id: store.activeProfileID) {
@@ -283,7 +276,7 @@ struct SearchSheet: View {
     // MARK: Results
 
     /// The rows to show, by section.
-    private struct Shown {
+    struct Shown {
         /// Search Tabs only: how many tabs, and how many match.
         var tabsHeader = ""
         var openTabs: [CormorantCore.Tab] = []
@@ -330,16 +323,22 @@ struct SearchSheet: View {
         .padding(.horizontal, 12)
     }
 
-    private var shown: Shown {
-        if isTabSearch {
-            let all = store.tabs.filter { $0.url != nil }
-            guard let query else { return Shown(tabsHeader: Self.tabCount(all.count), openTabs: all) }
-            let matching = all.filter { AddressSuggestions.matches(query, title: $0.displayTitle, url: $0.url) }
-            let matches = matching.count == 1 ? "1 match" : "\(matching.count) matches"
-            return Shown(tabsHeader: "\(Self.tabCount(all.count)) · \(matches)", openTabs: matching)
+    private var shown: Shown { Self.shown(for: query, lookup: lookup, in: store) }
+
+    /// What the panel lists for `query` (the typed text; nil for none), with `lookup` the latest
+    /// history and engine results.
+    static func shown(for query: String?, lookup: Lookup, in store: BrowserStore) -> Shown {
+        if store.isSearchingTabs {
+            let search = TabSearch(tabs: store.tabs, query: query)
+            return Shown(tabsHeader: search.header, openTabs: search.tabs)
         }
+        let candidates = AddressSuggestions.openTabCandidates(store.tabs, activeTabID: store.state.activeTabID,
+                                                              composingNewTab: store.isComposingNewTab)
+        let closed = closedHere(in: store)
         guard let query else {
-            return Shown(openTabs: Array(tabCandidates.prefix(Self.rowLimit)),
+            // Most recently closed first.
+            let recentlyClosed = closed.sorted { $0.archivedAt > $1.archivedAt }
+            return Shown(openTabs: Array(candidates.prefix(Self.rowLimit)),
                          closed: Array(recentlyClosed.prefix(Self.rowLimit)))
         }
         // Until this query's own results arrive, the last ones that still fit it stand in, so rows
@@ -349,8 +348,8 @@ struct SearchSheet: View {
         let suggestions = AddressSuggestions(
             text: query,
             engine: store.settings.searchEngine,
-            openTabs: tabCandidates,
-            archived: closedHere,
+            openTabs: candidates,
+            archived: closed,
             pages: current ? lookup.pages
                 : lookup.pages.filter { AddressSuggestions.matches(query, title: $0.title, url: $0.url) },
             pastSearches: current ? lookup.pastSearches
@@ -362,23 +361,9 @@ struct SearchSheet: View {
                      closed: suggestions.closed, searches: suggestions.searches)
     }
 
-    /// Open tabs with a page, most recently viewed first. Editing this page leaves it out; composing
-    /// a new tab lists it first, as the way to edit its address instead.
-    private var tabCandidates: [CormorantCore.Tab] {
-        let activeID = store.state.activeTabID
-        let others = store.tabs.filter { $0.id != activeID }
-        let candidates = store.isComposingNewTab ? store.tabs.filter { $0.id == activeID } + others : others
-        return candidates.filter { $0.url != nil }
-    }
-
-    /// Most recently closed first.
-    private var recentlyClosed: [ArchivedTab] {
-        closedHere.sorted { $0.archivedAt > $1.archivedAt }
-    }
-
     /// Closed tabs that reopen in this Space: like the open tabs, none from another Space, which
     /// choosing would switch to.
-    private var closedHere: [ArchivedTab] {
+    private static func closedHere(in store: BrowserStore) -> [ArchivedTab] {
         store.state.archived(reopeningIn: store.state.activeSpaceID)
     }
 
@@ -515,12 +500,10 @@ struct SearchSheet: View {
             lookup = Lookup()
             return
         }
-        let history = store.browsingHistory, profile = store.activeProfileID
-        let pages = await history?.pages(matching: query, profile: profile) ?? []
-        let pastSearches = await history?.searches(matching: query, profile: profile) ?? []
+        var found = await Self.historyLookup(for: query, in: store)
         guard !Task.isCancelled else { return }
-        let carried = lookup.engineSuggestions.filter { $0.lowercased().hasPrefix(query.lowercased()) }
-        lookup = Lookup(text: query, pages: pages, pastSearches: pastSearches, engineSuggestions: carried)
+        found.engineSuggestions = lookup.engineSuggestions.filter { $0.lowercased().hasPrefix(query.lowercased()) }
+        lookup = found
 
         let engine = store.settings.searchEngine
         guard store.settings.searchSuggestions, let client = store.searchSuggestions, engine.offersSuggestions,
@@ -533,6 +516,15 @@ struct SearchSheet: View {
         let suggestions = await client.suggestions(for: query, from: engine)
         guard !Task.isCancelled, lookup.text == query else { return }
         lookup.engineSuggestions = suggestions
+    }
+
+    /// History's pages and earlier searches matching `query`, in the active Space's profile: a lookup
+    /// without the engine's suggestions.
+    static func historyLookup(for query: String, in store: BrowserStore) async -> Lookup {
+        let history = store.browsingHistory, profile = store.activeProfileID
+        let pages = await history?.pages(matching: query, profile: profile) ?? []
+        let pastSearches = await history?.searches(matching: query, profile: profile) ?? []
+        return Lookup(text: query, pages: pages, pastSearches: pastSearches)
     }
 
     /// Completes the field to a visited site while the user types at its end; never on a deletion,
@@ -596,7 +588,13 @@ struct SearchSheet: View {
 
     private func submit() {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        if isTabSearch {
+        Self.submit(text, shown: shown, in: store)
+        onDismiss()
+    }
+
+    /// Return with `text` in the field, the panel listing `shown`.
+    static func submit(_ text: String, shown: Shown, in store: BrowserStore) {
+        if store.isSearchingTabs {
             // The best match; with none, the text is searched for in a new tab instead.
             if let tab = shown.openTabs.first {
                 if tab.id != store.state.activeTabID { store.activate(tab.id) }
@@ -606,7 +604,20 @@ struct SearchSheet: View {
         } else {
             store.submit(text)
         }
-        onDismiss()
+    }
+
+    /// Offers Paste and Go (or Search) in the field's edit menu, submitting as the field does, except
+    /// while searching tabs only: Return picks a tab there, and Paste and Go would read as leaving
+    /// for a page.
+    static func offerPaste(owner: UUID, store: BrowserStore, onDismiss: @escaping () -> Void) {
+        if store.isSearchingTabs {
+            PasteAndGo.release(owner)
+        } else {
+            PasteAndGo.target = PasteAndGo.Target(owner: owner) { pasted in
+                store.submit(pasted)
+                onDismiss()
+            }
+        }
     }
 
     /// Puts a suggestion in the field to edit, the caret at its end.
@@ -633,10 +644,6 @@ struct SearchSheet: View {
 
     private func selectAll() {
         selection = text.isEmpty ? nil : TextSelection(range: text.startIndex..<text.endIndex)
-    }
-
-    private static func tabCount(_ count: Int) -> String {
-        count == 1 ? "1 Open Tab" : "\(count) Open Tabs"
     }
 
     /// "5m", "3h", "2d": enough to tell this morning from last week in a narrow column.

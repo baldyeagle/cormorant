@@ -4,7 +4,9 @@ import XCTest
 /// web view first responder; the dismissing tab switcher then handed focus back to it, the search
 /// field lost focus as soon as it got it, and the panel closed: New Tab appeared to do nothing.
 ///
-/// The bar's + composes a new tab; the panel's row for the tab it came from edits that tab instead.
+/// The bar's + composes a new tab; the panel's row for the tab it came from puts that tab's address in
+/// the field to edit instead. (That submitting it then loads in that tab is CormorantTests'
+/// SearchPanelTests.)
 @MainActor
 final class NewTabTests: UITestCase {
     private static let page = """
@@ -73,7 +75,7 @@ final class NewTabTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
-    func testEditRowEditsTheCurrentTab() throws {
+    func testEditRowSelectsTheTabsAddress() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
 
@@ -90,11 +92,6 @@ final class NewTabTests: UITestCase {
         let next = server.url.appending(path: "next").absoluteString
         field.typeText(next)
         XCTAssertEqual(field.value as? String, next, "the address wasn't selected, so typing didn't replace it")
-        field.typeText("\n")
-
-        XCTAssertTrue(app.webViews.staticTexts["Path /next"].appears(within: Ceiling.load), "the tab didn't navigate")
-        XCTAssertFalse(app.buttons["Tabs, 2 open"].appears(within: 2), "editing opened a new tab")
-        XCTAssertTrue(app.buttons["Tabs, 1 open"].exists)
         withExtendedLifetime(server) {}
     }
 

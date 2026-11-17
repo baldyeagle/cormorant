@@ -1,7 +1,7 @@
 import XCTest
 
-/// Arc's back-to-close: swiping in from the left edge on the first page of a tab a link opened
-/// closes it and returns to the tab viewed before it. Before that, the swipe is WebKit's back.
+/// Arc's back-to-close: swiping in from the left edge on the first page of any tab closes it and
+/// returns to the tab viewed before it. Before that, the swipe is WebKit's back.
 @MainActor
 final class BackSwipeCloseTests: UITestCase {
     /// Every path serves this page; its heading names the path it was loaded at.
@@ -80,7 +80,7 @@ final class BackSwipeCloseTests: UITestCase {
     }
 
     /// A tab's back history survives the app being killed and relaunched, as in Arc: back still goes
-    /// to the link-opened tab's first page, and only then closes it. Also covers the opener tab, which
+    /// to the new tab's first page, and only then closes it. Also covers the opener tab, which
     /// isn't shown after the relaunch until the close lands on it.
     func testHistorySurvivesRelaunch() throws {
         let server = try FixtureServer(html: Self.page)
@@ -178,18 +178,31 @@ final class BackSwipeCloseTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
-    /// A tab no link opened (here, typed in the address field) stays put.
-    func testSwipeBackLeavesOtherTabsOpen() throws {
+    /// Tabs no link opened close too: one typed in a new tab, then the Space's last tab, which leaves
+    /// the Space empty with the search panel up.
+    func testSwipeBackClosesTypedTabs() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
 
+        app.buttons["NewTabPill"].tapWhenSettled()
+        let field = app.textFields["Search or enter address"]
+        XCTAssertTrue(field.appears(within: Ceiling.ui), "+ didn't open the search panel")
+        field.typeText(server.url.appending(path: "third").absoluteString + "\n")
+        XCTAssertTrue(heading("/third", in: app).appears(within: Ceiling.load), "/third didn't load")
+        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui), "no new tab")
+        XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
+
         swipeBackFromLeftEdge(in: app)
-        XCTAssertFalse(tabsButton(count: 1, in: app).disappears(within: 2), "the tab closed")
-        XCTAssertTrue(heading("/", in: app).exists)
+        XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "swipe didn't close the typed tab")
+        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "didn't return to the previous tab; \(server.requestLog)")
+
+        swipeBackFromLeftEdge(in: app)
+        XCTAssertTrue(tabsButton(count: 0, in: app).appears(within: Ceiling.ui), "swipe didn't close the last tab")
+        XCTAssertTrue(field.appears(within: Ceiling.ui), "the empty Space didn't bring up the search panel")
         withExtendedLifetime(server) {}
     }
 
-    func testBackButtonClosesLinkOpenedTab() throws {
+    func testBackButtonClosesTabOnItsFirstPage() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)
 
@@ -200,7 +213,7 @@ final class BackSwipeCloseTests: UITestCase {
         app.buttons["Page actions"].tap()
         let back = app.buttons["Back"]
         XCTAssertTrue(back.appears(within: Ceiling.ui), "caret sheet didn't open")
-        XCTAssertTrue(back.isEnabled, "Back is disabled on a link-opened tab's first page")
+        XCTAssertTrue(back.isEnabled, "Back is disabled on a tab's first page")
         back.tap()
 
         XCTAssertTrue(tabsButton(count: 1, in: app).appears(within: Ceiling.ui), "Back didn't close the tab")

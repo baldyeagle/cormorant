@@ -234,14 +234,14 @@ private struct NavigationRow: View {
         .accessibilityHint("Search or enter address")
     }
 
-    /// On the first page of a tab a link opened, closes it, like the edge swipe.
+    /// On a tab's first page, closes it, like the edge swipe.
     private var back: some View {
-        let closesTab = !session.canGoBack && !session.isRestoringHistory && store.closesOnBackSwipe(session.tabID)
+        let closesTab = !session.canGoBack && !session.isRestoringHistory
         return Button("Back", systemImage: "chevron.backward") {
             if closesTab { store.close(session.tabID) } else { session.goBack() }
             dismiss()
         }
-        .disabled(!session.canGoBack && !closesTab)
+        .disabled(!session.canGoBack && session.isRestoringHistory)
         .accessibilityHint(closesTab ? "Closes this tab" : "")
     }
 

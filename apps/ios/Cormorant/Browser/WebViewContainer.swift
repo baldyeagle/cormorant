@@ -8,7 +8,8 @@ import WebKit
 struct WebViewContainer: UIViewRepresentable {
     let webView: WKWebView
     let barHeight: CGFloat
-    /// Set for a tab a link opened: swiping in from the left edge on its first page closes it.
+    /// Set unless the tab's history is being restored: swiping in from the left edge on its first page
+    /// closes it.
     var backSwipeClose: BackSwipeClose?
 
     /// Arc's back-to-close. Read when a swipe starts, so a swipe finishes with the tab it began on.
@@ -48,6 +49,8 @@ struct WebViewContainer: UIViewRepresentable {
         private var swipe: BackSwipe?
         /// A committed swipe whose snapshot is still fading off the destination.
         private var fading: BackSwipe?
+        /// Tapped as a swipe that will close the tab starts, after Arc.
+        private lazy var closeHaptic = UIImpactFeedbackGenerator(style: .medium, view: self)
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -163,7 +166,9 @@ struct WebViewContainer: UIViewRepresentable {
 
         /// UIView's own, which is also the delegate method.
         override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            gestureRecognizer === edgePan ? canBackSwipeClose : super.gestureRecognizerShouldBegin(gestureRecognizer)
+            guard gestureRecognizer === edgePan else { return super.gestureRecognizerShouldBegin(gestureRecognizer) }
+            if canBackSwipeClose { closeHaptic.prepare() }
+            return canBackSwipeClose
         }
 
         /// A page that scrolls sideways, or a sideways scroller in it (its own scroll view), would
@@ -180,6 +185,8 @@ struct WebViewContainer: UIViewRepresentable {
             switch pan.state {
             case .began:
                 guard let webView, let backSwipeClose else { return }
+                // Only a swipe that would close the tab gets this; WebKit's own back swipe gets none.
+                closeHaptic.impactOccurred()
                 clearFading()
                 swipe = BackSwipe(webView: webView, in: self, snapshot: backSwipeClose.destinationSnapshot(),
                                   close: backSwipeClose.close)

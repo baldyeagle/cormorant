@@ -253,17 +253,16 @@ extension BrowserState {
     public static let archiveCapacity = 2_000
 
     /// Adds a Today tab and makes it active, or leaves the active tab alone when `activate` is false
-    /// (a background tab). `fromLink` marks a tab a link opened.
+    /// (a background tab).
     ///
     /// The tab goes in `spaceID` (a tab opened by another tab's page belongs with its opener, whatever
     /// Space is showing), or the active Space when that's nil, unknown or archived. A tab opened outside
     /// the active Space never becomes active.
     public mutating func openTab(url: URL?, title: String = "", inSpace spaceID: UUID? = nil,
-                                 activate: Bool = true, fromLink: Bool = false, now: Date = .now) -> Tab {
+                                 activate: Bool = true, now: Date = .now) -> Tab {
         var target = activeSpaceID
         if let spaceID, space(spaceID)?.isArchived == false { target = spaceID }
-        let tab = Tab(spaceID: target, url: url, title: title, kind: .today,
-                      openedFromLink: fromLink, createdAt: now)
+        let tab = Tab(spaceID: target, url: url, title: title, kind: .today, createdAt: now)
         tabs.append(tab)
         if activate, target == activeSpaceID { activeTabID = tab.id }
         return tab

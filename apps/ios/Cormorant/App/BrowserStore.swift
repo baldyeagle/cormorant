@@ -368,11 +368,6 @@ final class BrowserStore {
         stateDidChange()
     }
 
-    /// Whether swiping back from this tab's first page closes it (a link opened it).
-    func closesOnBackSwipe(_ tabID: UUID) -> Bool {
-        state.tabs.first { $0.id == tabID }?.openedFromLink == true
-    }
-
     /// The last snapshot of the tab `close(_:)` would land on, to show under the page while it's
     /// swiped away.
     func backSwipeSnapshot(for tabID: UUID) -> PageSnapshot? {
@@ -467,10 +462,9 @@ final class BrowserStore {
             isSearchingTabs = false
             stampActiveTab()
         }
-        // An adopted page may have redirected; the tab records where it ended up. Like any tab a link
-        // opens, swiping back from its first page closes it.
+        // An adopted page may have redirected; the tab records where it ended up.
         let tab = state.openTab(url: handoff?.webView.url ?? url, title: handoff?.webView.title ?? "",
-                                inSpace: spaceID ?? self.spaceID(of: opener), activate: !inBackground, fromLink: true)
+                                inSpace: spaceID ?? self.spaceID(of: opener), activate: !inBackground)
         unvisitedTabIDs.insert(tab.id)
         // Stamped after, so the page being read stays first in the switcher, the new tab next.
         if inBackground { stampActiveTab() }
@@ -553,11 +547,13 @@ final class BrowserStore {
         }
     }
 
-    /// A toast about a Space goes once that Space, or the one its back button goes to, can't be switched
-    /// to, or there's only one Space left: its buttons would act on a Space out of reach, and with one
-    /// Space no toast names one.
+    /// A toast about a tab goes once the tab closes. A toast about a Space goes once that Space, or the
+    /// one its back button goes to, can't be switched to, or there's only one Space left: its buttons
+    /// would act on a Space out of reach, and with one Space no toast names one.
     private func dismissStaleToast() {
-        guard let toast, case .space(let space) = toast.icon else { return }
+        guard let toast else { return }
+        if let tabID = toast.tabID, state.tab(tabID) == nil { return dismissToast() }
+        guard case .space(let space) = toast.icon else { return }
         let spaces = [space.id] + (toast.leadingAction?.space.map { [$0.id] } ?? [])
         if !hasSpacesToSwitch || spaces.contains(where: { state.space($0)?.isArchived != false }) { dismissToast() }
     }
@@ -786,7 +782,7 @@ final class BrowserStore {
         // `window.open('')` has no URL yet; the opener navigates or writes into the new view.
         let requested = action.request.url.flatMap { $0.absoluteString.isEmpty ? nil : $0 }
         stampActiveTab()
-        let tab = state.openTab(url: requested ?? URL(string: "about:blank"), inSpace: openerSpace, fromLink: true)
+        let tab = state.openTab(url: requested ?? URL(string: "about:blank"), inSpace: openerSpace)
         let session = makeSession(for: tab, configuration: configuration)
         // Before WebKit navigates it, so a popup from a desktop-mode tab opens in desktop mode too.
         if let opener { session.apply(opener.viewSettings) }

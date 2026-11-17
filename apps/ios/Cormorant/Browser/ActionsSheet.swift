@@ -234,11 +234,14 @@ private struct NavigationRow: View {
         .accessibilityHint("Search or enter address")
     }
 
-    /// On a tab's first page, closes it, like the edge swipe.
+    /// On a tab's first page, closes it, like the edge swipe. Long-press lists the pages behind it.
     private var back: some View {
         let closesTab = !session.canGoBack && !session.isRestoringHistory
-        return Button("Back", systemImage: "chevron.backward") {
+        return HistoryButton(title: "Back", systemImage: "chevron.backward", items: session.backHistory) {
             if closesTab { store.close(session.tabID) } else { session.goBack() }
+            dismiss()
+        } jump: { item in
+            session.go(to: item)
             dismiss()
         }
         .disabled(!session.canGoBack && session.isRestoringHistory)
@@ -246,8 +249,11 @@ private struct NavigationRow: View {
     }
 
     private var forward: some View {
-        Button("Forward", systemImage: "chevron.forward") {
+        HistoryButton(title: "Forward", systemImage: "chevron.forward", items: session.forwardHistory) {
             session.goForward()
+            dismiss()
+        } jump: { item in
+            session.go(to: item)
             dismiss()
         }
         .disabled(!session.canGoForward)
@@ -280,6 +286,73 @@ private struct NavigationRow: View {
                 dismiss()
             }
         }
+    }
+}
+
+/// Back or Forward: a tap takes one step, a long-press lists that direction's pages (title, then
+/// host), nearest first, and jumps to the one picked, as Safari's back button does. With nothing in
+/// that direction it's a plain button whose long-press does nothing, as in Safari: a tab's first page
+/// Back closes the tab on a tap, not when a held finger lifts.
+private struct HistoryButton: View {
+    let title: String
+    let systemImage: String
+    /// Nearest first; `.priority` order keeps the first item beside the finger whichever way the
+    /// menu opens (`.automatic` is fixed, top-down, inside the sheet's scroll view).
+    let items: [WKBackForwardListItem]
+    let step: () -> Void
+    let jump: (WKBackForwardListItem) -> Void
+    /// Set once a press has been held long enough to be a long-press, so the button's action, which
+    /// SwiftUI still runs when that finger lifts, skips it. Cleared when the next press starts, which
+    /// also covers a held finger dragged off the button (no action runs to clear it then).
+    @State private var held = false
+
+    init(title: String, systemImage: String, items: [WKBackForwardListItem],
+         step: @escaping () -> Void, jump: @escaping (WKBackForwardListItem) -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.items = items
+        self.step = step
+        self.jump = jump
+    }
+
+    var body: some View {
+        if items.isEmpty {
+            Button(title, systemImage: systemImage) {
+                if held { held = false } else { step() }
+            }
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.5)
+                    .onChanged { _ in held = false }
+                    .onEnded { _ in held = true }
+            )
+        } else {
+            Menu {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    Button { jump(item) } label: {
+                        Text(Self.title(of: item))
+                        Text(item.url.displayHost)
+                    }
+                }
+            } label: {
+                Label(title, systemImage: systemImage)
+            } primaryAction: {
+                step()
+            }
+            .menuStyle(.button)
+            .menuOrder(.priority)
+            .accessibilityLabel(title)
+            // VoiceOver's double-tap is the step; the pages are its actions, nearest first.
+            .accessibilityActions {
+                ForEach(Array(items.prefix(10).enumerated()), id: \.offset) { _, item in
+                    Button(Self.title(of: item)) { jump(item) }
+                }
+            }
+        }
+    }
+
+    private static func title(of item: WKBackForwardListItem) -> String {
+        let title = item.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return title.isEmpty ? item.url.displayString : title
     }
 }
 

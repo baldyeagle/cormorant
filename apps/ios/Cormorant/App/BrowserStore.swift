@@ -210,8 +210,10 @@ final class BrowserStore {
         }
         dropBlankTabs()
         #if DEBUG
+        // Before the seeding below adds any tabs.
+        let isFirstUITestingLaunch = state.tabs.isEmpty && state.spaces.count == 1
         seedUITestingSpaces()
-        state = Self.uiTestingLaunchState(state)
+        state = Self.uiTestingLaunchState(state, isFirstLaunch: isFirstUITestingLaunch)
         #endif
         isLoaded = true
         #if DEBUG
@@ -1061,6 +1063,9 @@ final class BrowserStore {
     /// Queues a write after the ones before it.
     func writeBrowsingHistory(_ write: @escaping @Sendable (BrowsingHistory) async -> Void) {
         guard let browsingHistory else { return }
+        #if DEBUG
+        if isTerminated { return }
+        #endif
         let previous = browsingHistoryChain
         browsingHistoryChain = Task {
             await previous?.value
@@ -1295,8 +1300,8 @@ final class BrowserStore {
     }
 
     /// CormorantTests' stand-in for the system killing the app: from here on this store writes nothing
-    /// and erases nothing, and its web views are gone, so a test that relaunches (a new store on the
-    /// same files) never has the old one writing under it.
+    /// (tabs, their histories, browsing history) and erases nothing, and its web views are gone, so a
+    /// test that relaunches (a new store on the same files) never has the old one writing under it.
     func terminateForTesting() {
         isTerminated = true
         debouncedSave?.cancel()

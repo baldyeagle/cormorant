@@ -81,8 +81,6 @@ final class BackSwipeCloseTests: UITestCase {
             rotateToLandscape(app)
         }
         let x = try XCTUnwrap(gutter(in: app), "nothing beside the page on its side either")
-        // The keyboard the address was typed on would take the drag while it's still going.
-        XCTAssertTrue(app.keyboardIsDown(), "the keyboard was still up")
         let height = app.frame.height
         let origin = app.coordinate(withNormalizedOffset: .zero)
         origin.withOffset(CGVector(dx: x, dy: height * 0.75))

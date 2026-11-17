@@ -25,11 +25,12 @@ extension BrowserStore {
     ///   relaunch of the same session).
     /// - `-uiTestingIdleFor <seconds>` makes every open tab last viewed that much earlier, as if the app
     ///   had been away that long. The active tab is never archived, and counts as viewed on arrival.
-    /// - `-uiTestingOpen <url>` starts a launch with no tabs (not a relaunch of the same session) on a tab
-    ///   at `url`, as if it had been saved there: the test begins on its page without typing it into the
+    /// - `-uiTestingOpen <url>` starts a first launch (`isFirstLaunch`: no tabs and no Spaces were saved,
+    ///   so not a relaunch of the same session) on a tab at `url` in the active Space, as if it had been
+    ///   saved there, beside any `-uiTestingSpaces` seeded: the test begins on its page without typing it into the
     ///   launch search panel and waiting out the keyboard. Its load isn't a visit, as a restored tab's
     ///   isn't, so tests about history type their pages instead.
-    static func uiTestingLaunchState(_ state: BrowserState) -> BrowserState {
+    static func uiTestingLaunchState(_ state: BrowserState, isFirstLaunch: Bool) -> BrowserState {
         let arguments = ProcessInfo.processInfo.arguments
         guard arguments.contains("-uiTesting") else { return state }
         var state = state
@@ -46,7 +47,7 @@ extension BrowserStore {
                 state.updateSpace(space.id) { $0.archivePolicy = policy }
             }
         }
-        if let url = defaults.string(forKey: "uiTestingOpen").flatMap(URL.init(string:)), state.tabs.isEmpty {
+        if isFirstLaunch, let url = defaults.string(forKey: "uiTestingOpen").flatMap(URL.init(string:)) {
             _ = state.openTab(url: url)
         }
         let idle = defaults.double(forKey: "uiTestingIdleFor")

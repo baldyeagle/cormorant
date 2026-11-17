@@ -86,7 +86,10 @@ extension XCUIApplication {
     @discardableResult
     func motionSettles(within timeout: TimeInterval = 5) -> Bool {
         let probe = descendants(matching: .any)["UITesting.motion"].firstMatch
-        return waitUntil(timeout, "Waiting for the app to stop moving") { probe.value as? String == "still" }
+        let still = waitUntil(timeout, "Waiting for the app to stop moving") { probe.value as? String == "still" }
+        // Said in the report, so a probe that stays "moving" shows up as such, not as slow taps.
+        if !still { XCTContext.runActivity(named: "The app still reported motion after \(timeout)s; tapping anyway") { _ in } }
+        return still
     }
 
     /// True once the app reports (`UITestingProbes`) that the keyboard has finished going: until then

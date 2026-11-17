@@ -191,7 +191,7 @@ extension TabSession {
 
     /// A background tab in another Space; the store's toast says where, with Show. The preview's page
     /// goes with it only to a Space on this tab's profile: it was loaded with this tab's website data.
-    private func openInSpace(_ url: URL, option: LinkSpaceOption) {
+    func openInSpace(_ url: URL, option: LinkSpaceOption) {
         let handoff = option.adoptsPreview ? takeHandoff(for: url, freezingPreview: false) : nil
         guard onOpenInSpace?(url, option.space.id, handoff) == true else { return }
         setBarCollapsed(false)

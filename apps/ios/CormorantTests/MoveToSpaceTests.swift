@@ -116,10 +116,16 @@ extension AppTests {
             let options = spacesToOpenLinksIn()
             #expect(options.map(\.space.name) == ["Work", "Projects", "Trip"], "the current Space is under Open in Space")
             #expect(options.map(\.profileName) == ["Vialumi", nil, nil])
+            // The preview's page goes along only to a Space on this tab's profile, whose website data it
+            // was loaded with.
+            #expect(options.map(\.adoptsPreview) == [false, true, true])
             let projects = try #require(options.first { $0.space.name == "Projects" })
 
-            let openInSpace = try #require(session.onOpenInSpace)
-            #expect(openInSpace(server.url.appending(path: "next"), projects.space.id, nil), "Open in Space opened nothing")
+            // As the menu item does: no preview was made, so the tab loads the link itself, and the bar
+            // comes back so the new tab's count can be seen.
+            session.setBarCollapsed(true)
+            session.openInSpace(server.url.appending(path: "next"), option: projects)
+            #expect(!session.isBarCollapsed, "the bar stayed collapsed")
             let toast = try #require(browser.store.toast, "no toast after Open in Space")
             #expect(toast.message == "Opened in Projects")
             #expect(toast.allActions.map(\.title) == ["Show"])

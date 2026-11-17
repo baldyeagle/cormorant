@@ -417,6 +417,9 @@ public actor BrowsingHistory {
             sqlite3_close_v2(handle)
             throw BrowsingHistoryError.sqlite(code: status, message: message)
         }
+        // Another connection on the file (a test's relaunch, before the old one has gone) holds its lock
+        // for a moment at most: wait for it rather than fail the statement with SQLITE_BUSY.
+        sqlite3_busy_timeout(handle, 5_000)
         do {
             try migrate(handle)
         } catch {

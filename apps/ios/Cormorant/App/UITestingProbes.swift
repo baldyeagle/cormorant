@@ -2,6 +2,7 @@
 import CormorantCore
 import SwiftUI
 import UIKit
+import WebKit
 
 /// UI tests only (`-uiTesting`): invisible elements whose accessibility values report state a test
 /// can't see on screen, so it can wait for that state instead of guessing a delay. Each value is
@@ -79,8 +80,9 @@ enum KeyboardPresence {
 
 /// Whether anything in the app's windows is still moving, for `UITestingProbes`: a presentation or
 /// dismissal in progress anywhere in a window's chain of presented view controllers, or a finite
-/// animation on any of its layers. Repeating animations (a caret's blink, a spinner) never end and
-/// don't count. Worked out when read; web content animates in its own process and isn't seen.
+/// animation still running on a visible layer. Not repeating animations (a caret's blink, a spinner),
+/// which never end; not one that has ended but stays attached (`isRemovedOnCompletion` off); and not a
+/// web view's layers, where a page's own CSS animations run. Worked out when read.
 enum Motion {
     static var isStill: Bool {
         let windows = UIApplication.shared.connectedScenes
@@ -101,9 +103,15 @@ enum Motion {
     }
 
     private static func isAnimating(_ layer: CALayer) -> Bool {
+        guard !layer.isHidden, layer.opacity > 0, !(layer.delegate is WKWebView) else { return false }
+        let now = layer.convertTime(CACurrentMediaTime(), from: nil)
         for key in layer.animationKeys() ?? [] {
-            guard let animation = layer.animation(forKey: key) else { continue }
-            if animation.repeatCount == 0, animation.repeatDuration == 0, animation.duration.isFinite { return true }
+            guard let animation = layer.animation(forKey: key),
+                  animation.repeatCount == 0, animation.repeatDuration == 0, animation.duration.isFinite else { continue }
+            // A begin time of 0 is one just added, not yet given its start by Core Animation.
+            if animation.beginTime == 0 || now < animation.beginTime + animation.duration / Double(max(animation.speed, 0.0001)) {
+                return true
+            }
         }
         return layer.sublayers?.contains(where: isAnimating) ?? false
     }

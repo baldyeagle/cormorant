@@ -134,6 +134,8 @@ final class TestBrowser {
     func relaunch(idleFor idle: TimeInterval? = nil, sourceLocation: SourceLocation = #_sourceLocation) async throws {
         store.didEnterBackground()
         try await waitForSaves(sourceLocation: sourceLocation)
+        // Browsing history too: visits and titles queued on its write chain, which saves don't count.
+        _ = await store.afterBrowsingHistoryWrites { _ in }
         store.terminateForTesting()
         host.show(nil)
         if let idle {

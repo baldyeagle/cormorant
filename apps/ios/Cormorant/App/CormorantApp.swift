@@ -57,10 +57,13 @@ struct CormorantApp: App {
     #if DEBUG
     private static let isUITesting = ProcessInfo.processInfo.arguments.contains("-uiTesting")
 
-    /// The app is the host of the in-process tests (CormorantTests): XCTest sets this for the app it
-    /// injects a test bundle into, never for one a UI test launches.
+    /// The app is the host of the in-process tests (CormorantTests): XCTest sets these for the app it
+    /// injects a test bundle into (which one depends on the Xcode), never for one a UI test launches.
+    /// CormorantTests' `TestHostTests` fails if none is set, rather than let the tests run beside a
+    /// live browser.
     static let isHostingTests = !isUITesting
-        && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        && ["XCTestConfigurationFilePath", "XCTestBundlePath", "XCTestSessionIdentifier"]
+            .contains { ProcessInfo.processInfo.environment[$0] != nil }
 
     /// `-uiTestingAppearance dark|light` (CormorantUITests): `XCUIDevice.appearance` doesn't take on
     /// the iOS 27 simulator, so tests pick the app's appearance (pages' `prefers-color-scheme` too) here.

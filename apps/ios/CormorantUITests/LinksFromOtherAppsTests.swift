@@ -30,10 +30,13 @@ final class LinksFromOtherAppsTests: UITestCase {
         let done = app.buttons["Done"]
         XCTAssertTrue(done.appears(within: Ceiling.ui), "switcher didn't open")
 
-        // Away to another app, and back by a link from it.
-        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
-        settings.activate()
-        XCTAssertTrue(settings.wait(for: .runningForeground, timeout: Ceiling.ui), "Settings didn't come up")
+        // Away from the app, and back by a link from another one. Home rather than another app: the
+        // Home Screen is always running, while launching Settings for this timed out on a loaded runner
+        // ("Failed to activate application 'com.apple.Preferences'").
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(waitUntil(Ceiling.ui, "Waiting for the app to go to the background") {
+            app.state == .runningBackground || app.state == .runningBackgroundSuspended
+        }, "the app didn't go to the background")
         openFromAnotherApp(server.url.appending(path: "linked"), in: app)
         // A query on an app still in the background finds nothing, which would pass the check below.
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: Ceiling.ui), "the link didn't bring the app back")

@@ -135,6 +135,11 @@ extension BrowserStore {
         // Looked up each time: one may have been made since the last look.
         guard await WKWebsiteDataStore.allDataStoreIdentifiers.contains(profileID) else { return true }
         guard canSave, !hasWebViews(usingProfile: profileID) else { return false }
+        // Emptied through WebKit first. Its network process can still hold the profile's cookies after
+        // the last web view on it goes, and write them back into the store's folder once that's been
+        // removed: CormorantTests found a site's data back in a store erased moments before. Emptying
+        // the store clears what the network process holds too, so anything it writes later is empty.
+        await Self.emptyDataStore(of: profileID)
         do {
             try await WKWebsiteDataStore.remove(forIdentifier: profileID)
             return true
@@ -142,6 +147,13 @@ extension BrowserStore {
             Logger.app.notice("Couldn't erase a deleted profile's website data yet: \(error.localizedDescription, privacy: .public)")
             return false
         }
+    }
+
+    /// Removes everything in the profile's store. A function of its own so the store object it makes is
+    /// gone by the time `remove(forIdentifier:)` runs, which fails while one is alive.
+    private static func emptyDataStore(of profileID: UUID) async {
+        let store = WKWebsiteDataStore(forIdentifier: profileID)
+        await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
     }
 
     #if DEBUG

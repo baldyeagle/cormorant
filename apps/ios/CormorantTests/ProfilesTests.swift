@@ -100,8 +100,7 @@ extension AppTests {
                                     within: Self.erasureCeiling) {
                 browser.store.state.profilesToErase.isEmpty
             }
-            let storesAfter = await WKWebsiteDataStore.allDataStoreIdentifiers
-            #expect(!storesAfter.contains(vialumi), "Vialumi's website data store is still there")
+            await expectNoWebsiteData(in: vialumi)
             let historyAfter = try await browser.historyProfiles()
             #expect(!historyAfter.contains(vialumi), "Vialumi's history is still there")
 
@@ -113,16 +112,22 @@ extension AppTests {
             #expect(browser.store.state.profile(forSpace: seeded.work).isDefault, "Work isn't on Default")
             try await browser.waitForPage("/check")
             #expect(try await browser.cookieShown() == "Cookie probe=\(home)", "Work's tab isn't on Default's data")
-            // None of its data, that is. In this process WebKit's network process outlives the relaunch
-            // (a real one ends with the app), and it can put the store's folder back after the erase (1 run
-            // in 5 on CI): what must not come back is anything in it.
-            if await WKWebsiteDataStore.allDataStoreIdentifiers.contains(vialumi) {
-                let records = await WKWebsiteDataStore(forIdentifier: vialumi)
-                    .dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes())
-                #expect(records.isEmpty, "Vialumi's website data came back: \(records.map(\.displayName))")
-                try? await WKWebsiteDataStore.remove(forIdentifier: vialumi)
-            }
+            await expectNoWebsiteData(in: vialumi)
+            // An empty folder WebKit put back (see `expectNoWebsiteData`) isn't left for the next test.
+            try? await WKWebsiteDataStore.remove(forIdentifier: vialumi)
             withExtendedLifetime(server) {}
+        }
+
+        /// None of `profileID`'s website data is left: its store is gone, or holds nothing. Not that the
+        /// store is gone: WebKit's network process can put an erased store's folder back, empty, moments
+        /// after it's removed (1 run in 5 on CI), when its session on the store ends. What erasing
+        /// promises is the data, which came back once before the app emptied a store before removing it.
+        private func expectNoWebsiteData(in profileID: UUID, sourceLocation: SourceLocation = #_sourceLocation) async {
+            guard await WKWebsiteDataStore.allDataStoreIdentifiers.contains(profileID) else { return }
+            let records = await WKWebsiteDataStore(forIdentifier: profileID)
+                .dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes())
+            #expect(records.isEmpty, "the deleted profile's website data is still there: \(records.map(\.displayName))",
+                    sourceLocation: sourceLocation)
         }
 
         /// What the search panel suggests from (`BrowsingHistory.pages(matching:profile:)` for the active

@@ -100,9 +100,10 @@ struct CormorantApp: App {
         // `-uiTesting` launch argument (CormorantUITests): tabs, their history and icons are saved to
         // throwaway files instead of the app group's, settings (the Focus filter's Space too, which
         // tests set themselves) to a throwaway defaults suite, the share extension's inbox and Spaces
-        // summary are the run's own, no filter lists are downloaded, compiled or installed, and
-        // the default-browser status never asks the system (it answers only a few times a year), and
-        // search engines aren't asked for suggestions unless `-uiTestingSearchSuggestions` says to.
+        // summary are the run's own, no filter lists are downloaded, compiled or installed, downloads
+        // go to the run's own folder, the default-browser status never asks the system (it answers
+        // only a few times a year), and search engines aren't asked for suggestions unless
+        // `-uiTestingSearchSuggestions` says to.
         // Each launch starts with no tabs, no icons and default settings, unless
         // `CORMORANT_UI_TESTING_SESSION=<name>` in the environment names files to reuse (relaunch tests).
         if isUITesting {
@@ -128,7 +129,8 @@ struct CormorantApp: App {
                 searchSuggestions: ProcessInfo.processInfo.arguments.contains("-uiTestingSearchSuggestions") ? SearchSuggestionClient() : nil,
                 focusFilter: FocusFilterSettings(defaults: defaults, followsSystem: false),
                 inbox: SharedInbox(fileURL: run.appending(path: "inbox.json")),
-                spacesSummary: SpacesSummaryFile(fileURL: run.appending(path: "spaces-summary.json"))
+                spacesSummary: SpacesSummaryFile(fileURL: run.appending(path: "spaces-summary.json")),
+                downloads: DownloadCenter(directory: run.appending(path: "Downloads"))
             )
         }
         #endif

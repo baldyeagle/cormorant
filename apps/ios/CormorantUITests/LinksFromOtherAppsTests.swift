@@ -30,13 +30,8 @@ final class LinksFromOtherAppsTests: UITestCase {
         let done = app.buttons["Done"]
         XCTAssertTrue(done.appears(within: Ceiling.ui), "switcher didn't open")
 
-        // Away from the app, and back by a link from another one. Home rather than another app: the
-        // Home Screen is always running, while launching Settings for this timed out on a loaded runner
-        // ("Failed to activate application 'com.apple.Preferences'").
-        XCUIDevice.shared.press(.home)
-        XCTAssertTrue(waitUntil(Ceiling.ui, "Waiting for the app to go to the background") {
-            app.state == .runningBackground || app.state == .runningBackgroundSuspended
-        }, "the app didn't go to the background")
+        // Away from the app, and back by a link from another one.
+        leave(app)
         openFromAnotherApp(server.url.appending(path: "linked"), in: app)
         // A query on an app still in the background finds nothing, which would pass the check below.
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: Ceiling.ui), "the link didn't bring the app back")
@@ -60,6 +55,19 @@ final class LinksFromOtherAppsTests: UITestCase {
         XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
         // The keyboard takes taps meant for the bar until it has gone.
         XCTAssertTrue(app.keyboardIsDown(), "the keyboard stayed up")
+    }
+
+    /// Puts another app in front of Cormorant, which goes to the background. The Home Screen first: it's
+    /// always running, while launching Settings for this timed out on a loaded runner ("Failed to
+    /// activate application 'com.apple.Preferences'"). Settings if that didn't take (on the iOS 27.1
+    /// simulator `XCUIDevice.press(.home)` left the app in front).
+    private func leave(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let inBackground = { app.state == .runningBackground || app.state == .runningBackgroundSuspended }
+        XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
+        if waitUntil(Ceiling.ui, "Waiting for the app to go behind the Home Screen", inBackground) { return }
+        XCUIApplication(bundleIdentifier: "com.apple.Preferences").activate()
+        XCTAssertTrue(waitUntil(Ceiling.launch, "Waiting for the app to go behind Settings", inBackground),
+                      "the app didn't go to the background", file: file, line: line)
     }
 
     /// As the system hands the app a link another app opened, with Cormorant the default browser.

@@ -292,6 +292,14 @@ extension BrowserState {
         }
     }
 
+    /// Removes the tab without archiving it (one that only ever downloaded a file: there's nothing to
+    /// come back to), picking a new active tab as `archive(tabID:)` does.
+    public mutating func drop(tabID: UUID) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        if activeTabID == tabID { activeTabID = tabAfterArchiving(tabID) }
+        tabs.remove(at: index)
+    }
+
     /// Archives every tab its Space's `archivePolicy` says is due. Archived Spaces keep their tabs.
     @discardableResult
     public mutating func runArchive(now: Date = .now) -> [ArchivedTab] {

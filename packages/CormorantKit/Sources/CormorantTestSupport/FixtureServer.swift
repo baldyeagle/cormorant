@@ -2,11 +2,27 @@ import Foundation
 import Network
 
 /// Serves one fixed HTML page on 127.0.0.1 so the tests need no network: the app's UI tests (the
-/// app and the test runner share the simulator's loopback), its in-process tests, and any platform's. Every path gets the same page; `delays` holds back the
-/// first request for some, `holds` every request for some until the test calls `release(_:)`.
+/// app and the test runner share the simulator's loopback), its in-process tests, and any platform's.
+/// Every path gets the same page, except those in `files` (a download's body and headers); `delays`
+/// holds back the first request for some, `holds` every request for some until the test calls
+/// `release(_:)`.
 /// Counts requests by path, so a test can tell a page that was loaded again from one that wasn't.
 public final class FixtureServer {
     public struct StartFailed: Error {}
+
+    /// A response other than the page: a file, with its own type and any extra headers
+    /// (`Content-Disposition`).
+    public struct File: Sendable {
+        public let contentType: String
+        public let body: Data
+        public var headers: [String: String]
+
+        public init(contentType: String, body: Data, headers: [String: String] = [:]) {
+            self.contentType = contentType
+            self.body = body
+            self.headers = headers
+        }
+    }
 
     public let port: UInt16
     private let listener: NWListener
@@ -17,15 +33,10 @@ public final class FixtureServer {
     ///   Later ones are answered at once, so a test can hold a link preview's load back for longer than
     ///   a slow simulator takes to pick a menu item, without the tab's own load waiting too.
     /// - Parameter holds: paths whose requests go unanswered until `release(_:)` is called for them.
-    public init(html: String, delays: [String: Double] = [:], holds: Set<String> = []) throws {
-        let body = Data(html.utf8)
-        let header = [
-            "HTTP/1.1 200 OK",
-            "Content-Type: text/html; charset=utf-8",
-            "Content-Length: \(body.count)",
-            "Connection: close",
-        ].joined(separator: "\r\n") + "\r\n\r\n"
-        let response = Data(header.utf8) + body
+    /// - Parameter files: paths answered with a file instead of the page.
+    public init(html: String, delays: [String: Double] = [:], holds: Set<String> = [], files: [String: File] = [:]) throws {
+        let page = Self.response(File(contentType: "text/html; charset=utf-8", body: Data(html.utf8)))
+        let fileResponses = files.mapValues(Self.response)
 
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
@@ -39,6 +50,7 @@ public final class FixtureServer {
             connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, _, _ in
                 let path = data.flatMap(Self.path(of:))
                 let nth = path.map { counts.add($0) }
+                let response = path.flatMap { fileResponses[$0] } ?? page
                 let send: @Sendable () -> Void = {
                     connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
                 }
@@ -82,6 +94,16 @@ public final class FixtureServer {
 
     /// Every request so far, one per line with seconds since the server started, for failure messages.
     public var requestLog: String { counts.log }
+
+    private static func response(_ file: File) -> Data {
+        let lines = [
+            "HTTP/1.1 200 OK",
+            "Content-Type: \(file.contentType)",
+            "Content-Length: \(file.body.count)",
+            "Connection: close",
+        ] + file.headers.map { "\($0.key): \($0.value)" }
+        return Data((lines.joined(separator: "\r\n") + "\r\n\r\n").utf8) + file.body
+    }
 
     /// `GET /next HTTP/1.1` → `/next`.
     private static func path(of request: Data) -> String? {

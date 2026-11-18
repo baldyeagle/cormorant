@@ -1,8 +1,10 @@
+import CormorantTestSupport
 import XCTest
 
-/// The search panel suggests from history and open tabs: the field completes to a visited site,
-/// history rows reopen pages, open tabs offer to switch rather than load again, and Search Tabs
-/// limits the panel to open tabs.
+/// Typing in the search panel: the field completes to a visited site, and backspace takes the
+/// completion away. An open tab's row switches to it, end to end, and Search Tabs' token goes back to
+/// searching everything with the field still focused. Which rows the panel lists, and what choosing
+/// one does, are CormorantTests' SearchPanelTests.
 @MainActor
 final class SearchSuggestionsTests: UITestCase {
     private static let page = """
@@ -49,34 +51,11 @@ final class SearchSuggestionsTests: UITestCase {
         field.typeText("127")
         XCTAssertTrue(waitUntil(Ceiling.ui) { field.value as? String == site }, "no completion: \(field.value ?? "nil")")
         // Past the text's end, short of the clear button: the caret goes to the end.
-        field.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tap()
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tapWhenSettled()
         field.typeText(XCUIKeyboardKey.delete.rawValue)
         let shortened = String(site.dropLast())
         XCTAssertTrue(waitUntil(Ceiling.ui) { field.value as? String == shortened }, "backspace left \(field.value ?? "nil")")
         XCTAssertFalse(waitUntil(1) { field.value as? String != shortened }, "the completion came back")
-        withExtendedLifetime(server) {}
-    }
-
-    func testHistoryRowReopensAPageNoTabShows() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launch()
-        open(server.url.appending(path: "alpha"), in: app)
-        // The same tab moves on, so /alpha is only in history.
-        app.buttons["NewTabPill"].tapWhenSettled()
-        let edit = app.buttons["Edit address: Page alpha"]
-        XCTAssertTrue(edit.appears(within: Ceiling.ui), "no Edit row")
-        edit.tap()
-        let field = searchField(in: app)
-        field.typeText(server.url.appending(path: "beta").absoluteString + "\n")
-        XCTAssertTrue(heading("/beta", in: app).appears(within: Ceiling.load), "/beta didn't load")
-
-        newTabField(in: app).typeText("alpha")
-        let row = app.buttons.matching(NSPredicate(format: "label == 'Page alpha' AND value ENDSWITH 'history'")).firstMatch
-        XCTAssertTrue(row.appears(within: Ceiling.ui), "no history row for /alpha")
-        row.tap()
-
-        XCTAssertTrue(heading("/alpha", in: app).appears(within: Ceiling.load), "the history row didn't load /alpha")
-        XCTAssertTrue(app.buttons["Tabs, 2 open"].appears(within: Ceiling.ui), "composing, the row didn't open a new tab")
         withExtendedLifetime(server) {}
     }
 
@@ -91,40 +70,10 @@ final class SearchSuggestionsTests: UITestCase {
         newTabField(in: app).typeText("alpha")
         let row = app.buttons.matching(NSPredicate(format: "label == 'Page alpha' AND value ENDSWITH 'open tab'")).firstMatch
         XCTAssertTrue(row.appears(within: Ceiling.ui), "no open-tab row for /alpha")
-        // Shown once, and stays so once history has answered: the open tab hides its history entry.
-        XCTAssertFalse(waitUntil(2) { app.buttons.matching(NSPredicate(format: "label == 'Page alpha'")).count != 1 },
-                       "/alpha is listed twice")
-        row.tap()
+        row.tapWhenSettled()
 
         XCTAssertTrue(heading("/alpha", in: app).appears(within: Ceiling.ui), "didn't switch to /alpha")
-        XCTAssertFalse(app.buttons["Tabs, 3 open"].appears(within: 2), "switching opened another tab")
-        XCTAssertEqual(server.requestCount(for: "/alpha"), 1, "switching loaded the page again")
-        withExtendedLifetime(server) {}
-    }
-
-    func testSearchTabsFromTheSwitcher() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launch()
-        open(server.url.appending(path: "alpha"), in: app)
-        newTabField(in: app).typeText(server.url.appending(path: "beta").absoluteString + "\n")
-        XCTAssertTrue(heading("/beta", in: app).appears(within: Ceiling.load), "/beta didn't load")
-
-        app.buttons["Tabs, 2 open"].tapWhenSettled()
-        let search = app.buttons["SwitcherSearchTabs"]
-        XCTAssertTrue(search.appears(within: Ceiling.ui), "no Search Tabs in the switcher")
-        search.tapWhenSettled()
-
-        let field = app.textFields["Search open tabs"]
-        XCTAssertTrue(field.appears(within: Ceiling.ui), "Search Tabs didn't open the panel")
-        XCTAssertTrue(app.buttons["Open tabs only"].exists, "no Tabs token")
-        // Every open tab, the current one too.
-        XCTAssertTrue(app.staticTexts["2 Open Tabs"].appears(within: Ceiling.ui), "the panel doesn't list both tabs")
-        field.typeText("alph")
-        XCTAssertTrue(app.staticTexts["2 Open Tabs · 1 match"].appears(within: Ceiling.ui), "the tabs weren't filtered")
-        field.typeText("\n")
-
-        XCTAssertTrue(heading("/alpha", in: app).appears(within: Ceiling.ui), "Go didn't switch to the match")
-        XCTAssertTrue(app.buttons["Tabs, 2 open"].exists, "Go opened a tab")
+        XCTAssertTrue(app.buttons["Tabs, 2 open"].exists, "switching opened another tab")
         XCTAssertEqual(server.requestCount(for: "/alpha"), 1, "switching loaded the page again")
         withExtendedLifetime(server) {}
     }
@@ -138,7 +87,7 @@ final class SearchSuggestionsTests: UITestCase {
         app.buttons["SwitcherSearchTabs"].tapWhenSettled()
         let token = app.buttons["Open tabs only"]
         XCTAssertTrue(token.appears(within: Ceiling.ui), "no Tabs token")
-        token.tap()
+        token.tapWhenSettled()
 
         let field = searchField(in: app)
         XCTAssertTrue(field.appears(within: Ceiling.ui), "the field still searches tabs only")

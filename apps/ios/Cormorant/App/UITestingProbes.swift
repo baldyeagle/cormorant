@@ -2,6 +2,7 @@
 import CormorantCore
 import SwiftUI
 import UIKit
+import WebKit
 
 /// UI tests only (`-uiTesting`): invisible elements whose accessibility values report state a test
 /// can't see on screen, so it can wait for that state instead of guessing a delay. Each value is
@@ -22,6 +23,10 @@ import UIKit
 /// - `UITesting.focus`: the name of the Space the Focus filter sends links to, or "off" (set by
 ///   `cormorant://ui-testing/focus`).
 /// - `UITesting.wash`: "up" while the wash is (`BrowserStore.showsWash`), else "down".
+/// - `UITesting.motion`: "moving" while a view controller is being presented or dismissed, or a
+///   finite UIKit animation runs in one of the app's windows (`Motion`), else "still". A tap that lands
+///   then can be dropped, though XCTest's own idle check passed: a switch in a sheet still settling
+///   took the tap and never turned on.
 /// - `UITesting.keyboard`: "up" from the keyboard's did-show to its did-hide, else "down". The bar's
 ///   buttons come back to the accessibility tree as the keyboard starts down, and the keyboard leaves
 ///   the tree then too, but it takes taps over the bar until it has slid away.
@@ -39,6 +44,7 @@ struct UITestingProbes: View {
             }
             Probe(identifier: "UITesting.pull") { PullToRefresh.lastPull?.lastPullOutcome ?? "none" }
             Probe(identifier: "UITesting.keyboard") { KeyboardPresence.isUp ? "up" : "down" }
+            Probe(identifier: "UITesting.motion") { Motion.isStill ? "still" : "moving" }
             Probe(identifier: "UITesting.wash") { [store] in store.showsWash ? "up" : "down" }
             Probe(identifier: "UITesting.erasing") { [store] in
                 store.canSave ? "\(store.state.profilesToErase.count)" : "loading"
@@ -69,6 +75,45 @@ enum KeyboardPresence {
                 MainActor.assumeIsolated { isUp = false }
             },
         ]
+    }
+}
+
+/// Whether anything in the app's windows is still moving, for `UITestingProbes`: a presentation or
+/// dismissal in progress anywhere in a window's chain of presented view controllers, or a finite
+/// animation still running on a visible layer. Not repeating animations (a caret's blink, a spinner),
+/// which never end; not one that has ended but stays attached (`isRemovedOnCompletion` off); and not a
+/// web view's layers, where a page's own CSS animations run. Worked out when read.
+enum Motion {
+    static var isStill: Bool {
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .filter { !$0.isHidden }
+        for window in windows {
+            var controller = window.rootViewController
+            while let current = controller {
+                if current.isBeingPresented || current.isBeingDismissed || current.transitionCoordinator != nil {
+                    return false
+                }
+                controller = current.presentedViewController
+            }
+            if isAnimating(window.layer) { return false }
+        }
+        return true
+    }
+
+    private static func isAnimating(_ layer: CALayer) -> Bool {
+        guard !layer.isHidden, layer.opacity > 0, !(layer.delegate is WKWebView) else { return false }
+        let now = layer.convertTime(CACurrentMediaTime(), from: nil)
+        for key in layer.animationKeys() ?? [] {
+            guard let animation = layer.animation(forKey: key),
+                  animation.repeatCount == 0, animation.repeatDuration == 0, animation.duration.isFinite else { continue }
+            // A begin time of 0 is one just added, not yet given its start by Core Animation.
+            if animation.beginTime == 0 || now < animation.beginTime + animation.duration / Double(max(animation.speed, 0.0001)) {
+                return true
+            }
+        }
+        return layer.sublayers?.contains(where: isAnimating) ?? false
     }
 }
 

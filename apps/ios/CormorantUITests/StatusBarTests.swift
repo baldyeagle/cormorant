@@ -1,11 +1,13 @@
+import CormorantTestSupport
 import UIKit
 import XCTest
 
 /// The status bar over the page: the page runs up under it (unless that's off), the clock takes its
-/// style from the page's background, and the iPhone Duo's status-bar column takes that color. Per
-/// page and per tab. Colors are read from screenshots, each check waiting (`waitUntil`) for them to
-/// arrive rather than for a fixed time. Running under is only checked where the status bar runs
-/// along the top: the iPhone Duo's (CI's) is a column beside the page.
+/// style from the page's background, and the iPhone Duo's status-bar column takes that color. Colors
+/// are read from screenshots, each check waiting (`waitUntil`) for them to arrive rather than for a
+/// fixed time. Running under is only checked where the status bar runs along the top: the iPhone
+/// Duo's (CI's) is a column beside the page. Which color and clock the browser picks per page and per
+/// tab, Back and dark mode included, is CormorantTests' StatusBarTintTests.
 @MainActor
 final class StatusBarTests: UITestCase {
     private static let red = Pixel(hex: 0xB91C1C)
@@ -13,7 +15,6 @@ final class StatusBarTests: UITestCase {
     private static let paleBlue = Pixel(hex: 0xBFDBFE)
     /// The default chrome (the launch background).
     private static let lightDefault = Pixel(hex: 0xFFFFFF)
-    private static let darkDefault = Pixel(hex: 0x030712)
 
     /// A page in `background` (the canvas's own without one), its text clear of the status bar.
     private static func page(title: String, background: String? = nil, head: String = "", body: String = "") -> String {
@@ -33,7 +34,6 @@ final class StatusBarTests: UITestCase {
 
     private static let redPage = page(title: "Red page", background: "#b91c1c")
     private static let bluePage = page(title: "Blue page", background: "#2563eb")
-    private static let plainPage = page(title: "Plain page")
     /// White, with a pale blue fixed header: where the page runs under the status bar, the header is
     /// laid out below it and WebKit carries its color up behind it. The clock goes by the page's
     /// background.
@@ -43,15 +43,6 @@ final class StatusBarTests: UITestCase {
         body { padding-top: 76px }</style>
         <header><p>Header bar</p></header>
         """)
-    /// Light-only, like many sites: white whatever the system appearance.
-    private static let whitePage = """
-        <!doctype html>
-        <meta name="viewport" content="width=device-width">
-        <style>body { margin: 0; padding-top: 40px } h1, p { margin: 12px 16px }</style>
-        <title>White page</title>
-        <h1>White page</h1>
-        <p>Body text for White page.</p>
-        """
 
     /// A red page with a link to `target`, set up for `pressForLinkMenu` (a "Path" paragraph to tap
     /// and its selection report).
@@ -61,12 +52,11 @@ final class StatusBarTests: UITestCase {
                 + selectionReport)
     }
 
-    /// One tab through pages (Back included), then a second tab and back: each page's color, the
-    /// clock reading on it, and the page running under the status bar.
-    func testStatusBarFollowsEachPageAndTab() throws {
+    /// From one page to the next: each page's color, the clock reading on it, the page running under
+    /// the status bar, and a fixed header laid out below it.
+    func testStatusBarFollowsThePage() throws {
         let red = try FixtureServer(html: Self.redPage)
         let header = try FixtureServer(html: Self.headerPage)
-        let plain = try FixtureServer(html: Self.plainPage)
         let app = launch()
         open(red.url, in: app, expecting: "Red page")
         assertStatusBar(in: app, on: Self.red, foreground: .light, pageRunsUnder: true)
@@ -81,45 +71,7 @@ final class StatusBarTests: UITestCase {
             XCTAssertTrue(headerText.appears(within: Ceiling.ui), "no header")
             XCTAssertGreaterThanOrEqual(headerText.settledFrame().minY, region.maxY, "the header is under the status bar")
         }
-
-        app.buttons["Page actions"].tapWhenSettled()
-        let back = app.buttons["Back"]
-        XCTAssertTrue(back.appears(within: Ceiling.ui), "caret sheet didn't open")
-        back.tap()
-        XCTAssertTrue(app.webViews.staticTexts["Body text for Red page."].appears(within: Ceiling.load), "Back didn't go back")
-        XCTAssertTrue(app.buttons["Settings"].disappears(within: Ceiling.ui), "Back didn't close the caret sheet")
-        assertStatusBar(in: app, on: Self.red, foreground: .light)
-
-        // A second tab, on a page without a color of its own.
-        app.buttons["Tabs, 1 open"].tapWhenSettled()
-        let newTab = app.buttons["SwitcherNewTab"]
-        XCTAssertTrue(newTab.appears(within: Ceiling.ui), "switcher didn't open")
-        newTab.tapWhenSettled()
-        open(plain.url, in: app, expecting: "Plain page")
-        assertStatusBar(in: app, on: Self.lightDefault, foreground: .dark)
-
-        // Back to the first.
-        app.buttons["Tabs, 2 open"].tapWhenSettled()
-        let card = tabCards(in: app).matching(NSPredicate(format: "label == 'Red page'")).firstMatch
-        XCTAssertTrue(card.appears(within: Ceiling.ui), "no card for the red tab")
-        tapSliver(of: card, in: app)
-        XCTAssertTrue(app.webViews.staticTexts["Body text for Red page."].appears(within: Ceiling.load))
-        assertStatusBar(in: app, on: Self.red, foreground: .light)
-        withExtendedLifetime([red, header, plain]) {}
-    }
-
-    /// Dark mode: a page with a dark variant gets a dark status bar area; a light-only white page
-    /// keeps a dark clock, which the system's own dark-mode style would lose on it.
-    func testDarkMode() throws {
-        let plain = try FixtureServer(html: Self.plainPage)
-        let white = try FixtureServer(html: Self.whitePage)
-        let app = launch(appearance: "dark")
-        open(plain.url, in: app, expecting: "Plain page")
-        assertStatusBar(in: app, on: Self.darkDefault, tolerance: 0.1, foreground: .light)
-
-        navigate(to: white.url, from: "Plain page", in: app, expecting: "White page")
-        assertStatusBar(in: app, on: Self.lightDefault, foreground: .dark)
-        withExtendedLifetime([plain, white]) {}
+        withExtendedLifetime([red, header]) {}
     }
 
     /// Off, the page stops below the status bar, which sits on the default strip in the system's
@@ -227,9 +179,9 @@ final class StatusBarTests: UITestCase {
         app.textFields["Search or enter address"]
     }
 
-    private func launch(appearance: String = "light") -> XCUIApplication {
+    private func launch() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-uiTesting", "-uiTestingAppearance", appearance]
+        app.launchArguments = ["-uiTesting", "-uiTestingAppearance", "light"]
         app.launch()
         XCTAssertTrue(searchField(in: app).appears(within: Ceiling.launch), "no search panel at launch")
         return app
@@ -263,7 +215,7 @@ final class StatusBarTests: UITestCase {
         app.buttons["Page actions"].tapWhenSettled()
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.appears(within: Ceiling.ui), "caret sheet didn't open")
-        settings.tap()
+        settings.tapWhenSettled()
         let title = app.navigationBars["Settings"]
         XCTAssertTrue(title.appears(within: Ceiling.ui), "Settings didn't open")
         // Below the default-browser and search-engine sections, off a short screen, where the form
@@ -281,7 +233,7 @@ final class StatusBarTests: UITestCase {
         XCTAssertTrue(toggle.appears(within: Ceiling.ui), "no Page Under Status Bar setting")
         if (toggle.value as? String == "1") != on {
             // The switch itself, not the row's label.
-            toggle.switches.firstMatch.exists ? toggle.switches.firstMatch.tap() : toggle.tap()
+            toggle.switches.firstMatch.exists ? toggle.switches.firstMatch.tapWhenSettled() : toggle.tapWhenSettled()
         }
         XCTAssertTrue(waitUntil(Ceiling.ui) { toggle.value as? String == (on ? "1" : "0") }, "the setting didn't change")
         // Scrolled down, the sheet's bar shows no items: back up until Done is there again.
@@ -300,18 +252,6 @@ final class StatusBarTests: UITestCase {
         grabber.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
         XCTAssertTrue(app.buttons["Settings"].disappears(within: Ceiling.ui), "caret sheet didn't close")
-    }
-
-    /// The switcher's cards (each one accessibility element, labeled with its tab's title).
-    private func tabCards(in app: XCUIApplication) -> XCUIElementQuery {
-        app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'TabCard'"))
-    }
-
-    /// An older tab's card sits behind the current tab's, mostly off screen: taps the sliver that
-    /// shows, once the switcher has stopped moving.
-    private func tapSliver(of card: XCUIElement, in app: XCUIApplication) {
-        let frame = card.settledFrame()
-        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: max(frame.minX, 0) + 20, dy: frame.midY)).tap()
     }
 
     // MARK: Asserting colors

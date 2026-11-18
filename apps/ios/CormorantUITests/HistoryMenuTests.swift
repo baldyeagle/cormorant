@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// The caret sheet's Back and Forward: a long-press lists that direction's pages, nearest first, and
@@ -22,9 +23,9 @@ final class HistoryMenuTests: UITestCase {
     func testLongPressBackAndForwardJumpThroughHistory() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url.appending(path: "one"))
-        app.webViews.links["Go two"].tap()
+        app.webViews.links["Go two"].tapWhenSettled()
         XCTAssertTrue(heading("/two", in: app).appears(within: Ceiling.load), "link didn't navigate")
-        app.webViews.links["Go three"].tap()
+        app.webViews.links["Go three"].tapWhenSettled()
         XCTAssertTrue(heading("/three", in: app).appears(within: Ceiling.load), "link didn't navigate")
 
         // Back two pages at once.
@@ -43,7 +44,7 @@ final class HistoryMenuTests: UITestCase {
 
         // A tap is still one step.
         openCaretSheet(in: app)
-        app.buttons["Back"].tap()
+        app.buttons["Back"].tapWhenSettled()
         XCTAssertTrue(heading("/two", in: app).appears(within: Ceiling.load), "Back didn't step back one page")
         XCTAssertTrue(tabsButton(count: 1, in: app).exists, "Back closed the tab")
         withExtendedLifetime(server) {}
@@ -64,23 +65,20 @@ final class HistoryMenuTests: UITestCase {
         XCTAssertTrue(tabsButton(count: 1, in: app).exists, "a long-press on Back closed the tab")
         XCTAssertTrue(heading("/one", in: app).exists, "a long-press on Back left the page")
 
-        back.tap()
+        back.tapWhenSettled()
         XCTAssertTrue(tabsButton(count: 0, in: app).appears(within: Ceiling.ui), "a tap on Back didn't close the tab")
         withExtendedLifetime(server) {}
     }
 
     // MARK: Helpers
 
-    /// Launches with no saved tabs and opens `url` from the launch search panel.
+    /// Launches with no saved tabs but one on `url`.
     private func launchOnPage(_ url: URL) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-uiTesting"]
+        // On the page from the start (`-uiTestingOpen`): no typing, no keyboard to wait out.
+        app.launchArguments = ["-uiTesting", "-uiTestingOpen", url.absoluteString]
         app.launch()
-        let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
-        field.typeText(url.absoluteString + "\n")
         XCTAssertTrue(heading(url.path(), in: app).appears(within: Ceiling.load), "fixture page didn't load")
-        XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
         return app
     }
 

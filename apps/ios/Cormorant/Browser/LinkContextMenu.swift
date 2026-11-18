@@ -99,37 +99,52 @@ extension TabSession {
         }
     }
 
-    // MARK: Private
+    /// One of the long-press menu's actions: its title and symbol, and what choosing it does.
+    /// `linkMenu(for:kind:)` makes them the menu's items; CormorantTests runs them as the menu would.
+    struct LinkMenuAction {
+        let title: String
+        let systemImage: String
+        let perform: () -> Void
+    }
 
-    /// WebKit's suggested actions are left out, its image ones (Save to Photos, which would need a
-    /// photo-library purpose string) included: linked images get the link menu, as they did before.
-    private func linkMenu(for url: URL, kind: LinkKind) -> UIMenu {
-        var open: [UIMenuElement] = []
+    /// The menu's actions for `url`: opening it (Open in Space, a submenu, follows these), then passing
+    /// it on.
+    func linkMenuActions(for url: URL, kind: LinkKind) -> (open: [LinkMenuAction], pass: [LinkMenuAction]) {
+        var open: [LinkMenuAction] = []
         if kind != .copyOnly {
-            open.append(UIAction(title: "Open Link", image: UIImage(systemName: "arrow.up.right")) { [weak self] _ in
+            open.append(LinkMenuAction(title: "Open Link", systemImage: "arrow.up.right") { [weak self] in
                 self?.openLink(url)
             })
         }
         if kind == .page {
-            open.append(UIAction(title: "Open in New Tab", image: UIImage(systemName: "plus.square.on.square")) { [weak self] _ in
+            open.append(LinkMenuAction(title: "Open in New Tab", systemImage: "plus.square.on.square") { [weak self] in
                 self?.openInNewTab(url, inBackground: false)
             })
-            open.append(UIAction(title: "Open in Background Tab", image: UIImage(systemName: "square.on.square")) { [weak self] _ in
+            open.append(LinkMenuAction(title: "Open in Background Tab", systemImage: "square.on.square") { [weak self] in
                 self?.openInBackgroundTab(url)
             })
-            if let spaces = openInSpaceMenu(for: url) { open.append(spaces) }
         }
-        let pass: [UIMenuElement] = [
-            UIAction(title: "Copy Link", image: UIImage(systemName: "link")) { _ in
+        let pass = [
+            LinkMenuAction(title: "Copy Link", systemImage: "link") {
                 UIPasteboard.general.url = url
                 #if DEBUG
                 OwnPasteboardWrite.record()
                 #endif
             },
-            UIAction(title: "Share Link", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
+            LinkMenuAction(title: "Share Link", systemImage: "square.and.arrow.up") { [weak self] in
                 self?.share(url)
             },
         ]
+        return (open, pass)
+    }
+
+    /// WebKit's suggested actions are left out, its image ones (Save to Photos, which would need a
+    /// photo-library purpose string) included: linked images get the link menu, as they did before.
+    func linkMenu(for url: URL, kind: LinkKind) -> UIMenu {
+        let actions = linkMenuActions(for: url, kind: kind)
+        var open: [UIMenuElement] = actions.open.map(Self.menuItem(for:))
+        if kind == .page, let spaces = openInSpaceMenu(for: url) { open.append(spaces) }
+        let pass: [UIMenuElement] = actions.pass.map(Self.menuItem(for:))
         // The address, since a preview can take a moment and other links have none. Capped: a data:
         // URL can be any length, and VoiceOver reads all of it.
         let address = url.absoluteString
@@ -138,6 +153,12 @@ extension TabSession {
             UIMenu(options: .displayInline, children: open),
             UIMenu(options: .displayInline, children: pass),
         ].filter { !$0.children.isEmpty })
+    }
+
+    // MARK: Private
+
+    private static func menuItem(for action: LinkMenuAction) -> UIAction {
+        UIAction(title: action.title, image: UIImage(systemName: action.systemImage)) { _ in action.perform() }
     }
 
     /// Menu actions run once the menu (and its preview) has gone, before WebKit reports the menu
@@ -170,7 +191,7 @@ extension TabSession {
 
     /// A background tab in another Space; the store's toast says where, with Show. The preview's page
     /// goes with it only to a Space on this tab's profile: it was loaded with this tab's website data.
-    private func openInSpace(_ url: URL, option: LinkSpaceOption) {
+    func openInSpace(_ url: URL, option: LinkSpaceOption) {
         let handoff = option.adoptsPreview ? takeHandoff(for: url, freezingPreview: false) : nil
         guard onOpenInSpace?(url, option.space.id, handoff) == true else { return }
         setBarCollapsed(false)
@@ -196,7 +217,8 @@ extension TabSession {
         presenter.present(controller, animated: true)
     }
 
-    private func makeLinkPreview(for url: URL) -> UIViewController {
+    /// The menu's preview, which UIKit asks for as the menu comes up (`linkMenuConfiguration(for:)`).
+    func makeLinkPreview(for url: URL) -> LinkPreviewController {
         linkPreview?.stop()
         let preview = LinkPreviewController(url: url, profileID: profileID, blocking: blocking,
                                             settings: viewSettings, layout: PageLayout(of: webView))
@@ -248,7 +270,8 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
     private let settings: TabSession.ViewSettings
     private let layout: PageLayout
     private let contentController: WKUserContentController
-    private let webView: WKWebView
+    /// The preview's page. Read-only outside this class (CormorantTests waits on its load).
+    let webView: WKWebView
     private let spinner = UIActivityIndicatorView(style: .medium)
     /// Host and lists version the current rules were applied for.
     private var appliedHost: String?

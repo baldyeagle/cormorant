@@ -1,7 +1,9 @@
+import CormorantTestSupport
 import XCTest
 
 /// Switching Spaces: from the tabs button's long-press menu, the switcher's Space strip and its title
-/// menu, each landing on the tab last viewed in the Space, or the search panel in an empty one.
+/// menu, or the search panel in an empty Space. That a Space comes back on the tab last viewed in it is
+/// CormorantTests' SpacesTests.
 /// `-uiTestingSpaces` seeds Work (on a profile of its own) and Projects, with one fixture tab each, and
 /// an empty Trip, beside an empty Home. With only Home, all that shows is a Spaces button in the
 /// switcher, to Manage Spaces.
@@ -39,7 +41,7 @@ final class SpacesTests: UITestCase {
                       "New Tab left the menu")
 
         let page = heading("/home", in: app).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        page.tap()
+        page.tapWhenSettled()
         XCTAssertTrue(work.disappears(within: Ceiling.ui), "the menu didn't close")
         choose(work, from: tabs, by: .longPress, closingAt: page, until: { tabs.value as? String == "Work" }, in: app)
         XCTAssertTrue(heading("/work", in: app).appears(within: Ceiling.load), "switching to Work didn't show its tab")
@@ -63,7 +65,7 @@ final class SpacesTests: UITestCase {
         assertNewTabCentered(beside: strip, in: app)
 
         // The strip switches the cards to Work's; the switcher stays up.
-        strip["Work"].tap()
+        strip["Work"].tapWhenSettled()
         XCTAssertTrue(waitUntil(Ceiling.ui) { title.label == "Space, Work" }, "the strip didn't switch to Work")
         XCTAssertTrue(strip["Work"].isSelected && !strip["Home"].isSelected, "the strip doesn't mark Work")
         XCTAssertTrue(app.buttons["Done"].exists, "switching Spaces closed the switcher")
@@ -73,11 +75,11 @@ final class SpacesTests: UITestCase {
         XCTAssertTrue(openMenu(title, by: .tap, until: work), "the title menu has no Spaces")
         XCTAssertTrue(describe(work).contains("Vialumi profile"), describe(work))
         let titleCenter = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        titleCenter.tap()
+        titleCenter.tapWhenSettled()
         XCTAssertTrue(work.disappears(within: Ceiling.ui), "the menu didn't close")
         choose(projects, from: title, by: .tap, closingAt: titleCenter, until: { title.label == "Space, Projects" }, in: app)
 
-        app.buttons["Done"].tap()
+        app.buttons["Done"].tapWhenSettled()
         XCTAssertTrue(heading("/projects", in: app).appears(within: Ceiling.load), "Done didn't show Projects' tab")
         withExtendedLifetime(server) {}
     }
@@ -103,7 +105,7 @@ final class SpacesTests: UITestCase {
 
         // Switched to the last Space from outside the switcher (a link shared into it), the strip shows
         // it in its last place, before •••.
-        app.buttons["Done"].tap()
+        app.buttons["Done"].tapWhenSettled()
         XCTAssertTrue(app.buttons["Done"].disappears(within: Ceiling.ui), "the switcher didn't close")
         shareIntoSpace(server.url.appending(path: "six"), space: "Space 6")
         XCTAssertTrue(heading("/six", in: app).appears(within: Ceiling.load), "the link didn't open")
@@ -130,7 +132,7 @@ final class SpacesTests: UITestCase {
         XCTAssertTrue(openMenu(more, by: .tap, until: edit), "••• has no Edit for the active Space")
         XCTAssertTrue(menuItem("Home", in: app).exists && menuItem("Trip", in: app).exists && menuItem("Space 5", in: app).exists,
                       "••• doesn't list the Spaces")
-        titleCenter.tap()
+        titleCenter.tapWhenSettled()
         XCTAssertTrue(edit.disappears(within: Ceiling.ui), "the menu didn't close")
 
         // A Space chosen there takes the active one's place in the strip.
@@ -155,7 +157,7 @@ final class SpacesTests: UITestCase {
         let titleCenter = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         choose(menuItem("Manage Spaces", in: app), from: title, by: .tap, closingAt: titleCenter,
                until: { app.navigationBars["Spaces"].exists }, in: app)
-        app.buttons["Close"].tap()
+        app.buttons["Close"].tapWhenSettled()
         XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
 
         openSwitcher(in: app)
@@ -164,46 +166,12 @@ final class SpacesTests: UITestCase {
         // Its long press lists every Space too, as the tabs button's does.
         let trip = menuItem("Trip", in: app)
         XCTAssertTrue(openMenu(work, by: .longPress, until: trip), "a strip icon's menu doesn't list the Spaces")
-        titleCenter.tap()
+        titleCenter.tapWhenSettled()
         XCTAssertTrue(trip.disappears(within: Ceiling.ui), "the menu didn't close")
         choose(menuItem("Edit Work", in: app), from: work, by: .longPress, closingAt: titleCenter,
                until: { app.buttons["Save"].exists }, in: app)
         XCTAssertTrue(app.textFields["Name"].appears(within: Ceiling.ui), "Edit Space didn't open")
         XCTAssertEqual(app.textFields["Name"].value as? String, "Work", "Edit Space isn't Work's")
-        withExtendedLifetime(server) {}
-    }
-
-    /// Back in a Space, its last viewed tab shows, not its newest.
-    func testSwitchingBackReturnsToTheTabLeft() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchWithSpaces(server)
-        open(server.url.appending(path: "a"), path: "/a", in: app)
-        open(server.url.appending(path: "b"), path: "/b", in: app)
-
-        // Back to /a, the older tab, from its card.
-        openSwitcher(in: app)
-        let card = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH 'TabCard' AND label == 'Tab /a'")).firstMatch
-        XCTAssertTrue(card.appears(within: Ceiling.ui), "no card for /a")
-        let frame = card.settledFrame()
-        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: max(frame.minX, 0) + 20, dy: frame.midY)).tap()
-        XCTAssertTrue(app.buttons["Done"].disappears(within: Ceiling.ui), "the switcher didn't close")
-        XCTAssertTrue(heading("/a", in: app).appears(within: Ceiling.load), "the card didn't open /a")
-
-        // To Work and back, through the strip.
-        openSwitcher(in: app)
-        let strip = app.buttons.matching(identifier: "SpaceStrip")
-        strip["Work"].tap()
-        XCTAssertTrue(waitUntil(Ceiling.ui) { strip["Work"].isSelected }, "the strip didn't switch to Work")
-        app.buttons["Done"].tap()
-        XCTAssertTrue(heading("/work", in: app).appears(within: Ceiling.load), "Work's tab didn't show")
-
-        openSwitcher(in: app)
-        strip["Home"].tap()
-        XCTAssertTrue(waitUntil(Ceiling.ui) { strip["Home"].isSelected }, "the strip didn't switch to Home")
-        app.buttons["Done"].tap()
-        XCTAssertTrue(heading("/a", in: app).appears(within: Ceiling.load), "Home came back on another tab than /a")
-        XCTAssertTrue(waitUntil(Ceiling.ui) { self.tabsButton(in: app).label == "Tabs, 2 open" }, "Home's tabs changed")
         withExtendedLifetime(server) {}
     }
 
@@ -214,7 +182,7 @@ final class SpacesTests: UITestCase {
         let app = launchWithSpaces(server)
         let field = app.textFields["Search or enter address"]
         XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
-        app.buttons["Close search"].firstMatch.tap()
+        app.buttons["Close search"].firstMatch.tapWhenSettled()
         XCTAssertTrue(field.disappears(within: Ceiling.ui), "the search panel didn't close")
 
         // Empty Home to empty Trip. The menu closes with a tap above it, on the empty state.
@@ -233,18 +201,18 @@ final class SpacesTests: UITestCase {
         assertSearchPanelStaysUp(in: app)
 
         // Back to Trip's page, then to empty Home from the switcher.
-        app.buttons["Close search"].firstMatch.tap()
+        app.buttons["Close search"].firstMatch.tapWhenSettled()
         XCTAssertTrue(field.disappears(within: Ceiling.ui), "the search panel didn't close")
         openSwitcher(in: app)
         let strip = app.buttons.matching(identifier: "SpaceStrip")
         switchInSwitcher(to: "Trip", in: app)
-        app.buttons["Done"].tap()
+        app.buttons["Done"].tapWhenSettled()
         XCTAssertTrue(heading("/trip", in: app).appears(within: Ceiling.load), "Trip's tab didn't show")
         openSwitcher(in: app)
-        strip["Home"].tap()
+        strip["Home"].tapWhenSettled()
         XCTAssertTrue(waitUntil(Ceiling.ui) { strip["Home"].isSelected }, "the strip didn't switch to Home")
         XCTAssertTrue(app.staticTexts["No Open Tabs"].appears(within: Ceiling.ui), "Home's empty switcher says nothing")
-        app.buttons["Done"].tap()
+        app.buttons["Done"].tapWhenSettled()
         assertSearchPanelStaysUp(in: app)
         withExtendedLifetime(server) {}
     }
@@ -260,7 +228,7 @@ final class SpacesTests: UITestCase {
         let searchTabs = app.buttons["Search Tabs"]
         XCTAssertTrue(openMenu(tabsButton(in: app), by: .longPress, until: searchTabs), "long-press didn't open the menu")
         XCTAssertFalse(menuItem("Home", in: app).exists, "the menu lists Spaces with only Home")
-        app.webViews.staticTexts["Path /home"].tap()
+        app.webViews.staticTexts["Path /home"].tapWhenSettled()
         XCTAssertTrue(searchTabs.disappears(within: Ceiling.ui), "menu didn't close")
 
         openSwitcher(in: app)
@@ -276,13 +244,13 @@ final class SpacesTests: UITestCase {
         XCTAssertTrue(app.navigationBars.staticTexts["1 Tab"].disappears(within: Ceiling.ui), "the switcher is still up")
 
         // A Space added there opens, empty, with the search panel up.
-        app.buttons["New Space"].tap()
+        app.buttons["New Space"].tapWhenSettled()
         let name = app.textFields["Name"]
         XCTAssertTrue(name.appears(within: Ceiling.ui), "New Space didn't open")
         XCTAssertTrue(waitUntil(Ceiling.ui) { name.value(forKey: "hasKeyboardFocus") as? Bool == true },
                       "the name field didn't take focus")
         name.typeText("Work")
-        app.buttons["Add"].tap()
+        app.buttons["Add"].tapWhenSettled()
         XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
         let field = app.textFields["Search or enter address"]
         XCTAssertTrue(field.appears(within: Ceiling.ui), "no search panel in the new Space")
@@ -337,7 +305,7 @@ final class SpacesTests: UITestCase {
         XCTAssertTrue(strip.firstMatch.appears(within: Ceiling.ui), "no Space strip", file: file, line: line)
         let glyph = strip[space]
         if glyph.exists {
-            glyph.tap()
+            glyph.tapWhenSettled()
         } else {
             let title = app.buttons["SpaceTitleMenu"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             choose(menuItem(space, in: app), from: app.buttons["SpaceStripMore"], by: .tap, closingAt: title,
@@ -391,7 +359,7 @@ final class SpacesTests: UITestCase {
         for _ in 1...3 {
             switch opening {
             case .longPress: button.press(forDuration: 1)
-            case .tap: button.tap()
+            case .tap: button.tapWhenSettled()
             }
             if item.appears(within: Ceiling.ui), waitUntil(Ceiling.ui, "Waiting for the menu to settle", { item.isHittable }) {
                 item.settledFrame()
@@ -411,7 +379,7 @@ final class SpacesTests: UITestCase {
         for _ in 1...3 {
             XCTAssertTrue(openMenu(button, by: opening, until: item), "the menu didn't open", file: file, line: line)
             let frame = item.frame
-            close.tap()
+            close.tapWhenSettled()
             XCTAssertTrue(item.disappears(within: Ceiling.ui), "the menu didn't close", file: file, line: line)
             let origin = app.coordinate(withNormalizedOffset: .zero)
             button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
@@ -419,7 +387,7 @@ final class SpacesTests: UITestCase {
             if waitUntil(Ceiling.ui, "Waiting for \(item.description) to be chosen", chosen) { return }
             // Opened but missed the item: close the menu before trying again.
             if item.exists {
-                close.tap()
+                close.tapWhenSettled()
                 XCTAssertTrue(item.disappears(within: Ceiling.ui), "the menu didn't close", file: file, line: line)
             }
         }
@@ -433,6 +401,8 @@ final class SpacesTests: UITestCase {
         field.typeText(url.absoluteString + "\n")
         XCTAssertTrue(heading(path, in: app).appears(within: Ceiling.load), "\(path) didn't load")
         XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
+        // The keyboard takes taps meant for the bar until it has gone.
+        XCTAssertTrue(app.keyboardIsDown(), "the keyboard stayed up")
     }
 
     private func openSwitcher(in app: XCUIApplication) {

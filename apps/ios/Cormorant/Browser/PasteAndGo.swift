@@ -1,3 +1,4 @@
+import CormorantCore
 import UIKit
 
 /// Paste and Go / Paste and Search in the search field's edit menu, as Safari's address field has.
@@ -63,9 +64,7 @@ enum PasteAndGo {
     private static func pastedText() -> String? {
         let pasteboard = UIPasteboard.general
         guard let raw = pasteboard.url?.absoluteString ?? pasteboard.string else { return nil }
-        let text = raw.split(whereSeparator: \.isNewline).joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
+        return AddressResolver.pastedLine(raw)
     }
 
     private static func observe() {

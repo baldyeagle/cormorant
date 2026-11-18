@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// The switcher leaves pages as they were: a tab keeps its scroll position through the switcher and
@@ -40,7 +41,7 @@ final class TabSwitcherTests: UITestCase {
         for path in ["/a", "/b", "/c"] { open(server.url.appending(path: String(path.dropFirst())), path: path, in: app) }
 
         // To the end of /c.
-        app.webViews.links["Far down"].tap()
+        app.webViews.links["Far down"].tapWhenSettled()
         XCTAssertTrue(waitUntil(Ceiling.ui) { self.report(in: app).hasPrefix("Scrolled ") && self.report(in: app) != "Scrolled 0" },
                       "the page didn't scroll down")
         let scrolled = report(in: app)
@@ -86,6 +87,8 @@ final class TabSwitcherTests: UITestCase {
         field.typeText(url.absoluteString + "\n")
         XCTAssertTrue(heading(path, in: app).appears(within: Ceiling.load), "\(path) didn't load")
         XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
+        // The keyboard takes taps meant for the bar until it has gone.
+        XCTAssertTrue(app.keyboardIsDown(), "the keyboard stayed up")
     }
 
     private func openSwitcher(in app: XCUIApplication) {

@@ -35,6 +35,17 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "5A1C0E7B3D2F4A6B8C9D0E17"
+               BuildableName = "CormorantTests.xctest"
+               BlueprintName = "CormorantTests"
+               ReferencedContainer = "container:Cormorant.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "9DA362F5ABEB86FB57837025"
                BuildableName = "CormorantUITests.xctest"
                BlueprintName = "CormorantUITests"

@@ -1,14 +1,14 @@
 import Foundation
 import Network
 
-/// Serves one fixed HTML page on 127.0.0.1 so the tests need no network. The app and the test
-/// runner share the simulator's loopback. Every path gets the same page; `delays` holds back the
+/// Serves one fixed HTML page on 127.0.0.1 so the tests need no network: the app's UI tests (the
+/// app and the test runner share the simulator's loopback), its in-process tests, and any platform's. Every path gets the same page; `delays` holds back the
 /// first request for some, `holds` every request for some until the test calls `release(_:)`.
 /// Counts requests by path, so a test can tell a page that was loaded again from one that wasn't.
-final class FixtureServer {
-    struct StartFailed: Error {}
+public final class FixtureServer {
+    public struct StartFailed: Error {}
 
-    let port: UInt16
+    public let port: UInt16
     private let listener: NWListener
     private let counts: Counts
     private let held: Held
@@ -17,7 +17,7 @@ final class FixtureServer {
     ///   Later ones are answered at once, so a test can hold a link preview's load back for longer than
     ///   a slow simulator takes to pick a menu item, without the tab's own load waiting too.
     /// - Parameter holds: paths whose requests go unanswered until `release(_:)` is called for them.
-    init(html: String, delays: [String: Double] = [:], holds: Set<String> = []) throws {
+    public init(html: String, delays: [String: Double] = [:], holds: Set<String> = []) throws {
         let body = Data(html.utf8)
         let header = [
             "HTTP/1.1 200 OK",
@@ -71,17 +71,17 @@ final class FixtureServer {
     }
 
     /// Answers the requests held for `path` (one of `holds`), and any that come for it from now on.
-    func release(_ path: String) {
+    public func release(_ path: String) {
         for send in held.release(path) { send() }
     }
 
-    var url: URL { URL(string: "http://127.0.0.1:\(port)/")! }
+    public var url: URL { URL(string: "http://127.0.0.1:\(port)/")! }
 
     /// Requests received so far for `path` (`/next`).
-    func requestCount(for path: String) -> Int { counts.count(for: path) }
+    public func requestCount(for path: String) -> Int { counts.count(for: path) }
 
     /// Every request so far, one per line with seconds since the server started, for failure messages.
-    var requestLog: String { counts.log }
+    public var requestLog: String { counts.log }
 
     /// `GET /next HTTP/1.1` → `/next`.
     private static func path(of request: Data) -> String? {

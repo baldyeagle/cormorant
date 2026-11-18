@@ -84,8 +84,9 @@ jobs:
         run: scripts/ui-test-shard.py --check-quarantine
 
   ios:
-    # Shard 1 also runs the package's tests and checks the built app; the others only test.
-    name: ${{ matrix.shard == 1 && 'iOS app, CormorantKit and UI tests (shard 1)' || format('UI tests (shard {0})', matrix.shard) }}
+    # Shard 1 also runs the package's tests, the app's in-process tests and checks the built app; the
+    # others only run UI tests.
+    name: ${{ matrix.shard == 1 && 'iOS app, CormorantKit, app tests and UI tests (shard 1)' || format('UI tests (shard {0})', matrix.shard) }}
     needs: changes
     if: needs.changes.outputs.ios == 'true'
     runs-on: xcode-27
@@ -117,14 +118,15 @@ jobs:
           swift --version
       - name: Deal this shard's tests
         # Before the build, so a bad quarantine entry stops the shard in seconds (shard 1's package tests
-        # and source checks still run, on the right Xcode). Shard 1 deals itself less, for
-        # the ~90 s of package tests and checks it runs first. Tests in scripts/ui-test-quarantine.txt
-        # sit out, except nightly and by hand, so a fix shows. The PR's new tests weigh their extra runs.
+        # and source checks still run, on the right Xcode). Shard 1 deals itself less, for the ~90 s
+        # of package tests and checks and the ~4 minutes of app tests it runs first. Tests in
+        # scripts/ui-test-quarantine.txt sit out, except nightly and by hand, so a fix shows. The PR's
+        # new tests weigh their extra runs.
         env:
           QUARANTINED: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '--include-quarantined' || '' }}
           NEW_TESTS: ${{ needs.changes.outputs.new_tests }}
         run: |
-          DEAL="${{ strategy.job-index }} ${{ strategy.job-total }} 90 $QUARANTINED"
+          DEAL="${{ strategy.job-index }} ${{ strategy.job-total }} 330 $QUARANTINED"
           ONLY_TESTING=$(scripts/ui-test-shard.py $DEAL --new "$NEW_TESTS")
           NEW_ONLY_TESTING=$(scripts/ui-test-shard.py $DEAL --new "$NEW_TESTS" --only-new)
           echo "ONLY_TESTING=$ONLY_TESTING" >> "$GITHUB_ENV"
@@ -204,6 +206,24 @@ jobs:
               echo "::warning::$service is still loaded; the simulator may take the runner from the tests"
             fi
           done
+      - name: App tests (in-process)
+        # CormorantTests: Swift Testing inside the app, against a real BrowserStore and WebKit, nothing
+        # tapped. Most of what the app does is tested here; the UI tests keep what only the screen
+        # shows. Run as many times as the UI tests in a stress run or the nightly one.
+        if: ${{ !cancelled() && matrix.shard == 1 && steps.boot.outcome == 'success' }}
+        env:
+          ITERATIONS: ${{ inputs.iterations || ((github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'ui-stress')) && '5') || '1' }}
+        run: |
+          XCTESTRUN=$(ls build/DerivedData/Build/Products/*.xctestrun)
+          ITERATION_ARGS=()
+          if [ "$ITERATIONS" -gt 1 ]; then ITERATION_ARGS=(-test-iterations "$ITERATIONS"); fi
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -resultBundlePath build/AppTests.xcresult \
+            "${ITERATION_ARGS[@]}" -collect-test-diagnostics never \
+            -only-testing:CormorantTests \
+            | tee build/xcodebuild-app-tests.log | grep -E "error:|✘|✔|Test run|TEST" || true
+          grep -q "TEST EXECUTE SUCCEEDED" build/xcodebuild-app-tests.log
       - name: UI tests
         if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
         env:
@@ -219,9 +239,14 @@ jobs:
           # No screen recording: XCTest encodes video of every test in software (on a 3-core VM, with
           # no GPU) and keeps it only on failure, and automatic screenshots would cost an image per
           # action. UITestCase attaches its own screenshot and accessibility tree at a failure.
-          [ "$(plutil -extract TestConfigurations.0.TestTargets.0.BlueprintName raw "$XCTESTRUN")" = CormorantUITests ]
-          plutil -replace TestConfigurations.0.TestTargets.0.PreferredScreenCaptureFormat -string screenshots "$XCTESTRUN"
-          plutil -replace TestConfigurations.0.TestTargets.0.SystemAttachmentLifetime -string keepNever "$XCTESTRUN"
+          # The UI tests' entry among the test targets (CormorantTests is another), by name.
+          UI=$(plutil -convert json -o - "$XCTESTRUN" | python3 -c '
+          import json, sys
+          targets = json.load(sys.stdin)["TestConfigurations"][0]["TestTargets"]
+          print([t["BlueprintName"] for t in targets].index("CormorantUITests"))
+          ')
+          plutil -replace TestConfigurations.0.TestTargets.$UI.PreferredScreenCaptureFormat -string screenshots "$XCTESTRUN"
+          plutil -replace TestConfigurations.0.TestTargets.$UI.SystemAttachmentLifetime -string keepNever "$XCTESTRUN"
           # A mistyped manual stress run must fail, not quietly run each test once.
           case "$ITERATIONS" in
             '' | *[!0-9]* | 0 | 0*) echo "::error::iterations must be a positive integer, got '$ITERATIONS'"; exit 1 ;;
@@ -289,6 +314,8 @@ jobs:
           name: ui-test-results-${{ matrix.shard }}
           path: |
             build/xcodebuild.log
+            build/AppTests.xcresult
+            build/xcodebuild-app-tests.log
             build/UITests.xcresult
             build/xcodebuild-test.log
             build/NewUITests.xcresult

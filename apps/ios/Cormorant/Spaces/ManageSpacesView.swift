@@ -41,7 +41,7 @@ struct ManageSpacesView: View {
                             titleVisibility: .visible, presenting: deleting) { space in
             Button("Delete \(space.name)", role: .destructive) { store.deleteSpace(space.id) }
         } message: { space in
-            Text(SpaceEditor.deleteMessage(tabCount: store.state.tabCount(inSpace: space.id)))
+            Text(Space.deleteConfirmation(tabCount: store.state.tabCount(inSpace: space.id)))
         }
         .navigationTitle("Spaces")
         .navigationBarTitleDisplayMode(.inline)

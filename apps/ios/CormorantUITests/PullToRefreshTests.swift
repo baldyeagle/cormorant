@@ -1,3 +1,4 @@
+import CormorantTestSupport
 import XCTest
 
 /// Pulling down from the top of a page reloads it; the same pull anywhere else scrolls.
@@ -183,19 +184,15 @@ final class PullToRefreshTests: UITestCase {
                    withVelocity: .slow, thenHoldForDuration: 0.3)
     }
 
-    /// Launches with no saved tabs and opens `url` from the launch search panel.
+    /// Launches with no saved tabs but one on `url`.
     private func launchOnPage(_ url: URL) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-uiTesting"]
+        // On the page from the start (`-uiTestingOpen`): no typing, no keyboard to wait out.
+        app.launchArguments = ["-uiTesting", "-uiTestingOpen", url.absoluteString]
         app.launch()
-
-        let field = app.textFields["Search or enter address"]
-        XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
-        field.typeText(url.absoluteString + "\n")
 
         // Generous: the first page load on a fresh simulator is slow.
         XCTAssertTrue(app.webViews.staticTexts["Load 1"].appears(within: Ceiling.load), "fixture page didn't load")
-        XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close on submit")
         return app
     }
 }

@@ -17,18 +17,21 @@ struct CormorantApp: App {
 
     var body: some Scene {
         WindowGroup {
-            BrowserView()
-                #if DEBUG
-                .overlay(alignment: .topLeading) { if Self.isUITesting { UITestingProbes() } }
-                #endif
-                .environment(store)
-                .task { await store.launch() }
-                .onOpenURL { store.handle(openURL: $0) }
-                #if DEBUG
-                .preferredColorScheme(Self.forcedColorScheme)
-                #endif
+            #if DEBUG
+            if Self.isHostingTests {
+                // CormorantTests build their own stores and windows; this one stays empty and unloaded.
+                Color.clear
+            } else {
+                browser
+            }
+            #else
+            browser
+            #endif
         }
         .onChange(of: scenePhase) { _, phase in
+            #if DEBUG
+            if Self.isHostingTests { return }
+            #endif
             switch phase {
             case .active: store.didBecomeActive()
             case .inactive: store.didBecomeInactive()
@@ -38,8 +41,29 @@ struct CormorantApp: App {
         }
     }
 
+    private var browser: some View {
+        BrowserView()
+            #if DEBUG
+            .overlay(alignment: .topLeading) { if Self.isUITesting { UITestingProbes() } }
+            #endif
+            .environment(store)
+            .task { await store.launch() }
+            .onOpenURL { store.handle(openURL: $0) }
+            #if DEBUG
+            .preferredColorScheme(Self.forcedColorScheme)
+            #endif
+    }
+
     #if DEBUG
     private static let isUITesting = ProcessInfo.processInfo.arguments.contains("-uiTesting")
+
+    /// The app is the host of the in-process tests (CormorantTests): XCTest sets these for the app it
+    /// injects a test bundle into (which one depends on the Xcode), never for one a UI test launches.
+    /// CormorantTests' `TestHostTests` fails if none is set, rather than let the tests run beside a
+    /// live browser.
+    static let isHostingTests = !isUITesting
+        && ["XCTestConfigurationFilePath", "XCTestBundlePath", "XCTestSessionIdentifier"]
+            .contains { ProcessInfo.processInfo.environment[$0] != nil }
 
     /// `-uiTestingAppearance dark|light` (CormorantUITests): `XCUIDevice.appearance` doesn't take on
     /// the iOS 27 simulator, so tests pick the app's appearance (pages' `prefers-color-scheme` too) here.
@@ -54,6 +78,25 @@ struct CormorantApp: App {
 
     private static func makeStore() -> BrowserStore {
         #if DEBUG
+        // Hosting CormorantTests: a store that's never launched, on throwaway files, so nothing the
+        // tests do reaches the app group or the system.
+        if isHostingTests {
+            let run = URL.temporaryDirectory.appending(path: "test-host-\(UUID().uuidString)")
+            let defaults = UserDefaults(suiteName: "dev.baldyeagle.cormorant.test-host") ?? .standard
+            return BrowserStore(
+                stateStore: JSONBrowserStateStore(fileURL: run.appendingPathExtension("json")),
+                historyStore: TabHistoryStore(directory: run.appending(path: "History")),
+                blocking: BlockingService(usesFilterLists: false),
+                settings: AppSettings(defaults: defaults),
+                favicons: FaviconStore(directory: run.appending(path: "Favicons")),
+                defaultBrowser: DefaultBrowserStatus(isLive: false),
+                browsingHistory: nil,
+                searchSuggestions: nil,
+                focusFilter: FocusFilterSettings(defaults: defaults, followsSystem: false),
+                inbox: nil,
+                spacesSummary: nil
+            )
+        }
         // `-uiTesting` launch argument (CormorantUITests): tabs, their history and icons are saved to
         // throwaway files instead of the app group's, settings (the Focus filter's Space too, which
         // tests set themselves) to a throwaway defaults suite, the share extension's inbox and Spaces

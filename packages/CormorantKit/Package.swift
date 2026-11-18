@@ -12,17 +12,21 @@ let package = Package(
         .library(name: "CormorantBlocking", targets: ["CormorantBlocking"]),
         .library(name: "CormorantAI", targets: ["CormorantAI"]),
         .library(name: "CormorantSync", targets: ["CormorantSync"]),
+        // For tests only (the apps' test targets and this package's): never linked into an app.
+        .library(name: "CormorantTestSupport", targets: ["CormorantTestSupport"]),
     ],
     targets: [
         .target(name: "CormorantCore"),
         .target(name: "CormorantBlocking", dependencies: ["CormorantCore"]),
         .target(name: "CormorantAI", dependencies: ["CormorantCore"]),
         .target(name: "CormorantSync", dependencies: ["CormorantCore"]),
+        .target(name: "CormorantTestSupport"),
 
         .testTarget(name: "CormorantCoreTests", dependencies: ["CormorantCore"]),
         .testTarget(name: "CormorantBlockingTests", dependencies: ["CormorantBlocking"], resources: [.copy("Resources")]),
         .testTarget(name: "CormorantAITests", dependencies: ["CormorantAI"]),
         .testTarget(name: "CormorantSyncTests", dependencies: ["CormorantSync"]),
+        .testTarget(name: "CormorantTestSupportTests", dependencies: ["CormorantTestSupport"]),
     ],
     swiftLanguageModes: [.v6]
 )

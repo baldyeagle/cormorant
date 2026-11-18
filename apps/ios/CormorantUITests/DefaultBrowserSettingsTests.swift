@@ -10,13 +10,13 @@ final class DefaultBrowserSettingsTests: UITestCase {
 
         let field = app.textFields["Search or enter address"]
         XCTAssertTrue(field.appears(within: Ceiling.launch), "no search panel at launch")
-        app.buttons["Close search"].firstMatch.tap()
+        app.buttons["Close search"].firstMatch.tapWhenSettled()
         XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close")
 
         // The bar slides down with the keyboard after the search panel closes; a tap while it moves is dropped.
         app.buttons["Page actions"].tapWhenSettled()
         XCTAssertTrue(app.buttons["Settings"].appears(within: Ceiling.ui), "caret sheet didn't open")
-        app.buttons["Settings"].tap()
+        app.buttons["Settings"].tapWhenSettled()
         XCTAssertTrue(app.navigationBars["Settings"].appears(within: Ceiling.ui), "Settings didn't open")
 
         // `-uiTesting` never asks the system, so the status is never "Default Browser": the text is

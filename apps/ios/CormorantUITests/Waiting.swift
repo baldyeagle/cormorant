@@ -34,14 +34,26 @@ extension XCUIElement {
         }
     }
 
-    /// Taps once the element has stopped moving. For when XCTest's own animation wait can't help: a
-    /// context menu's items (the wait is off while a menu is up), or a bar moved by the keyboard
-    /// (another process's animation).
+    /// Taps once the app reports nothing moving (`XCUIApplication.motionSettles`) and the element has
+    /// stopped moving. For when XCTest's own animation wait can't help: a control in a sheet still
+    /// settling (its frame reads as settled while the sheet slides), a context menu's items (the wait
+    /// is off while a menu is up), or a bar moved by the keyboard (another process's animation).
     func tapWhenSettled() {
+        XCUIApplication().motionSettles()
         settledFrame()
         tap()
     }
 
+}
+
+@MainActor
+extension XCUICoordinate {
+    /// Taps once the app reports nothing moving (`XCUIApplication.motionSettles`), as an element's
+    /// `tapWhenSettled()` does.
+    func tapWhenSettled() {
+        XCUIApplication().motionSettles()
+        tap()
+    }
 }
 
 /// Ceilings for waits on something that should happen, by what's being waited for. A ceiling only
@@ -65,6 +77,19 @@ extension XCUIApplication {
     func savesSettle() -> Bool {
         let probe = descendants(matching: .any)["UITesting.saves"].firstMatch
         return waitUntil(Ceiling.ui, "Waiting for the app's saves to land") { probe.value as? String == "settled" }
+    }
+
+    /// Waits until the app reports (`UITestingProbes`, `UITesting.motion`) that no presentation or
+    /// UIKit animation is running, for at most `timeout`; returns whether it did. Not an assertion: a
+    /// tap after it goes ahead either way (a link menu up may never report still), it only keeps the
+    /// tap from landing mid-transition when it can.
+    @discardableResult
+    func motionSettles(within timeout: TimeInterval = 5) -> Bool {
+        let probe = descendants(matching: .any)["UITesting.motion"].firstMatch
+        let still = waitUntil(timeout, "Waiting for the app to stop moving") { probe.value as? String == "still" }
+        // Said in the report, so a probe that stays "moving" shows up as such, not as slow taps.
+        if !still { XCTContext.runActivity(named: "The app still reported motion after \(timeout)s; tapping anyway") { _ in } }
+        return still
     }
 
     /// True once the app reports (`UITestingProbes`) that the keyboard has finished going: until then

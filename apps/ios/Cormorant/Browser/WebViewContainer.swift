@@ -19,6 +19,13 @@ struct WebViewContainer: UIViewRepresentable {
         let close: () -> Void
     }
 
+    /// Whether a swipe in from the left edge closes the tab on `webView` rather than leaving the edge to
+    /// WebKit's own back swipe: only on its first page, and only with a `backSwipeClose` (none while its
+    /// history is being restored).
+    static func swipeClosesTab(_ backSwipeClose: BackSwipeClose?, webView: WKWebView?) -> Bool {
+        backSwipeClose != nil && webView?.canGoBack == false
+    }
+
     /// UIKit adds the safe area (status bar, home indicator) and the keyboard to the scroll range of
     /// every page. WebKit turns that off for a page with `viewport-fit=cover`, so its scroll range
     /// started at the top of the screen: only a fresh load sat below the status bar, and scrolling
@@ -161,7 +168,7 @@ struct WebViewContainer: UIViewRepresentable {
 
         /// Only from the first page: with history, WebKit's own back swipe takes the edge.
         private var canBackSwipeClose: Bool {
-            backSwipeClose != nil && webView?.canGoBack == false && swipe == nil
+            WebViewContainer.swipeClosesTab(backSwipeClose, webView: webView) && swipe == nil
         }
 
         /// UIView's own, which is also the delegate method.

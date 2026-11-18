@@ -37,7 +37,7 @@ struct BrowserView: View {
                 // sides, for swipes that start there; the page in it doesn't (landscape, or a
                 // status-bar column at the side on the iPhone Duo).
                 WebViewContainer(webView: session.webView, barHeight: barHeight,
-                                 backSwipeClose: backSwipeClose(for: session))
+                                 backSwipeClose: Self.backSwipeClose(for: session, in: store))
                     .ignoresSafeArea(.container, edges: store.pageRunsUnderStatusBar ? .all : [.horizontal, .bottom])
                     .ignoresSafeArea(.keyboard)
             }
@@ -278,7 +278,7 @@ struct BrowserView: View {
 
     /// Any tab closes when swiped back from its first page. Not while its history is still being
     /// restored: it would look like a first page.
-    private func backSwipeClose(for session: TabSession) -> WebViewContainer.BackSwipeClose? {
+    static func backSwipeClose(for session: TabSession, in store: BrowserStore) -> WebViewContainer.BackSwipeClose? {
         let tabID = session.tabID
         guard !session.isRestoringHistory else { return nil }
         return .init(destinationSnapshot: { store.backSwipeSnapshot(for: tabID) },

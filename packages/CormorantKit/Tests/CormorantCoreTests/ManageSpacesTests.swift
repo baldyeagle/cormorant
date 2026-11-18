@@ -76,4 +76,21 @@ import Testing
         let hosts = Set(state.archived(reopeningIn: Space.defaultID).map { $0.url.host() ?? "" })
         #expect(hosts == ["home.com", "trip.com", "gone.com"])
     }
+
+    @Test func archiveConfirmationSaysWhatIsKeptAndHowItComesBack() {
+        let back = "leaves the Spaces you switch between until you restore it from Archived in Spaces."
+        #expect(Space.archiveConfirmation(name: "Work", tabCount: 0) == "It has no open tabs. Work \(back)")
+        #expect(Space.archiveConfirmation(name: "Work", tabCount: 1)
+            == "Its tab is kept, and doesn't archive while the Space is away. Work \(back)")
+        #expect(Space.archiveConfirmation(name: "Trip", tabCount: 3)
+            == "Its 3 tabs are kept, and don't archive while the Space is away. Trip \(back)")
+    }
+
+    @Test func deleteConfirmationSaysWhereTheTabsGo() {
+        #expect(Space.deleteConfirmation(tabCount: 0) == "It has no open tabs. The Space and its settings are gone.")
+        #expect(Space.deleteConfirmation(tabCount: 1)
+            == "Its tab goes to the tab archive, where you can search for it and reopen it. The Space and its settings are gone.")
+        #expect(Space.deleteConfirmation(tabCount: 2)
+            == "Its 2 tabs go to the tab archive, where you can search for them and reopen them. The Space and its settings are gone.")
+    }
 }

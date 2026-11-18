@@ -57,15 +57,16 @@ final class TestBrowser {
         host.show(store.activeSession?.webView)
     }
 
-    /// Shuts the browser off and throws away its files, settings and profiles' website data. Call it
-    /// with `defer` right after making the browser.
+    /// Shuts the browser off and throws away its settings and profiles' website data. Call it with
+    /// `defer` right after making the browser.
     func close() {
         let profiles = store.state.profiles.map(\.id) + store.state.profilesToErase
         store.terminateForTesting()
         host.show(nil)
         window.isHidden = true
         UserDefaults.standard.removePersistentDomain(forName: defaultsSuite)
-        try? FileManager.default.removeItem(at: directory)
+        // The files stay (the run's temporary folder, gone with the simulator): the store's browsing
+        // history database is still open, and SQLite reports a file deleted under it as corruption.
         // Only this test's profiles: their IDs are new, so no other test has a store by them.
         Task {
             for id in profiles where id != Profile.defaultID {

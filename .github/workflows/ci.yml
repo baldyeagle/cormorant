@@ -209,10 +209,10 @@ jobs:
       - name: App tests (in-process)
         # CormorantTests: Swift Testing inside the app, against a real BrowserStore and WebKit, nothing
         # tapped. Most of what the app does is tested here; the UI tests keep what only the screen
-        # shows. Run as many times as the UI tests in a stress run.
+        # shows. Run as many times as the UI tests in a stress run or the nightly one.
         if: ${{ !cancelled() && matrix.shard == 1 && steps.boot.outcome == 'success' }}
         env:
-          ITERATIONS: ${{ inputs.iterations || (contains(github.event.pull_request.labels.*.name, 'ui-stress') && '5') || '1' }}
+          ITERATIONS: ${{ inputs.iterations || ((github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'ui-stress')) && '5') || '1' }}
         run: |
           XCTESTRUN=$(ls build/DerivedData/Build/Products/*.xctestrun)
           ITERATION_ARGS=()

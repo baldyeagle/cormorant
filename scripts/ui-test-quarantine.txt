@@ -8,3 +8,8 @@
 # in runs started by hand, so a fix shows. CI fails once an entry is 14 days old; by then
 # fix the test, move what it checks to a lower-level test, or delete it. Every entry must name a test
 # that exists, and dates are YYYY-MM-DD.
+
+2026-11-17 CormorantUITests/AutoArchiveSettingsTests/testOffKeepsAnIdleTab  7 failed attempts in 14 days: "the switch didn't turn on" / "saves didn't land"; moving in-process (#44)
+2026-11-17 CormorantUITests/AutoArchiveSettingsTests/testOffStaysOffAfterRelaunchAndOnComesBackAtItsTime  4 failed attempts: "the switch didn't turn on"; moving in-process (#44)
+2026-11-17 CormorantUITests/AutoArchiveSettingsTests/testSeveralSpacesTurnOffTogetherAndComeBackAsTheyWere  3 failed attempts: "the switch didn't turn on"; moving in-process (#44)
+2026-11-17 CormorantUITests/ProfilesTests/testDeletingAProfileMovesItsSpacesToDefault  6 failed attempts: "Vialumi's data wasn't erased" (WebKit lets go late); moving in-process (#44)

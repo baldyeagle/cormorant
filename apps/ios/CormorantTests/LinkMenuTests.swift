@@ -196,7 +196,7 @@ extension AppTests {
             // Cancel opens nothing; only Open hands the link to Mail.
             #expect(alert.actions.map(\.title) == ["Cancel", "Open"])
             #expect(alert.actions.first?.style == .cancel)
-            await host.dismiss(animated: false)
+            host.dismiss(animated: false)
             #expect(browser.store.tabs.count == 1)
             #expect(opener.webView.url?.path() == "/", "the tab left its page")
         }

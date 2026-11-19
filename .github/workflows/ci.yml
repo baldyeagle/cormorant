@@ -33,7 +33,7 @@ jobs:
       new_tests: ${{ steps.new.outputs.tests }}
       new_tests_timeout: ${{ steps.new.outputs.timeout }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: github.event_name == 'pull_request'
         with:
           # The PR's merge commit and its parents.
@@ -79,7 +79,7 @@ jobs:
     # Its own job, so an entry past its 14 days (or one naming no test) fails in seconds, build or not.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: No quarantined UI test past its 14 days
         run: scripts/ui-test-shard.py --check-quarantine
 
@@ -109,7 +109,7 @@ jobs:
       # the newest iOS is used, with a warning.
       SIMULATOR_IOS: '27.1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Select newest Xcode on the runner
         run: |
           XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
@@ -309,7 +309,7 @@ jobs:
       - name: Upload UI test results
         # Cancelled too: a shard that hits its timeout is cancelled, not failed.
         if: failure() || cancelled()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-test-results-${{ matrix.shard }}
           path: |
@@ -326,8 +326,8 @@ jobs:
     name: Site (Astro build, check, lint, format)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
         # Installs node, pnpm and vite-plus from mise.toml.
       - name: Install
         run: pnpm install --frozen-lockfile

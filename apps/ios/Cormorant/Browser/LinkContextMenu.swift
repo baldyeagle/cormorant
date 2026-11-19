@@ -124,7 +124,13 @@ extension TabSession {
                 self?.openInBackgroundTab(url)
             })
         }
-        let pass = [
+        var pass: [LinkMenuAction] = []
+        if kind == .page {
+            pass.append(LinkMenuAction(title: "Download Linked File", systemImage: "arrow.down.circle") { [weak self] in
+                self?.downloadLinkedFile(url)
+            })
+        }
+        pass += [
             LinkMenuAction(title: "Copy Link", systemImage: "link") {
                 UIPasteboard.general.url = url
                 #if DEBUG

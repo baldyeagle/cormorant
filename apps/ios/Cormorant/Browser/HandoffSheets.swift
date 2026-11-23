@@ -51,7 +51,7 @@ final class HandoffPresenter {
         live.removeAll { $0 === presentation }
     }
 
-    private static func topViewController() -> UIViewController? {
+    static func topViewController() -> UIViewController? {
         let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
         var top = (windows.first { $0.isKeyWindow } ?? windows.first)?.rootViewController
         while let presented = top?.presentedViewController, !presented.isBeingDismissed { top = presented }

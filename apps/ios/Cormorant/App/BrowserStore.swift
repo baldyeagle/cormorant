@@ -571,7 +571,7 @@ final class BrowserStore {
     private func startToastExpiry() {
         toastExpiry?.cancel()
         toastExpiry = nil
-        guard let toast, let lifetime = Self.toastLifetime else { return }
+        guard let toast, !toast.staysUp, let lifetime = Self.toastLifetime else { return }
         let id = toast.id
         toastExpiry = Task { [weak self] in
             try? await Task.sleep(for: lifetime)

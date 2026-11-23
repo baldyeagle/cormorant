@@ -112,6 +112,7 @@ struct CormorantApp: App {
             // Per named session too, so a test that leaves a setting changed can't reach another's relaunch.
             let suite = "dev.baldyeagle.cormorant.ui-testing" + (session.map { ".\($0)" } ?? "")
             if session == nil { UserDefaults.standard.removePersistentDomain(forName: suite) }
+            PageFileShare.cache = SharedFileCache(directory: run.appending(path: "Shared Files"))
             let defaults = UserDefaults(suiteName: suite) ?? .standard
             let settings = AppSettings(defaults: defaults)
             // `-uiTestingSearchEngine <template>`: searches go to the test's FixtureServer, not the network.
@@ -134,6 +135,8 @@ struct CormorantApp: App {
             )
         }
         #endif
+        // Shares the app didn't live to finish, and files whose copies were good for the last launch only.
+        PageFileShare.cache.pruneAtLaunch()
         return BrowserStore()
     }
 }

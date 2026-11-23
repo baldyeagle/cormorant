@@ -31,6 +31,8 @@ extension AppTests {
             <a href="/empty.ics">No events</a>
             <a href="/ticket.pkpass">Broken pass</a>
             <a rel="ar" href="/chair.usdz">View in AR</a>
+            <a href="/charts/Seattle.pdf">Chart PDF</a>
+            <a href="/charts/Seattle.pdf#page=2">Chart PDF page 2</a>
             """
 
         private static let calendar = "text/calendar; charset=utf-8"
@@ -62,6 +64,7 @@ extension AppTests {
             "/ticket.pkpass": .init(contentType: "application/vnd.apple.pkpass", body: Data("not a signed pass".utf8)),
             "/chair.usdz": .init(contentType: "model/vnd.usdz+zip", body: Data("PK\u{3}\u{4} not really a model".utf8)),
             "/files/archive.zip": .init(contentType: "application/zip", body: Data("PK\u{3}\u{4} not really a zip".utf8)),
+            "/charts/Seattle.pdf": .init(contentType: "application/pdf", body: pdf, headers: ["ETag": "\"chart-1\""]),
             "/files/notes": .init(contentType: "text/plain; charset=utf-8", body: Data("Hello from the notes".utf8),
                                   headers: ["Content-Disposition": "attachment; filename=\"Meeting notes.txt\""]),
         ]
@@ -272,6 +275,270 @@ extension AppTests {
             withExtendedLifetime(server) {}
         }
 
+        private static let pdf = Data("""
+            %PDF-1.1
+            1 0 obj <</Type /Catalog /Pages 2 0 R>> endobj
+            2 0 obj <</Type /Pages /Kids [3 0 R] /Count 1>> endobj
+            3 0 obj <</Type /Page /Parent 2 0 R /MediaBox [0 0 200 200]>> endobj
+            trailer <</Root 1 0 R>>
+            %%EOF
+            """.utf8)
+
+        /// A PDF WebKit shows stays a page, but Share hands over the file (the share sheet itself is
+        /// the system's): the tab knows the page on screen is one, back on a web page too, and the
+        /// file is fetched through the tab, with the edition and size the page was served with.
+        @Test func aPageThatIsAFileIsSharedAsTheFile() async throws {
+            let (server, browser) = try await start()
+            defer { browser.close() }
+            let cache = Self.freshCache()
+            let session = try #require(browser.store.activeSession)
+            #expect(session.shownFile == nil, "a web page counted as a file")
+
+            try await browser.follow("Chart PDF")
+            try await browser.waitForPage("/charts/Seattle.pdf")
+            #expect(browser.store.downloads.listed.isEmpty, "a PDF WebKit shows was downloaded")
+            let file = try #require(session.shownFile)
+            #expect(file.filename == "Seattle.pdf")
+            #expect(file.mimeType == "application/pdf")
+            #expect(file.version == "etag:\"chart-1\"")
+            #expect(file.expectedLength == Int64(Self.pdf.count))
+
+            let fetched = try await Self.fetch(file, in: session, cache: cache)
+            #expect(fetched.lastPathComponent == "Seattle.pdf")
+            #expect(try Data(contentsOf: fetched) == Self.pdf)
+            #expect(cache.cached(file) == fetched)
+            #expect(browser.store.downloads.listed.isEmpty, "sharing listed it in Downloads")
+
+            // Back from WebKit's page cache asks no policy: the page on screen still has to be right.
+            session.webView.goBack()
+            try await browser.waitForPage("/")
+            #expect(session.shownFile == nil, "back on the web page, still a file")
+            session.webView.goForward()
+            try await browser.waitForPage("/charts/Seattle.pdf")
+            #expect(session.shownFile == file)
+            withExtendedLifetime(server) {}
+        }
+
+        @Test func aFileThatCantBeFetchedAgainFailsItsShare() async throws {
+            let (_, browser) = try await start()
+            defer { browser.close() }
+            let session = try #require(browser.store.activeSession)
+            // Nothing listens on port 1.
+            let missing = try #require(PageFile(url: URL(string: "http://127.0.0.1:1/charts/Gone.pdf")!,
+                                                mimeType: "application/pdf", suggestedFilename: nil))
+            await #expect(throws: (any Error).self) { try await Self.fetch(missing, in: session, cache: Self.freshCache()) }
+        }
+
+        /// Share on a PDF: a toast that stays up and counts the file in, then the share sheet with the
+        /// whole file (the sheet itself is the system's). The file is kept: sharing it again (after
+        /// Save to Files, or back from another app) opens the sheet at once, with no new fetch.
+        @Test func shareGetsTheFileThenOpensTheSheet() async throws {
+            let (server, browser) = try await start()
+            defer { browser.close() }
+            let cache = Self.freshCache()
+            let session = try #require(browser.store.activeSession)
+            try await browser.follow("Chart PDF")
+            try await browser.waitForPage("/charts/Seattle.pdf")
+            let file = try #require(session.shownFile)
+
+            let shared = Shared()
+            let outcome = PageFileShare.share(file, from: session, store: browser.store) { shared.items = $0 }
+            #expect(outcome == .fetching)
+            let toast = try #require(browser.store.toast)
+            #expect(toast.message == "Getting Seattle.pdf")
+            #expect(toast.staysUp)
+            #expect(toast.transfer != nil, "the toast doesn't count the file in")
+            try await browser.until("the share sheet to open") { shared.items != nil }
+            let url = try #require(shared.items?.first as? URL)
+            #expect(try Data(contentsOf: url) == Self.pdf)
+            #expect(url.lastPathComponent == "Seattle.pdf")
+            #expect(browser.store.toast == nil, "the Getting toast stayed up")
+            #expect(browser.store.downloads.listed.isEmpty, "sharing listed it in Downloads")
+
+            let fetches = server.requestCount(for: "/charts/Seattle.pdf")
+            shared.items = nil
+            #expect(PageFileShare.share(file, from: session, store: browser.store) { shared.items = $0 } == .sharing)
+            #expect(shared.items?.first as? URL == url, "shared again, it wasn't the kept file")
+            #expect(browser.store.toast == nil)
+            #expect(server.requestCount(for: "/charts/Seattle.pdf") == fetches, "fetched again")
+            #expect(cache.cached(file) == url)
+            withExtendedLifetime(server) {}
+        }
+
+        @Test func aFileThatCantBeHadOffersItsLink() async throws {
+            let (server, browser) = try await start()
+            defer { browser.close() }
+            _ = Self.freshCache()
+            let session = try #require(browser.store.activeSession)
+            let missing = try #require(PageFile(url: URL(string: "http://127.0.0.1:1/charts/Gone.pdf")!,
+                                                mimeType: "application/pdf", suggestedFilename: nil))
+
+            let shared = Shared()
+            PageFileShare.share(missing, from: session, store: browser.store) { shared.items = $0 }
+            try await browser.until("the Couldn't get toast (toast: \(browser.store.toast?.message ?? "none"))") {
+                browser.store.toast?.message == "Couldn't get Gone.pdf"
+            }
+            #expect(shared.items == nil, "a share sheet opened without the file")
+            let shareLink = try #require(browser.store.toast?.actions.first { $0.title == "Share Link" })
+            shareLink.perform()
+            #expect(shared.items?.first as? URL == missing.url)
+            withExtendedLifetime(server) {}
+        }
+
+        @MainActor private final class Shared {
+            var items: [Any]?
+            var count = 0
+        }
+
+        /// WebKit keeps the fragment in the tab's address; it's still the same file.
+        @Test func aFileWithAFragmentIsStillAFile() async throws {
+            let (server, browser) = try await start()
+            defer { browser.close() }
+            let session = try #require(browser.store.activeSession)
+
+            try await browser.follow("Chart PDF page 2")
+            try await browser.waitForPage("/charts/Seattle.pdf")
+            #expect(session.webView.url?.fragment == "page=2")
+            #expect(session.shownFile?.filename == "Seattle.pdf")
+            withExtendedLifetime(server) {}
+        }
+
+        /// Swiping the toast away only hides it: the fetch carries on, the sheet doesn't open by
+        /// itself later, and a toast says when the file's ready to share.
+        @Test func swipingTheToastAwayKeepsTheFetchGoing() async throws {
+            let (server, browser) = try await startHolding()
+            defer { browser.close() }
+            _ = Self.freshCache()
+            let session = try #require(browser.store.activeSession)
+            let file = try #require(PageFile(url: server.url.appending(path: "charts/Held.pdf"), mimeType: "application/pdf", suggestedFilename: nil))
+
+            let shared = Shared()
+            PageFileShare.share(file, from: session, store: browser.store) { shared.items = $0 }
+            try await browser.until("the fetch to reach the server; \(server.requestLog)") { server.requestCount(for: "/charts/Held.pdf") > 0 }
+            browser.store.dismissToast() // As a swipe does.
+            server.release("/charts/Held.pdf")
+
+            try await browser.until("the ready toast (toast: \(browser.store.toast?.message ?? "none"))") {
+                browser.store.toast?.message == "Held.pdf is ready"
+            }
+            #expect(shared.items == nil, "the sheet opened with the toast swiped away")
+            let share = try #require(browser.store.toast?.actions.first { $0.title == "Share" })
+            share.perform()
+            let url = try #require(shared.items?.first as? URL)
+            #expect(try Data(contentsOf: url) == Self.pdf)
+        }
+
+        /// Sharing the file again while it comes follows the same fetch, with the toast back up.
+        @Test func sharingAgainWhileItComesFollowsTheSameFetch() async throws {
+            let (server, browser) = try await startHolding()
+            defer { browser.close() }
+            _ = Self.freshCache()
+            let session = try #require(browser.store.activeSession)
+            let file = try #require(PageFile(url: server.url.appending(path: "charts/Held.pdf"), mimeType: "application/pdf", suggestedFilename: nil))
+
+            let shared = Shared()
+            PageFileShare.share(file, from: session, store: browser.store) { _ in shared.count += 1 }
+            try await browser.until("the fetch to reach the server; \(server.requestLog)") { server.requestCount(for: "/charts/Held.pdf") > 0 }
+            browser.store.dismissToast()
+            #expect(PageFileShare.share(file, from: session, store: browser.store) { shared.items = $0 } == .fetching)
+            #expect(browser.store.toast?.message == "Getting Held.pdf")
+            server.release("/charts/Held.pdf")
+
+            try await browser.until("the share sheet to open") { shared.items != nil }
+            #expect(shared.count == 0, "the first share's sheet opened too")
+            #expect(server.requestCount(for: "/charts/Held.pdf") == 1, "fetched twice; \(server.requestLog)")
+        }
+
+        /// Cancel stops the fetch: nothing opens, no toast follows, and sharing again starts over.
+        /// (FixtureServer sends nothing until it's released, so no partial file is checked here; a
+        /// stopped fetch's partial goes in `finish`, the same path a failure takes.)
+        @Test func cancelStopsTheFetch() async throws {
+            let (server, browser) = try await startHolding()
+            defer { browser.close() }
+            let cache = Self.freshCache()
+            let session = try #require(browser.store.activeSession)
+            let file = try #require(PageFile(url: server.url.appending(path: "charts/Held.pdf"), mimeType: "application/pdf", suggestedFilename: nil))
+
+            let shared = Shared()
+            PageFileShare.share(file, from: session, store: browser.store) { shared.items = $0 }
+            try await browser.until("the fetch to reach the server; \(server.requestLog)") { server.requestCount(for: "/charts/Held.pdf") > 0 }
+            let cancel = try #require(browser.store.toast?.actions.first { $0.title == "Cancel" })
+            browser.store.dismissToast() // As the button does before its action.
+            cancel.perform()
+            server.release("/charts/Held.pdf")
+
+            // Sharing again fetches again, and only that share's sheet opens.
+            let again = Shared()
+            PageFileShare.share(file, from: session, store: browser.store) { again.items = $0 }
+            try await browser.until("the second share's sheet; \(server.requestLog)") { again.items != nil }
+            #expect(server.requestCount(for: "/charts/Held.pdf") == 2)
+            #expect(shared.items == nil, "the cancelled share's sheet opened")
+            #expect(browser.store.toast == nil, "a toast followed the cancelled share: \(browser.store.toast?.message ?? "")")
+            #expect(cache.cached(file) != nil)
+            let leftovers = try FileManager.default.contentsOfDirectory(atPath: cache.directory.path(percentEncoded: false))
+            #expect(leftovers.count == 1, "a cancelled fetch left files: \(leftovers)")
+        }
+
+        /// Two files coming at once: the first finishing, unwatched, doesn't take the second's toast
+        /// (or its sheet) away.
+        @Test func oneFileFinishingLeavesAnothersToastUp() async throws {
+            let (server, browser) = try await startHolding()
+            defer { browser.close() }
+            let cache = Self.freshCache()
+            let session = try #require(browser.store.activeSession)
+            let first = try #require(PageFile(url: server.url.appending(path: "charts/Held.pdf"), mimeType: "application/pdf", suggestedFilename: nil))
+            let second = try #require(PageFile(url: server.url.appending(path: "charts/Held2.pdf"), mimeType: "application/pdf", suggestedFilename: nil))
+
+            let firstShared = Shared(), secondShared = Shared()
+            PageFileShare.share(first, from: session, store: browser.store) { firstShared.items = $0 }
+            PageFileShare.share(second, from: session, store: browser.store) { secondShared.items = $0 }
+            #expect(browser.store.toast?.message == "Getting Held2.pdf")
+            server.release("/charts/Held.pdf")
+            try await browser.until("the first file to be kept") { cache.cached(first) != nil }
+            #expect(browser.store.toast?.message == "Getting Held2.pdf", "the first file's toast took the second's place")
+            #expect(firstShared.items == nil)
+
+            server.release("/charts/Held2.pdf")
+            try await browser.until("the second file's sheet") { secondShared.items != nil }
+        }
+
+        /// The server has a newer edition than the page showed: it's kept as that edition, so the
+        /// page's own (older) one isn't taken to be here.
+        @Test func aNewerEditionIsKeptAsItself() async throws {
+            let (server, browser) = try await start()
+            defer { browser.close() }
+            let cache = Self.freshCache()
+            let session = try #require(browser.store.activeSession)
+            let url = server.url.appending(path: "charts/Seattle.pdf")
+            let shown = try #require(PageFile(url: url, mimeType: "application/pdf", suggestedFilename: nil,
+                                              version: "etag:\"chart-0\"", expectedLength: Int64(Self.pdf.count)))
+
+            let fetched = try await Self.fetch(shown, in: session, cache: cache)
+            #expect(cache.cached(shown) == nil, "the newer file was kept as the page's edition")
+            let served = try #require(PageFile(url: url, mimeType: "application/pdf", suggestedFilename: nil,
+                                               version: "etag:\"chart-1\"", expectedLength: Int64(Self.pdf.count)))
+            #expect(cache.cached(served) == fetched)
+            withExtendedLifetime(server) {}
+        }
+
+        /// A throwaway share cache for this test, with no fetch left from another.
+        private static func freshCache() -> SharedFileCache {
+            PageFileShare.cancelAll()
+            let cache = SharedFileCache(directory: URL.temporaryDirectory.appending(path: "Shared Files \(UUID().uuidString)"))
+            PageFileShare.cache = cache
+            return cache
+        }
+
+        private static func fetch(_ file: PageFile, in session: TabSession, cache: SharedFileCache) async throws -> URL {
+            let fetch = PageFileFetch(file: file, webView: session.webView, cache: cache)
+            // The download's delegate is weak: the fetch has to outlive the wait.
+            defer { withExtendedLifetime(fetch) {} }
+            return try await withCheckedThrowingContinuation { continuation in
+                fetch.onFinish = { continuation.resume(with: $0) }
+                fetch.start()
+            }
+        }
+
         /// A page's "View in AR" link: the model goes to Quick Look, not Downloads, and is thrown away
         /// once Quick Look closes.
         @Test func arModelOpensInQuickLook() async throws {
@@ -295,6 +562,18 @@ extension AppTests {
         }
 
         // MARK: Helpers
+
+        /// A server that holds `/charts/Held.pdf` and `Held2.pdf` back until the test releases them.
+        private func startHolding() async throws -> (FixtureServer, TestBrowser) {
+            let held: [String: FixtureServer.File] = [
+                "/charts/Held.pdf": .init(contentType: "application/pdf", body: Self.pdf),
+                "/charts/Held2.pdf": .init(contentType: "application/pdf", body: Self.pdf),
+            ]
+            let server = try FixtureServer(html: Self.page, holds: Set(held.keys), files: Self.files.merging(held) { $1 })
+            let browser = try await TestBrowser()
+            try await browser.open(server.url)
+            return (server, browser)
+        }
 
         private func start() async throws -> (FixtureServer, TestBrowser) {
             let server = try FixtureServer(html: Self.page, files: Self.files)

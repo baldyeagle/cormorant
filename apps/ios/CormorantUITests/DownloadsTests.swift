@@ -31,6 +31,14 @@ final class DownloadsTests: UITestCase {
             """.utf8)),
         "/files/notes": .init(contentType: "text/plain; charset=utf-8", body: Data("Hello from the notes".utf8),
                               headers: ["Content-Disposition": "attachment; filename=\"Meeting notes.txt\""]),
+        "/charts/Seattle.pdf": .init(contentType: "application/pdf", body: Data("""
+            %PDF-1.1
+            1 0 obj <</Type /Catalog /Pages 2 0 R>> endobj
+            2 0 obj <</Type /Pages /Kids [3 0 R] /Count 1>> endobj
+            3 0 obj <</Type /Page /Parent 2 0 R /MediaBox [0 0 200 200]>> endobj
+            trailer <</Root 1 0 R>>
+            %%EOF
+            """.utf8), headers: ["ETag": "\"chart-1\""]),
     ]
 
     /// The caret sheet lists a download under Downloads, and tapping it there shows it in Quick Look.
@@ -75,6 +83,39 @@ final class DownloadsTests: UITestCase {
         app.buttons["Cancel"].firstMatch.tapWhenSettled()
         XCTAssertTrue(app.navigationBars["New Event"].disappears(within: Ceiling.ui), "the editor didn't close")
         XCTAssertTrue(app.navigationBars["2 Events"].exists, "the list went with it")
+        withExtendedLifetime(server) {}
+    }
+
+    /// Share on a PDF opens the system share sheet with the file: the first time once it's fetched
+    /// (the caret sheet closes for the toast, and the sheet waits for it to go), the second at once,
+    /// over the caret sheet. What's fetched, kept and when is CormorantTests' DownloadsTests.
+    func testShareOnAPDFOpensTheShareSheet() throws {
+        let server = try FixtureServer(html: Self.page, files: Self.files)
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTesting", "-uiTestingOpen", server.url.appending(path: "charts/Seattle.pdf").absoluteString]
+        app.launch()
+        let actions = app.buttons["Page actions"]
+        XCTAssertTrue(actions.appears(within: Ceiling.launch), "no caret button")
+
+        let share = app.buttons["ShareFileTile"]
+        // The sheet's header names what it shares: the file, with its size, not a link.
+        let file = app.otherElements.matching(NSPredicate(format: "identifier == 'LP.CaptionBar.BottomCaption' AND label BEGINSWITH 'PDF Document'")).firstMatch
+        actions.tapWhenSettled()
+        XCTAssertTrue(share.appears(within: Ceiling.load), "Share isn't the file's (the page isn't known as a PDF); \(server.requestLog)")
+        share.tapWhenSettled()
+        XCTAssertTrue(file.appears(within: Ceiling.load), "the share sheet didn't open with the file once it came; \(server.requestLog)")
+        // The sheet runs in another process, out of XCTest's reach for gestures: a tap on the dimmed
+        // page above it closes it.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        XCTAssertTrue(file.disappears(within: Ceiling.ui), "the share sheet didn't close")
+
+        // Kept: no fetch, the sheet opens over the caret sheet.
+        let requests = server.requestCount(for: "/charts/Seattle.pdf")
+        actions.tapWhenSettled()
+        share.tapWhenSettled()
+        XCTAssertTrue(file.appears(within: Ceiling.ui), "the share sheet didn't open with the file the second time; \(server.requestLog)")
+        XCTAssertEqual(server.requestCount(for: "/charts/Seattle.pdf"), requests, "fetched again")
+        XCTAssertTrue(share.exists, "the caret sheet closed: it fetched again")
         withExtendedLifetime(server) {}
     }
 

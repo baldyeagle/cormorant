@@ -80,8 +80,20 @@ struct ActionsSheet: View {
             } label: {
                 TileLabel(title: "Find on Page", systemImage: "doc.text.magnifyingglass")
             }
-            ShareLink(item: url) {
-                TileLabel(title: "Share", systemImage: "square.and.arrow.up")
+            if let file = session.shownFile {
+                // The file itself, as Safari and Arc share a PDF: Save to Files, Markup, Print. Already
+                // here, its sheet opens over this one, as a link's does; still to come, this one closes
+                // for the toast that follows it.
+                Button {
+                    if PageFileShare.share(file, from: session, store: store) == .fetching { dismiss() }
+                } label: {
+                    TileLabel(title: "Share", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("ShareFileTile")
+            } else {
+                ShareLink(item: url) {
+                    TileLabel(title: "Share", systemImage: "square.and.arrow.up")
+                }
             }
         }
         .buttonStyle(TileButtonStyle())

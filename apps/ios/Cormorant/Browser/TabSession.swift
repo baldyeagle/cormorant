@@ -127,6 +127,13 @@ final class TabSession {
     @ObservationIgnored private var lastScrollY: CGFloat = 0
     @ObservationIgnored private var lastInsetTop: CGFloat = 0
     @ObservationIgnored private var hasCommittedPage = false
+    /// The pages this tab loaded that were files, by address (without its fragment) rather than "the
+    /// current page": going back to one from WebKit's page cache asks for no policy, so nothing would
+    /// say it changed.
+    private var fileDocuments: [URL: PageFile] = [:]
+    /// Whether the main-frame navigation under way is a GET: a file a form posted for can't be fetched
+    /// again by its address, so Share sends the link.
+    @ObservationIgnored private var mainFrameIsGET = true
     @ObservationIgnored private var pageBackgroundTask: Task<Void, Never>?
     /// Takes the wash down if the page hasn't drawn in time (`awaitFirstPaint()`, `navigationDidCommit(_:)`).
     @ObservationIgnored private var firstPaintDeadline: Task<Void, Never>?
@@ -465,6 +472,9 @@ final class TabSession {
     // MARK: Called by the coordinator
 
     func policy(for action: WKNavigationAction) async -> WKNavigationActionPolicy {
+        if action.targetFrame?.isMainFrame == true {
+            mainFrameIsGET = (action.request.httpMethod ?? "GET").uppercased() == "GET"
+        }
         guard let url = action.request.url else { return .allow }
         let scheme = url.scheme?.lowercased() ?? ""
         if Self.refusedSchemes.contains(scheme) {
@@ -497,9 +507,43 @@ final class TabSession {
         let status = (response.response as? HTTPURLResponse)?.statusCode
         if status == 204 || status == 205 { return .allow }
         if Self.isAttachment(response.response) { return .download }
-        guard response.isForMainFrame, (status ?? 200) < 400 else { return .allow }
+        guard response.isForMainFrame else { return .allow }
+        let url = response.response.url
+        guard (status ?? 200) < 400 else {
+            remember(nil, at: url)
+            return .allow
+        }
         let handoff = DownloadHandoff(mimeType: response.response.mimeType, filename: response.response.suggestedFilename ?? "")
-        return response.canShowMIMEType && handoff == nil ? .allow : .download
+        guard response.canShowMIMEType, handoff == nil else { return .download }
+        let http = response.response as? HTTPURLResponse
+        let file = url.flatMap {
+            PageFile(url: $0, mimeType: response.response.mimeType, suggestedFilename: response.response.suggestedFilename,
+                     version: PageFile.version(etag: http?.value(forHTTPHeaderField: "ETag"),
+                                               lastModified: http?.value(forHTTPHeaderField: "Last-Modified")),
+                     expectedLength: response.response.expectedContentLength)
+        }
+        remember(mainFrameIsGET ? file : nil, at: url)
+        return .allow
+    }
+
+    /// The page on screen, if it is a file WebKit shows (a PDF, an image): Share hands over the file.
+    var shownFile: PageFile? {
+        webView.url.flatMap { fileDocuments[Self.withoutFragment($0)] }
+    }
+
+    private func remember(_ file: PageFile?, at url: URL?) {
+        guard let url = url.map(Self.withoutFragment) else { return }
+        if file != nil, fileDocuments[url] == nil, fileDocuments.count >= 32 {
+            fileDocuments.removeAll() // A tab with that many files open in turn: Share falls back to the link.
+        }
+        fileDocuments[url] = file
+    }
+
+    /// WebKit keeps a fragment from before a redirect, and `#page=2` doesn't make it another file.
+    private static func withoutFragment(_ url: URL) -> URL {
+        guard url.fragment != nil, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        parts.fragment = nil
+        return parts.url ?? url
     }
 
     static func isAttachment(_ response: URLResponse) -> Bool {

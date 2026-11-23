@@ -117,6 +117,13 @@ final class TestBrowser {
         try await waitForPage(url.path(), sourceLocation: sourceLocation)
     }
 
+    /// Taps the link titled `text` in the tab on screen: a script's click, which WebKit takes as the
+    /// user's (a `target=_blank` link opens its tab).
+    func follow(_ text: String) async throws {
+        let quoted = "'" + text.replacing("\\", with: "\\\\").replacing("'", with: "\\'") + "'"
+        _ = try await evaluate("[...document.links].find(a => a.textContent === \(quoted)).click(), true")
+    }
+
     /// What `script` (an expression) evaluates to in the tab on screen's page, as a string.
     func evaluate(_ script: String) async throws -> String? {
         guard let webView = store.activeSession?.webView else { return nil }
@@ -167,7 +174,8 @@ final class TestBrowser {
             searchSuggestions: searchSuggestions ? SearchSuggestionClient() : nil,
             focusFilter: FocusFilterSettings(defaults: defaults, followsSystem: false),
             inbox: inbox,
-            spacesSummary: SpacesSummaryFile(fileURL: directory.appending(path: "spaces-summary.json"))
+            spacesSummary: SpacesSummaryFile(fileURL: directory.appending(path: "spaces-summary.json")),
+            downloads: DownloadCenter(directory: directory.appending(path: "Downloads", directoryHint: .isDirectory))
         )
     }
 

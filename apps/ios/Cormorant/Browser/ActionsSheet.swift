@@ -25,6 +25,7 @@ struct ActionsSheet: View {
     private var url: URL? { store.activeTab?.url }
     @State private var contentHeight: CGFloat = 0
     @State private var showSettings = false
+    @State private var showDownloads = false
     /// The Move to Space sheet, stacked on this one as Settings is, for the tab on screen when it opened.
     @State private var moveRequest: MoveRequest?
 
@@ -53,6 +54,9 @@ struct ActionsSheet: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
+        .sheet(isPresented: $showDownloads) {
+            DownloadsView()
+        }
         .sheet(item: $moveRequest) { request in
             // The tab on screen goes to its new Space and stays on screen: closing this sheet takes the
             // Move sheet with it.
@@ -76,8 +80,20 @@ struct ActionsSheet: View {
             } label: {
                 TileLabel(title: "Find on Page", systemImage: "doc.text.magnifyingglass")
             }
-            ShareLink(item: url) {
-                TileLabel(title: "Share", systemImage: "square.and.arrow.up")
+            if let file = session.shownFile {
+                // The file itself, as Safari and Arc share a PDF: Save to Files, Markup, Print. Already
+                // here, its sheet opens over this one, as a link's does; still to come, this one closes
+                // for the toast that follows it.
+                Button {
+                    if PageFileShare.share(file, from: session, store: store) == .fetching { dismiss() }
+                } label: {
+                    TileLabel(title: "Share", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("ShareFileTile")
+            } else {
+                ShareLink(item: url) {
+                    TileLabel(title: "Share", systemImage: "square.and.arrow.up")
+                }
             }
         }
         .buttonStyle(TileButtonStyle())
@@ -151,6 +167,17 @@ struct ActionsSheet: View {
                     ActionRow(title: "Blockers are off", subtitle: Text("Turn them on in Settings."), systemImage: "shield.slash")
                         .accessibilityElement(children: .combine)
                 }
+                RowDivider()
+            }
+            if !store.downloads.listed.isEmpty {
+                Button {
+                    showDownloads = true
+                } label: {
+                    ActionRow(title: "Downloads", systemImage: store.downloads.hasActiveDownloads
+                        ? "arrow.down.circle.dotted" : "arrow.down.circle")
+                }
+                .buttonStyle(RowButtonStyle())
+                .accessibilityIdentifier("DownloadsRow")
                 RowDivider()
             }
             Button {

@@ -23,6 +23,14 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         session?.policy(for: navigationResponse) ?? .allow
     }
 
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        session?.navigationDidBecomeDownload(download)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        session?.navigationDidBecomeDownload(download)
+    }
+
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         session?.navigationDidStart()
     }

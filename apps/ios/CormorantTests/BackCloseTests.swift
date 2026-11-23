@@ -177,13 +177,6 @@ extension AppTests {
 }
 
 fileprivate extension TestBrowser {
-    /// Taps the link titled `text` in the tab on screen: a script's click, which WebKit takes as the
-    /// user's (a `target=_blank` link opens its tab).
-    func follow(_ text: String) async throws {
-        let quoted = "'" + text.replacing("\\", with: "\\\\").replacing("'", with: "\\'") + "'"
-        _ = try await evaluate("[...document.links].find(a => a.textContent === \(quoted)).click(), true")
-    }
-
     /// A swipe in from the left edge, carried through: closes the tab on screen if the browser's
     /// swipe would (`BrowserView.backSwipeClose(for:in:)`, `WebViewContainer.swipeClosesTab`), as it
     /// does once the page is off screen. Returns whether it closed the tab.

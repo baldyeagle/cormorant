@@ -1,4 +1,5 @@
 import CormorantCore
+import QuickLook
 import SwiftUI
 
 /// The main screen: the active tab's web view under a bottom bar, with the search panel and the
@@ -8,6 +9,7 @@ struct BrowserView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
+    @State private var handoffs = HandoffPresenter()
     @State private var showSwitcher = false
     @State private var showActions = false
     @State private var showManageSpaces = false
@@ -16,13 +18,11 @@ struct BrowserView: View {
     /// The search panel's top edge in global coordinates, once it has laid out; the empty state keeps
     /// its mark above it.
     @State private var searchPanelTop: CGFloat?
-    /// A keyboard is on screen. The bar (and download banner) stay put underneath it (see
+    /// A keyboard is on screen. The bar stays put underneath it (see
     /// `.ignoresSafeArea(.keyboard)`), and VoiceOver mustn't find them in among a page's form fields.
     @State private var keyboardCoversBar = false
-    /// Tops of the bar (find bar included) and the download banner in global coordinates, for the toast
-    /// to sit above.
+    /// Top of the bar (find bar included) in global coordinates, for the toast to sit above.
     @State private var barTop: CGFloat?
-    @State private var bannerTop: CGFloat?
     /// The launch screen's bird is still up, over the wash, until the page the app opens on has drawn
     /// or the search panel comes up.
     @State private var isLaunching = true
@@ -64,17 +64,6 @@ struct BrowserView: View {
         // Full size even before tabs load: an empty ZStack collapses to a point at the center, and
         // the bar inset attached to it would render mid-screen and then jump down.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .bottom) {
-            if let session = store.activeSession, let url = session.blockedDownloadURL {
-                DownloadBanner(url: url) { session.blockedDownloadURL = nil }
-                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { bannerTop = $0 }
-                    .onDisappear { bannerTop = nil }
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    // Under the keyboard with the bar.
-                    .accessibilityHidden(keyboardCoversBar)
-            }
-        }
-        .animation(.snappy, value: store.activeSession?.blockedDownloadURL)
         .background {
             // Behind the status bar where the page doesn't run under it: the strip with the setting
             // off, and the iPhone Duo's status-bar column, which takes the page's color.
@@ -167,6 +156,30 @@ struct BrowserView: View {
             // responder back to, so the panel can take focus should the Space be empty once it closes.
             dismissSearch()
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        }
+        // A download toast's Show and Open.
+        .sheet(isPresented: Bindable(store).showsDownloads) {
+            DownloadsView()
+        }
+        .quickLookPreview(Bindable(store).previewedDownload)
+        // A Wallet pass, calendar file or AR model a page handed over, over whatever is up.
+        .onChange(of: store.walletPassRequest?.id) { _, id in
+            guard id != nil, let request = store.walletPassRequest else { return }
+            handoffs.present(pass: request.pass) {
+                if store.walletPassRequest?.id == request.id { store.walletPassRequest = nil }
+            }
+        }
+        .onChange(of: store.calendarImport?.id) { _, id in
+            guard id != nil, let calendarImport = store.calendarImport else { return }
+            handoffs.present(calendarImport) {
+                if store.calendarImport?.id == calendarImport.id { store.calendarImport = nil }
+            }
+        }
+        .onChange(of: store.previewedModel) { _, file in
+            guard let file else { return }
+            handoffs.preview(file) {
+                if store.previewedModel == file { store.previewedModel = nil }
+            }
         }
         // Asked for through the store (`showManageSpaces()`), from Settings and wherever else.
         .sheet(isPresented: manageSpacesPresented) {
@@ -285,13 +298,13 @@ struct BrowserView: View {
                      close: { store.close(tabID) })
     }
 
-    /// Above the bar (and a download banner); above the search panel while it's up, so it never covers
+    /// Above the bar; above the search panel while it's up, so it never covers
     /// the field, and hidden if the panel leaves no room. Not while the switcher is up (it shows its
     /// own) or a keyboard for the page covers the bar.
     private var toast: some View {
         GeometryReader { proxy in
             let frame = proxy.frame(in: .global)
-            let anchor = isSearching ? searchPanelTop : barTop.map { min($0, bannerTop ?? $0) }
+            let anchor = isSearching ? searchPanelTop : barTop
             let lift = anchor.map { max(0, frame.maxY - $0) + 8 }
             // Room for a toast between the status bar and the panel.
             let fits = anchor.map { $0 - frame.minY > 140 } ?? false

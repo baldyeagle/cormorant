@@ -61,8 +61,23 @@ final class BrowserStore {
     @ObservationIgnored private(set) var toastsShown = 0
     /// A tab the Move to Space sheet is asked up for, from a toast (BrowserStore+MoveTabs.swift).
     var moveRequest: MoveRequest?
+    /// The Downloads list is up (the caret sheet's row stacks its own; this is for a toast's Show).
+    var showsDownloads = false
+    /// A finished download a toast's Open shows in Quick Look.
+    var previewedDownload: URL?
+    /// An AR model a page handed over, up in Quick Look; the file goes once it's closed.
+    var previewedModel: URL? {
+        didSet {
+            if let oldValue, oldValue != previewedModel { downloads.discardHandoff(at: oldValue) }
+        }
+    }
+    /// A Wallet pass a page handed over, up in Add to Wallet.
+    var walletPassRequest: WalletPassRequest?
+    /// A calendar file a page handed over, its events up to add.
+    var calendarImport: CalendarImport?
 
     let blocking: BlockingService
+    let downloads: DownloadCenter
     let settings: AppSettings
     let favicons: FaviconStore
     let defaultBrowser: DefaultBrowserStatus
@@ -148,7 +163,8 @@ final class BrowserStore {
         searchSuggestions: SearchSuggestionClient? = SearchSuggestionClient(),
         focusFilter: FocusFilterSettings = .shared,
         inbox: SharedInbox? = SharedInbox(appGroup: AppGroup.identifier),
-        spacesSummary: SpacesSummaryFile? = SpacesSummaryFile(appGroup: AppGroup.identifier)
+        spacesSummary: SpacesSummaryFile? = SpacesSummaryFile(appGroup: AppGroup.identifier),
+        downloads: DownloadCenter = DownloadCenter()
     ) {
         var usesFallbackStorage = false
         if let stateStore {
@@ -171,6 +187,7 @@ final class BrowserStore {
             Logger.app.fault("App group unavailable: shared links can't be received.")
         }
         self.blocking = blocking
+        self.downloads = downloads
         self.settings = settings
         self.favicons = favicons
         self.defaultBrowser = defaultBrowser
@@ -180,6 +197,13 @@ final class BrowserStore {
         showsStorageFallbackWarning = usesFallbackStorage
             && !UserDefaults.standard.bool(forKey: Self.warnedStorageFallbackKey)
         blocking.onListsChanged = { [weak self] in self?.reapplyBlockingEverywhere() }
+        downloads.onEvent = { [weak self] in self?.downloadDidChange($0) }
+        // On the download's own profile, never another's cookies; not one deleted since.
+        downloads.retryWebView = { [weak self] profileID in
+            let profileID = profileID ?? Profile.defaultID
+            guard let self, state.profiles.contains(where: { $0.id == profileID }) else { return nil }
+            return WKWebView(frame: .zero, configuration: TabSession.makeConfiguration(profileID: profileID).0)
+        }
     }
 
     /// Tabs in the active Space, most recently viewed first.
@@ -242,6 +266,8 @@ final class BrowserStore {
         sceneIsActive = true
         defaultBrowser.didBecomeActive()
         focusFilter.refresh()
+        // Files added or removed in the Files app while we were away.
+        downloads.reload()
         guard isLoaded else { return }
         stampActiveTab()
         state.runArchive()
@@ -545,7 +571,7 @@ final class BrowserStore {
     private func startToastExpiry() {
         toastExpiry?.cancel()
         toastExpiry = nil
-        guard let toast, let lifetime = Self.toastLifetime else { return }
+        guard let toast, !toast.staysUp, let lifetime = Self.toastLifetime else { return }
         let id = toast.id
         toastExpiry = Task { [weak self] in
             try? await Task.sleep(for: lifetime)
@@ -794,6 +820,7 @@ final class BrowserStore {
         if let opener { session.apply(opener.viewSettings) }
         // Covered until its page draws, like any new tab's; not a blank one the opener writes into.
         if requested != nil {
+            session.closesIfFirstLoadDownloads = true
             session.coversFirstPage = true
             session.awaitFirstPaint()
         }
@@ -973,6 +1000,11 @@ final class BrowserStore {
             self?.openLink(url, inSpace: spaceID, from: session, handoff: handoff) ?? false
         }
         session.onClose = { [weak self] in self?.close(tabID) }
+        session.onDropForDownload = { [weak self] in
+            self?.state.drop(tabID: tabID)
+            self?.stateDidChange()
+        }
+        session.onDownload = { [weak self] in self?.downloads.track($0) }
         // A web view on a deleted profile is what keeps its data store from being erased. The task
         // runs once the session's properties, the web view among them, have gone too.
         session.onRelease = { [weak self] in

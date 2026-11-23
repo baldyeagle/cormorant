@@ -47,8 +47,12 @@ final class TabSession {
     /// after it was let go, which the snapshot taken while it was up covers instead.
     @ObservationIgnored var coversFirstPage = false
     private(set) var loadError: LoadError?
-    /// A main-frame response WebKit can't display (a download). Downloads come in build two.
-    var blockedDownloadURL: URL?
+    /// A navigation in this tab (or its link menu's Download Linked File) became a download; the
+    /// store hands it to its `DownloadCenter`.
+    @ObservationIgnored var onDownload: ((WKDownload) -> Void)?
+    /// Opened by a page (`window.open`, `target=_blank`): if its first load turns out to be a download,
+    /// the tab closes again rather than staying blank, as in Safari.
+    @ObservationIgnored var closesIfFirstLoadDownloads = false
     /// Work the actions sheet hands off to run once it has finished dismissing. See `runPendingAction()`.
     @ObservationIgnored var pendingAction: PendingAction?
     /// Current page zoom, one of `zoomSteps`. Per tab, not persisted.
@@ -91,6 +95,8 @@ final class TabSession {
     @ObservationIgnored var onOpenInSpace: ((_ url: URL, _ spaceID: UUID, _ handoff: LinkPreviewHandoff?) -> Bool)?
     /// The page called `window.close()`.
     @ObservationIgnored var onClose: (() -> Void)?
+    /// Takes away a tab a page opened only for a download (`closesIfFirstLoadDownloads`), unarchived.
+    @ObservationIgnored var onDropForDownload: (() -> Void)?
     /// The long-press menu's page preview, while one is up. See `LinkContextMenu.swift`.
     @ObservationIgnored weak var linkPreview: LinkPreviewController?
     @ObservationIgnored var onProcessTerminated: (() -> Void)?
@@ -121,6 +127,13 @@ final class TabSession {
     @ObservationIgnored private var lastScrollY: CGFloat = 0
     @ObservationIgnored private var lastInsetTop: CGFloat = 0
     @ObservationIgnored private var hasCommittedPage = false
+    /// The pages this tab loaded that were files, by address (without its fragment) rather than "the
+    /// current page": going back to one from WebKit's page cache asks for no policy, so nothing would
+    /// say it changed.
+    private var fileDocuments: [URL: PageFile] = [:]
+    /// Whether the main-frame navigation under way is a GET: a file a form posted for can't be fetched
+    /// again by its address, so Share sends the link.
+    @ObservationIgnored private var mainFrameIsGET = true
     @ObservationIgnored private var pageBackgroundTask: Task<Void, Never>?
     /// Takes the wash down if the page hasn't drawn in time (`awaitFirstPaint()`, `navigationDidCommit(_:)`).
     @ObservationIgnored private var firstPaintDeadline: Task<Void, Never>?
@@ -438,6 +451,7 @@ final class TabSession {
         spacesToOpenLinksIn = nil
         onOpenInSpace = nil
         onClose = nil
+        onDropForDownload = nil
         onProcessTerminated = nil
         activeStripColor = nil
     }
@@ -458,6 +472,9 @@ final class TabSession {
     // MARK: Called by the coordinator
 
     func policy(for action: WKNavigationAction) async -> WKNavigationActionPolicy {
+        if action.targetFrame?.isMainFrame == true {
+            mainFrameIsGET = (action.request.httpMethod ?? "GET").uppercased() == "GET"
+        }
         guard let url = action.request.url else { return .allow }
         let scheme = url.scheme?.lowercased() ?? ""
         if Self.refusedSchemes.contains(scheme) {
@@ -468,6 +485,8 @@ final class TabSession {
             handleExternal(url, action: action)
             return .cancel
         }
+        // `<a download>`: saved, whatever the response would have been.
+        if action.shouldPerformDownload { return .download }
         guard action.targetFrame?.isMainFrame == true else { return .allow }
         let host = url.host()?.lowercased()
         // A re-apply may be in flight (toggle, list change) and may have been started with the
@@ -479,10 +498,73 @@ final class TabSession {
         return .allow
     }
 
+    /// What the server says to save (`Content-Disposition: attachment`) is saved, in a frame too (a
+    /// common way to start one). In the page itself, so is what WebKit can't show, and a pass,
+    /// calendar file or AR model even where WebKit could show it (as text), for its system viewer.
+    /// Not in a frame (an ad's, a tracker's), not an empty response (204, 205: nothing to show or
+    /// save), and not an error page, which shows as WebKit shows it.
     func policy(for response: WKNavigationResponse) -> WKNavigationResponsePolicy {
-        guard !response.canShowMIMEType else { return .allow }
-        if response.isForMainFrame { blockedDownloadURL = response.response.url }
-        return .cancel
+        let status = (response.response as? HTTPURLResponse)?.statusCode
+        if status == 204 || status == 205 { return .allow }
+        if Self.isAttachment(response.response) { return .download }
+        guard response.isForMainFrame else { return .allow }
+        let url = response.response.url
+        guard (status ?? 200) < 400 else {
+            remember(nil, at: url)
+            return .allow
+        }
+        let handoff = DownloadHandoff(mimeType: response.response.mimeType, filename: response.response.suggestedFilename ?? "")
+        guard response.canShowMIMEType, handoff == nil else { return .download }
+        let http = response.response as? HTTPURLResponse
+        let file = url.flatMap {
+            PageFile(url: $0, mimeType: response.response.mimeType, suggestedFilename: response.response.suggestedFilename,
+                     version: PageFile.version(etag: http?.value(forHTTPHeaderField: "ETag"),
+                                               lastModified: http?.value(forHTTPHeaderField: "Last-Modified")),
+                     expectedLength: response.response.expectedContentLength)
+        }
+        remember(mainFrameIsGET ? file : nil, at: url)
+        return .allow
+    }
+
+    /// The page on screen, if it is a file WebKit shows (a PDF, an image): Share hands over the file.
+    var shownFile: PageFile? {
+        webView.url.flatMap { fileDocuments[Self.withoutFragment($0)] }
+    }
+
+    private func remember(_ file: PageFile?, at url: URL?) {
+        guard let url = url.map(Self.withoutFragment) else { return }
+        if file != nil, fileDocuments[url] == nil, fileDocuments.count >= 32 {
+            fileDocuments.removeAll() // A tab with that many files open in turn: Share falls back to the link.
+        }
+        fileDocuments[url] = file
+    }
+
+    /// WebKit keeps a fragment from before a redirect, and `#page=2` doesn't make it another file.
+    private static func withoutFragment(_ url: URL) -> URL {
+        guard url.fragment != nil, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        parts.fragment = nil
+        return parts.url ?? url
+    }
+
+    static func isAttachment(_ response: URLResponse) -> Bool {
+        DownloadHandoff.isAttachment(contentDisposition: (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition"))
+    }
+
+    /// A navigation became `download`.
+    func navigationDidBecomeDownload(_ download: WKDownload) {
+        onDownload?(download)
+        // Nothing to show in a tab a page opened only for this: it goes, as Safari's does.
+        if closesIfFirstLoadDownloads, !hasCommittedPage, webView.backForwardList.currentItem == nil {
+            // Not from inside WebKit's callback, which the closing tab's web view is still in.
+            Task { @MainActor [weak self] in self?.onDropForDownload?() }
+        }
+    }
+
+    /// Download Linked File, from the link menu.
+    func downloadLinkedFile(_ url: URL) {
+        webView.startDownload(using: URLRequest(url: url)) { [weak self] download in
+            self?.onDownload?(download)
+        }
     }
 
     func createWebView(configuration: WKWebViewConfiguration, for action: WKNavigationAction) -> WKWebView? {
@@ -496,7 +578,6 @@ final class TabSession {
 
     func navigationDidStart() {
         loadError = nil
-        blockedDownloadURL = nil
     }
 
     func navigationDidFail(_ navigation: WKNavigation?, error: any Error) {

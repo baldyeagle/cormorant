@@ -26,6 +26,12 @@ struct Toast: Identifiable {
         case symbol(String)
     }
 
+    /// A fetch the toast follows: a line under the message counting it up ("42.1 MB of 183.4 MB") and
+    /// a bar along its bottom edge, read a couple of times a second while it's up.
+    struct Transfer {
+        let current: @MainActor () -> (received: Int64, expected: Int64?)
+    }
+
     /// A small line under the message saying why: "Focus" when a Focus filter chose the Space.
     struct Note {
         let text: String
@@ -45,9 +51,14 @@ struct Toast: Identifiable {
     /// The tab every button acts on: the toast comes down once that tab closes (a back swipe can close
     /// it with the toast still up).
     var tabID: UUID?
+    /// Shown in place of the note.
+    var transfer: Transfer?
+    /// Up until it's swiped away or taken down, rather than for a few seconds: for as long as a fetch
+    /// it follows takes.
+    var staysUp: Bool
 
     init(icon: Icon, message: String, spokenText: String? = nil, note: Note? = nil, leadingAction: Action? = nil,
-         actions: [Action], tabID: UUID? = nil) {
+         actions: [Action], tabID: UUID? = nil, transfer: Transfer? = nil, staysUp: Bool = false) {
         self.icon = icon
         self.message = message
         self.spokenText = spokenText
@@ -55,6 +66,8 @@ struct Toast: Identifiable {
         self.leadingAction = leadingAction
         self.actions = actions
         self.tabID = tabID
+        self.transfer = transfer
+        self.staysUp = staysUp
     }
 
     /// Every button, in the order they're drawn.
@@ -124,7 +137,19 @@ private struct ToastView: View {
                         .accessibilityLabel(toast.spokenText ?? toast.message)
                         .accessibilityFocused($focus, equals: "message")
                         .accessibilityAction(named: "Dismiss", onDismiss)
-                    if let note = toast.note {
+                    if let transfer = toast.transfer {
+                        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                            let now = transfer.current()
+                            Text(TransferText.line(received: now.received, expected: now.expected))
+                                .font(.caption)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .accessibilityFocused($focus, equals: "transfer")
+                                .accessibilityAction(named: "Dismiss", onDismiss)
+                                .accessibilityIdentifier("Toast.transfer")
+                        }
+                    } else if let note = toast.note {
                         Label(note.text, systemImage: note.symbol)
                             .font(.caption)
                             .labelStyle(ToastNoteLabelStyle())
@@ -155,6 +180,9 @@ private struct ToastView: View {
                 RoundedRectangle(cornerRadius: minHeight / 2, style: .continuous)
                     .fill(Color(red: 3 / 255, green: 7 / 255, blue: 18 / 255).opacity(0.72))
             }
+        }
+        .overlay(alignment: .bottomLeading) {
+            if let transfer = toast.transfer { TransferBar(transfer: transfer, cornerRadius: minHeight / 2) }
         }
         .glassEffect(glass, in: .rect(cornerRadius: minHeight / 2, style: .continuous))
         .offset(x: drag.width, y: drag.height)
@@ -250,5 +278,30 @@ private struct ToastButtonStyle: ButtonStyle {
             .background(Color.white.opacity(colorScheme == .dark ? 0.12 : 0.6), in: .capsule)
             .opacity(configuration.isPressed ? 0.55 : 1)
             .contentShape(.capsule.inset(by: -4))
+    }
+}
+
+/// The toast's progress bar: a thin line along its bottom edge, clipped to the capsule. Nothing while
+/// the size isn't known.
+private struct TransferBar: View {
+    let transfer: Toast.Transfer
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+            let now = transfer.current()
+            if let fraction = TransferText.fraction(received: now.received, expected: now.expected) {
+                GeometryReader { proxy in
+                    Rectangle()
+                        .fill(Color(.brandCyan))
+                        .frame(width: proxy.size.width * fraction, height: 3)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                        .animation(.linear(duration: 0.5), value: fraction)
+                }
+                .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
     }
 }

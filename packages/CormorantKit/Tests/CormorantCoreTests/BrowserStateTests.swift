@@ -55,6 +55,17 @@ import Testing
         #expect(state.activeTabID == nil)
     }
 
+    /// A tab that only downloaded a file goes without an archive entry, back to the tab before it.
+    @Test func dropRemovesATabWithoutArchivingIt() {
+        var state = BrowserState()
+        let opener = state.openTab(url: url("https://a.com"), now: t0)
+        let download = state.openTab(url: url("https://a.com/file.zip"), now: t0 + hour)
+        state.drop(tabID: download.id)
+        #expect(state.tabs.map(\.id) == [opener.id])
+        #expect(state.archived.isEmpty)
+        #expect(state.activeTabID == opener.id)
+    }
+
     @Test func archivingBackgroundTabKeepsActiveTab() {
         var state = BrowserState()
         let background = state.openTab(url: url("https://a.com"), now: t0)

@@ -65,6 +65,18 @@ public enum FaviconSelector {
         return urls
     }
 
+    /// Whether `a` and `b` have the same origin: scheme and host (ignoring case) and port, a missing
+    /// port being its scheme's default. Only http and https have one.
+    public static func sameOrigin(_ a: URL, _ b: URL) -> Bool {
+        func origin(_ url: URL) -> (String, String, Int)? {
+            guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+                  let host = url.host()?.lowercased(), !host.isEmpty else { return nil }
+            return (scheme, host, url.port ?? (scheme == "https" ? 443 : 80))
+        }
+        guard let left = origin(a), let right = origin(b) else { return false }
+        return left == right
+    }
+
     /// The cache key for a page's icon: its host lowercased, without a leading `www.`, and prefixed
     /// `http:` for plain-http pages so an icon fetched in the clear never shows on the https site.
     /// Nil for URLs with no host.

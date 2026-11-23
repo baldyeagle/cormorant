@@ -54,6 +54,7 @@ final class FaviconStore {
     init(directory: URL = .cachesDirectory.appending(path: "Favicons", directoryHint: .isDirectory)) {
         self.directory = directory
         // Ephemeral with no cookies or cache: an icon fetch must not carry or set the user's session.
+        // Only where that met a sign-in does the page itself fetch its own icon (`downloadThroughPage`).
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
@@ -72,6 +73,11 @@ final class FaviconStore {
             Task { await loadFromDisk(key) }
         }
         return slot(for: key).image
+    }
+
+    /// Whether `url`'s site's icon is being fetched now (for tests to wait on).
+    func isFetching(_ url: URL) -> Bool {
+        FaviconSelector.hostKey(for: url).map(fetching.contains) ?? false
     }
 
     /// Call when a main-frame load finishes. Fetches the site's icon unless a recent one is cached.
@@ -96,9 +102,22 @@ final class FaviconStore {
             let ranked = FaviconSelector.best(from: page.candidates, pageURL: pageURL)
             let urls = ranked.dropLast().prefix(Self.maxDeclaredAttempts) + ranked.suffix(1)
             let request = Request(userAgent: page.userAgent, pageHost: pageURL.host()?.lowercased())
-            if let image = await Self.download(Array(urls), session: session, request: request, to: file(for: key)) {
+            let result = await Self.download(Array(urls), session: session, request: request, to: file(for: key))
+            if let image = result.image {
                 store(image, for: key)
                 nextFetch[key] = .now.addingTimeInterval(Self.refreshInterval)
+            } else if !result.signInURLs.isEmpty {
+                // Behind a sign-in (Cloudflare Access, say), where a request without the page's cookies
+                // gets only the sign-in page: the page fetches those itself. Weak: a tab closed meanwhile
+                // doesn't wait on it. (Cached by host like any icon, so a Space on another profile shows
+                // it too.)
+                if let image = await downloadThroughPage(result.signInURLs, in: { [weak webView] in webView }, key: key) {
+                    store(image, for: key)
+                    nextFetch[key] = .now.addingTimeInterval(Self.refreshInterval)
+                } else {
+                    // Likely signed out: the next load, signed in by then, tries again.
+                    nextFetch.removeValue(forKey: key)
+                }
             } else {
                 Self.log.debug("No usable icon for \(key, privacy: .private)")
                 nextFetch[key] = .now.addingTimeInterval(Self.failureRetryInterval)
@@ -164,7 +183,7 @@ final class FaviconStore {
     /// has moved to another site by the time it answers.
     private func pageInfo(in webView: WKWebView, key: String) async -> PageInfo? {
         let page: PageInfo? = await withCheckedContinuation { continuation in
-            let reply = Reply(continuation)
+            let reply = Reply<PageInfo>(continuation)
             webView.callAsyncJavaScript(Self.linksScript, in: nil, in: .defaultClient) { result in
                 switch result {
                 case .success(let value): reply.resume(PageInfo(value))
@@ -182,18 +201,89 @@ final class FaviconStore {
     }
 
     /// Resumes its continuation once, with whichever of the script and the timeout finishes first.
-    private final class Reply {
-        private var continuation: CheckedContinuation<PageInfo?, Never>?
+    private final class Reply<Value: Sendable> {
+        private var continuation: CheckedContinuation<Value?, Never>?
 
-        init(_ continuation: CheckedContinuation<PageInfo?, Never>) {
+        init(_ continuation: CheckedContinuation<Value?, Never>) {
             self.continuation = continuation
         }
 
-        func resume(_ page: PageInfo?) {
-            continuation?.resume(returning: page)
+        func resume(_ value: Value?) {
+            continuation?.resume(returning: value)
             continuation = nil
         }
     }
+
+    /// Fetches the icon in the page itself, so with its sign-in, where a fetch without it met one
+    /// (`download`'s `signInURLs`): only `urls` on the page's own origin, which the page could fetch
+    /// anyway, and only an answer from that origin (a redirect to a sign-in page elsewhere isn't
+    /// one). The bytes are decoded here, as `download`'s are. Nil if none of them gives an icon, the
+    /// tab has gone, or the page has moved to another site meanwhile. The web view is looked up again
+    /// for each URL, so a closed tab's is held at most for one fetch.
+    private func downloadThroughPage(_ urls: [URL], in webView: () -> WKWebView?, key: String) async -> UIImage? {
+        for url in urls {
+            guard let webView = webView(), let pageURL = webView.url,
+                  FaviconSelector.hostKey(for: pageURL) == key else { return nil }
+            guard FaviconSelector.sameOrigin(url, pageURL) else { continue }
+            let encoded: String? = await withCheckedContinuation { continuation in
+                let reply = Reply<String>(continuation)
+                webView.callAsyncJavaScript(Self.pageFetchScript,
+                                            arguments: ["href": url.absoluteString, "max": Self.maxResponseBytes],
+                                            in: nil, in: .defaultClient) { result in
+                    switch result {
+                    case .success(let value): reply.resume(value as? String)
+                    case .failure(let error):
+                        Self.log.debug("Fetching an icon in the page failed: \(error.localizedDescription, privacy: .public)")
+                        reply.resume(nil)
+                    }
+                }
+                Task {
+                    try? await Task.sleep(for: .seconds(10))
+                    reply.resume(nil)
+                }
+            }
+            guard let encoded, let image = await Self.keep(base64: encoded, as: file(for: key)) else { continue }
+            return image
+        }
+        return nil
+    }
+
+    /// `href` fetched by the page, as base64, or null for an error, a redirect off the page's origin, or
+    /// more than `max` bytes (read as it streams, and stopped there). Given up after 8 s, inside the
+    /// caller's 10. In the client world, like `linksScript`, out of the page's scripts' reach.
+    private static let pageFetchScript = """
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        try {
+            const response = await fetch(href, { credentials: 'same-origin', cache: 'no-cache', signal: controller.signal });
+            if (!response.ok || !response.body || new URL(response.url).origin !== location.origin
+                || Number(response.headers.get('content-length') || 0) > max) {
+                controller.abort();
+                return null;
+            }
+            const reader = response.body.getReader();
+            const chunks = [];
+            let size = 0;
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                size += value.length;
+                if (size > max) { controller.abort(); return null; }
+                chunks.push(value);
+            }
+            let binary = '';
+            for (const chunk of chunks) {
+                for (let i = 0; i < chunk.length; i += 0x8000) {
+                    binary += String.fromCharCode.apply(null, chunk.subarray(i, i + 0x8000));
+                }
+            }
+            return btoa(binary);
+        } catch {
+            return null;
+        } finally {
+            clearTimeout(timer);
+        }
+        """
 
     private func file(for key: String) -> URL {
         // Host keys are already lowercase; anything outside a DNS name's characters is escaped.
@@ -227,47 +317,67 @@ final class FaviconStore {
     /// Tries `urls` in order; the first that downloads and decodes is scaled down, written to `file`
     /// and returned.
     @concurrent
+    ///
+    /// `signInURLs` are the ones that met a sign-in instead: a 401 or 403, or a redirect to an HTML page.
     nonisolated private static func download(
         _ urls: [URL], session: URLSession, request: Request, to file: URL
-    ) async -> UIImage? {
+    ) async -> (image: UIImage?, signInURLs: [URL]) {
+        var signInURLs: [URL] = []
         for url in urls {
-            guard !Task.isCancelled else { return nil }
-            guard let data = await fetch(url, session: session, request: request), let icon = thumbnail(from: data)
-            else { continue }
-            let image = UIImage(cgImage: icon)
-            if let png = pngData(icon) {
-                do {
-                    try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try png.write(to: file, options: .atomic)
-                } catch {
-                    log.debug("Caching icon failed: \(error.localizedDescription, privacy: .public)")
-                }
-            }
-            return image
+            guard !Task.isCancelled else { break }
+            let fetched = await fetch(url, session: session, request: request)
+            if fetched.metSignIn { signInURLs.append(url) }
+            guard let data = fetched.data, let image = await keep(data, as: file) else { continue }
+            return (image, [])
         }
-        return nil
+        return (nil, signInURLs)
     }
 
-    /// The body of a 2xx response no larger than `maxResponseBytes`, else nil.
-    nonisolated private static func fetch(_ url: URL, session: URLSession, request: Request) async -> Data? {
+    @concurrent
+    nonisolated private static func keep(base64: String, as file: URL) async -> UIImage? {
+        guard let data = Data(base64Encoded: base64) else { return nil }
+        return await keep(data, as: file)
+    }
+
+    /// Decodes `data` as an icon (`thumbnail`), writes it to `file` and returns it; nil if it isn't one.
+    @concurrent
+    nonisolated private static func keep(_ data: Data, as file: URL) async -> UIImage? {
+        guard let icon = thumbnail(from: data) else { return nil }
+        if let png = pngData(icon) {
+            do {
+                try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try png.write(to: file, options: .atomic)
+            } catch {
+                log.debug("Caching icon failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        return UIImage(cgImage: icon)
+    }
+
+    /// The body of a 2xx response no larger than `maxResponseBytes`, else nil; `metSignIn` when the
+    /// answer was a 401 or 403, or a redirect to an HTML page (a sign-in page, by the look of it).
+    nonisolated private static func fetch(_ url: URL, session: URLSession, request: Request) async -> (data: Data?, metSignIn: Bool) {
         var urlRequest = URLRequest(url: url)
         // The page's own user agent, so the fetch doesn't single the browser out.
         if let userAgent = request.userAgent { urlRequest.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
         do {
             let (bytes, response) = try await session.bytes(for: urlRequest, delegate: RedirectGuard(pageHost: request.pageHost))
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+            guard let http = response as? HTTPURLResponse else { return (nil, false) }
+            let metSignIn = http.statusCode == 401 || http.statusCode == 403
+                || (http.url != url && http.mimeType?.lowercased() == "text/html")
+            guard !metSignIn, (200..<300).contains(http.statusCode),
                   http.expectedContentLength <= Int64(maxResponseBytes)
-            else { return nil }
+            else { return (nil, metSignIn) }
             var data = Data()
             data.reserveCapacity(http.expectedContentLength > 0 ? Int(http.expectedContentLength) : 16 * 1024)
             for try await byte in bytes {
                 data.append(byte)
-                if data.count > maxResponseBytes { return nil }
+                if data.count > maxResponseBytes { return (nil, false) }
             }
-            return data
+            return (data, false)
         } catch {
             log.debug("Icon fetch failed: \(error.localizedDescription, privacy: .public)")
-            return nil
+            return (nil, false)
         }
     }
 

@@ -11,6 +11,7 @@ final class AppSettings {
         static let customSearchEngine = "customSearchEngine"
         static let pageUnderStatusBar = "pageUnderStatusBar"
         static let searchSuggestions = "searchSuggestions"
+        static let incognitoIcon = "incognitoIcon"
     }
 
     static let customEngineID = "custom"
@@ -36,6 +37,11 @@ final class AppSettings {
         didSet { AppGroupStorage.save(searchSuggestions, key: Key.searchSuggestions, to: defaults) }
     }
 
+    /// The sunglasses Incognito shows (Settings › Appearance). Wayfarer by default.
+    var incognitoIcon: IncognitoIcon {
+        didSet { AppGroupStorage.save(incognitoIcon, key: Key.incognitoIcon, to: defaults) }
+    }
+
     @ObservationIgnored private let defaults: UserDefaults
 
     init(defaults: UserDefaults = AppGroupStorage.defaults) {
@@ -44,5 +50,6 @@ final class AppSettings {
         customSearchEngine = AppGroupStorage.load(SearchEngine.self, key: Key.customSearchEngine, from: defaults)
         pageUnderStatusBar = AppGroupStorage.load(Bool.self, key: Key.pageUnderStatusBar, from: defaults) ?? true
         searchSuggestions = AppGroupStorage.load(Bool.self, key: Key.searchSuggestions, from: defaults) ?? true
+        incognitoIcon = AppGroupStorage.load(IncognitoIcon.self, key: Key.incognitoIcon, from: defaults) ?? .default
     }
 }

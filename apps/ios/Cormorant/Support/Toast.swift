@@ -24,6 +24,8 @@ struct Toast: Identifiable {
         /// The Space's badge; the toast's glass takes a trace of its color, as the bar's does.
         case space(Space)
         case symbol(String)
+        /// Incognito's sunglasses, on a black badge: Incognito may have closed, so it's no Space to act on.
+        case incognito
     }
 
     /// A small line under the message saying why: "Focus" when a Focus filter chose the Space.
@@ -194,6 +196,8 @@ private struct ToastView: View {
         switch toast.icon {
         case .space(let space):
             SpaceIconBadge(icon: space.icon, color: space.color, side: min(iconSide, 44))
+        case .incognito:
+            IncognitoBadge(side: min(iconSide, 44))
         case .symbol(let name):
             Image(systemName: name)
                 .font(.body.weight(.semibold))

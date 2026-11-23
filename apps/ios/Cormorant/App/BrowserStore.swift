@@ -40,6 +40,11 @@ final class BrowserStore {
     private(set) var isComposingNewTab = false
     /// The search panel is open to search open tabs only (Search Tabs). Dropped with the panel.
     private(set) var isSearchingTabs = false
+    /// The tab being composed opens in Incognito: the panel's Incognito button is on. Starts on when
+    /// New Tab is chosen in Incognito; dropped with the composing.
+    private(set) var composesIncognito = false
+    /// Incognito had tabs at the last state change, so its last one closing can be told apart.
+    @ObservationIgnored private var incognitoWasOpen = false
     /// Manage Spaces is up, or asked for. Set by `showManageSpaces()` / `dismissManageSpaces()`
     /// (BrowserStore+Spaces.swift).
     var showsManageSpaces = false
@@ -305,13 +310,28 @@ final class BrowserStore {
     func newTab() {
         guard isLoaded else { return }
         isComposingNewTab = true
+        composesIncognito = state.activeSpaceID == Space.incognitoID
         addressFocusRequest += 1
+    }
+
+    /// The search panel keeps to what's typed (no history, open or closed tabs, completions or the
+    /// engine's suggestions): composing an Incognito tab, or in Incognito editing a tab's address.
+    var searchesPrivately: Bool {
+        isComposingNewTab || activeSession == nil ? composesIncognito : state.activeSpaceID == Space.incognitoID
+    }
+
+    /// The search panel's Incognito button: whether the tab being composed opens in Incognito.
+    func setComposesIncognito(_ incognito: Bool) {
+        guard isComposingNewTab || activeSession == nil else { return }
+        isComposingNewTab = true
+        composesIncognito = incognito
     }
 
     /// Opens the search panel to search open tabs only.
     func searchTabs() {
         guard isLoaded else { return }
         isComposingNewTab = false
+        composesIncognito = false
         isSearchingTabs = true
         addressFocusRequest += 1
     }
@@ -324,11 +344,13 @@ final class BrowserStore {
     /// The search panel closed without submitting.
     func cancelComposing() {
         isComposingNewTab = false
+        composesIncognito = false
         isSearchingTabs = false
     }
 
     func activate(_ tabID: UUID) {
         isComposingNewTab = false
+        composesIncognito = false
         isSearchingTabs = false
         stampActiveTab()
         state.activate(tabID: tabID)
@@ -349,6 +371,7 @@ final class BrowserStore {
     func switchToSpace(_ spaceID: UUID) {
         guard isLoaded, spaceID != state.activeSpaceID else { return }
         isComposingNewTab = false
+        composesIncognito = false
         isSearchingTabs = false
         state.switchToSpace(spaceID)
         stateDidChange()
@@ -363,12 +386,14 @@ final class BrowserStore {
         change(&state)
         if state.activeSpaceID != spaceID {
             isComposingNewTab = false
+            composesIncognito = false
             isSearchingTabs = false
         }
         stateDidChange()
     }
 
-    /// Archives the tab. Closing the last one leaves the Space empty (no active tab).
+    /// Archives the tab (an Incognito one is deleted). Closing the last one leaves the Space empty (no
+    /// active tab); Incognito's last ends Incognito, back in the Space before it.
     func close(_ tabID: UUID) {
         state.archive(tabID: tabID)
         stateDidChange()
@@ -377,7 +402,10 @@ final class BrowserStore {
     /// The last snapshot of the tab `close(_:)` would land on, to show under the page while it's
     /// swiped away.
     func backSwipeSnapshot(for tabID: UUID) -> PageSnapshot? {
-        state.tabAfterArchiving(tabID).flatMap { snapshots[$0] }
+        let next = state.tabAfterArchiving(tabID)
+            // Incognito's last tab: the tab Incognito goes back to.
+            ?? (state.tab(tabID)?.isIncognito == true ? state.tabs(inSpace: state.spaceOutsideIncognito).first?.id : nil)
+        return next.flatMap { snapshots[$0] }
     }
 
     func restore(_ archivedID: UUID) {
@@ -410,7 +438,11 @@ final class BrowserStore {
     /// one, asked to, or when there is no tab at all; otherwise in the active tab.
     func submit(_ input: String, inNewTab: Bool = false) {
         guard isLoaded, let resolution = AddressResolver.resolve(input, engine: settings.searchEngine) else { return }
-        if inNewTab { isComposingNewTab = true }
+        // Search Tabs' Go opens a new tab: in Incognito, an Incognito one.
+        if inNewTab, !isComposingNewTab {
+            isComposingNewTab = true
+            composesIncognito = state.activeSpaceID == Space.incognitoID
+        }
         switch resolution {
         case .navigate(let url): go(to: url, typed: true)
         case .search(let url, _): go(to: url, typed: false)
@@ -431,14 +463,20 @@ final class BrowserStore {
     }
 
     /// Loads `url` in a new tab when composing one (or when there is no tab at all), otherwise in the
-    /// active tab. `typed`: the user chose this page itself, not a search for it.
+    /// active tab. `typed`: the user chose this page itself, not a search for it. A new tab opens in
+    /// Incognito when the panel's Incognito button is on; with it off, a new tab composed in Incognito
+    /// opens in the Space Incognito goes back to.
     private func go(to url: URL, typed: Bool) {
         isSearchingTabs = false
         // Counted where the load lands, after any redirect, and only if it does.
         if isComposingNewTab || activeSession == nil {
+            let incognito = composesIncognito
             isComposingNewTab = false
+            composesIncognito = false
             stampActiveTab()
-            unvisitedTabIDs.insert(state.openTab(url: url).id)
+            if !incognito, state.activeSpaceID == Space.incognitoID { state.switchToSpace(state.spaceOutsideIncognito) }
+            let tab = incognito ? state.openIncognitoTab(url: url) : state.openTab(url: url)
+            unvisitedTabIDs.insert(tab.id)
             stateDidChange()
             // Its first load, once its blocking rules are in.
             activeSession?.nextLoadIsTyped = typed
@@ -465,6 +503,7 @@ final class BrowserStore {
         guard isLoaded, Self.isWeb(url) else { return nil }
         if !inBackground {
             isComposingNewTab = false
+            composesIncognito = false
             isSearchingTabs = false
             stampActiveTab()
         }
@@ -488,7 +527,7 @@ final class BrowserStore {
             // Its page may be in already, so no `didFinish` will say so: its one-entry history is
             // saved and its icon fetched now (a page still loading gets both again when it finishes).
             navigatedTabIDs.insert(tab.id)
-            if !session.webView.isLoading { favicons.pageDidLoad(in: session.webView) }
+            if !session.webView.isLoading, !session.isIncognito { favicons.pageDidLoad(in: session.webView) }
         } else if let opener {
             pendingViewSettings[tab.id] = opener.viewSettings
         }
@@ -502,6 +541,18 @@ final class BrowserStore {
         stateDidChange()
         if handoff != nil { saveHistories(onlyNavigated: true) }
         return tab.id
+    }
+
+    /// A link from a page's long-press menu, opened in a new Incognito tab and switched to. The page
+    /// loads afresh: the menu's preview of it ran on the opener's website data. Returns false if no tab
+    /// was opened.
+    @discardableResult
+    func openLinkInIncognito(_ url: URL, from opener: TabSession?) -> Bool {
+        guard let tabID = openLink(url, inBackground: false, inSpace: Space.incognitoID, from: opener, handoff: nil)
+        else { return false }
+        // Opened outside the active Space, it isn't active yet: go there with it.
+        if state.activeTabID != tabID { activate(tabID) }
+        return true
     }
 
     // MARK: Toasts
@@ -585,6 +636,7 @@ final class BrowserStore {
         guard let changesProfile = move(&state) else { return nil }
         if state.activeSpaceID != spaceID {
             isComposingNewTab = false
+            composesIncognito = false
             isSearchingTabs = false
         }
         stateDidChange()
@@ -597,7 +649,9 @@ final class BrowserStore {
     /// and reloads the active one.
     func toggleBlockingForActiveSite() {
         // The tab's URL covers a web view that hasn't loaded yet (rebuilt after eviction, failed first load).
-        guard let activeSession, let host = (activeSession.webView.url ?? activeTab?.url)?.host() else { return }
+        // Per-site choices are saved: none from Incognito.
+        guard let activeSession, !activeSession.isIncognito,
+              let host = (activeSession.webView.url ?? activeTab?.url)?.host() else { return }
         let isBlocking = blocking.isBlocking(host: host)
         blocking.update { $0.setBlocking(!isBlocking, host: host) }
         let site = BlockingPreferences.normalize(host: host)
@@ -746,6 +800,7 @@ final class BrowserStore {
         pendingURLs.removeAll()
         guard !links.isEmpty else { return }
         isComposingNewTab = false
+        composesIncognito = false
         isSearchingTabs = false
         // Straight to the page (default-browser rule): nothing left over it.
         showsManageSpaces = false
@@ -785,6 +840,7 @@ final class BrowserStore {
         let profileID = TabSession.profileID(of: configuration.websiteDataStore)
         guard state.profile(forSpace: openerSpace ?? state.activeSpaceID).id == profileID else { return nil }
         isComposingNewTab = false
+        composesIncognito = false
         // `window.open('')` has no URL yet; the opener navigates or writes into the new view.
         let requested = action.request.url.flatMap { $0.absoluteString.isEmpty ? nil : $0 }
         stampActiveTab()
@@ -810,9 +866,21 @@ final class BrowserStore {
         releaseSessionsOnOtherProfiles()
         syncActiveSession()
         pruneSessions()
+        endIncognitoIfClosed()
         dismissStaleToast()
         scheduleSave()
         writeSpacesSummary()
+    }
+
+    /// Incognito's last tab has just closed (its web view with it): its website data goes, and a toast
+    /// says so, since the Space leaving the strip is easy to miss.
+    private func endIncognitoIfClosed() {
+        let isOpen = state.isIncognitoOpen
+        defer { incognitoWasOpen = isOpen }
+        guard incognitoWasOpen, !isOpen else { return }
+        IncognitoData.end()
+        showToast(Toast(icon: .incognito, message: "Incognito closed",
+                        spokenText: "Incognito closed. Its sign-ins and site data are gone.", actions: []))
     }
 
     /// Keeps the Spaces summary the share extension and the Focus filter read in step with the state:
@@ -948,6 +1016,7 @@ final class BrowserStore {
             self?.recordVisit(to: url, title: title, typed: typed, profile: visitProfile)
         }
         session.onTitleChange = { [weak self] url, title in
+            guard visitProfile != Profile.incognitoID else { return }
             self?.writeBrowsingHistory { await $0.updateTitle(title, for: url, profile: visitProfile) }
         }
         session.onPageLoaded = { [weak self, weak session] in
@@ -957,7 +1026,7 @@ final class BrowserStore {
             } else if self.stagedLoads[tabID] != nil {
                 self.finishBackgroundLoad(tabID)
             }
-            self.favicons.pageDidLoad(in: session.webView)
+            if !session.isIncognito { self.favicons.pageDidLoad(in: session.webView) }
             // The URL changes when a navigation starts; the history only has the new page once it's in.
             self.navigatedTabIDs.insert(tabID)
             self.saveHistories(onlyNavigated: true)
@@ -972,6 +1041,10 @@ final class BrowserStore {
         session.onOpenInSpace = { [weak self, weak session] url, spaceID, handoff in
             self?.openLink(url, inSpace: spaceID, from: session, handoff: handoff) ?? false
         }
+        session.onOpenInIncognito = { [weak self, weak session] url in
+            self?.openLinkInIncognito(url, from: session) ?? false
+        }
+        session.incognitoIcon = { [weak self] in self?.settings.incognitoIcon ?? .default }
         session.onClose = { [weak self] in self?.close(tabID) }
         // A web view on a deleted profile is what keeps its data store from being erased. The task
         // runs once the session's properties, the web view among them, have gone too.
@@ -1045,8 +1118,9 @@ final class BrowserStore {
 
     /// Counts a visit in `profile`'s history; none for a profile deleted meanwhile (a page that
     /// arrived as its tab's web view was let go), whose history is being erased.
+    /// None in Incognito, whose profile is never among the state's.
     private func recordVisit(to url: URL, title: String, typed: Bool, profile: UUID) {
-        guard state.profile(profile) != nil else { return }
+        guard profile != Profile.incognitoID, state.profile(profile) != nil else { return }
         let query = searchQuery(in: url)
         writeBrowsingHistory {
             await $0.recordVisit(to: url, title: title, searchQuery: query, typed: typed, profile: profile)
@@ -1092,7 +1166,7 @@ final class BrowserStore {
     /// show. After any queued history change, so a cleared site's icon goes with it.
     func forgetFavicons() {
         guard let browsingHistory else {
-            favicons.forgetSites(except: state.tabs.compactMap(\.url) + state.archived.map(\.url))
+            favicons.forgetSites(except: state.persisted.tabs.compactMap(\.url) + state.archived.map(\.url))
             return
         }
         let previous = browsingHistoryChain
@@ -1100,7 +1174,8 @@ final class BrowserStore {
             await previous?.value
             let sites = await browsingHistory.sites()
             // Tabs and archive as they are now, not as they were when this was queued.
-            favicons.forgetSites(except: state.tabs.compactMap(\.url) + state.archived.map(\.url) + sites)
+            // Not Incognito's: a site cleared from history keeps no icon for being open there.
+            favicons.forgetSites(except: state.persisted.tabs.compactMap(\.url) + state.archived.map(\.url) + sites)
         }
     }
 
@@ -1116,7 +1191,8 @@ final class BrowserStore {
     }
 
     /// Saving is allowed and the state differs from what's on disk (a fresh install with no tabs never writes).
-    private var needsSave: Bool { canSave && state != lastSavedState }
+    /// Incognito's changes are never saved, so they never ask for a write (`BrowserState.persisted`).
+    private var needsSave: Bool { canSave && state.persisted != lastSavedState }
 
     /// Debounced while the scene is active; immediate otherwise, since the process may not get another chance.
     func scheduleSave() {
@@ -1174,8 +1250,10 @@ final class BrowserStore {
         guard canSave else { return }
         let tabIDs = onlyNavigated ? navigatedTabIDs : Set(sessions.keys).union(interactionStates.keys)
         navigatedTabIDs.subtract(tabIDs)
+        // Incognito's back/forward lists are never written.
+        let incognito = Set(state.tabs.filter(\.isIncognito).map(\.id))
         var current: [UUID: Data] = [:]
-        for tabID in tabIDs {
+        for tabID in tabIDs where !incognito.contains(tabID) {
             guard let session = sessions[tabID] else {
                 if let history = interactionStates[tabID] as? Data { current[tabID] = history }
                 continue
@@ -1190,7 +1268,7 @@ final class BrowserStore {
                 current[tabID] = history
             }
         }
-        let live = Set(state.tabs.map(\.id))
+        let live = Set(state.tabs.map(\.id)).subtracting(incognito)
         let changed = current.filter { live.contains($0.key) && savedHistories[$0.key] != $0.value }
         let closed = savedHistories.keys.filter { !live.contains($0) }
         guard !changed.isEmpty || !closed.isEmpty else {
@@ -1222,7 +1300,7 @@ final class BrowserStore {
     private func enqueueSave() -> Task<Void, Never> {
         saveSequence += 1
         let sequence = saveSequence
-        let snapshot = state
+        let snapshot = state.persisted
         // Set when queued, not when written: writes land in order, so a state that changes and changes
         // back while one is in flight still gets its own write after it.
         lastSavedState = snapshot
@@ -1310,6 +1388,8 @@ final class BrowserStore {
         toastExpiry?.cancel()
         for timer in stagedLoads.values { timer.cancel() }
         releaseSessions { _, _ in true }
+        // Incognito's store goes with the app, as it would with a killed process.
+        IncognitoData.end()
     }
 
     /// For UI tests (`UITestingProbes`): whether something the app writes while browsing isn't on

@@ -19,7 +19,11 @@ struct SpaceBadge: View {
     @ScaledMetric(relativeTo: .headline) private var side: CGFloat = 24
 
     var body: some View {
-        SpaceIconBadge(icon: space.icon, color: space.color, side: side, symbolScale: 0.55)
+        if space.isIncognito {
+            IncognitoBadge(side: side)
+        } else {
+            SpaceIconBadge(icon: space.icon, color: space.color, side: side, symbolScale: 0.55)
+        }
     }
 
     /// Drawn once per look: menus re-evaluate on every state change, a page's title included.
@@ -27,7 +31,8 @@ struct SpaceBadge: View {
 
     /// The badge as a menu image: menus draw SwiftUI images as templates in one color, so it's drawn
     /// here in full and kept as it is.
-    static func menuImage(for space: Space) -> UIImage {
+    static func menuImage(for space: Space, incognitoIcon: IncognitoIcon = .default) -> UIImage {
+        if space.isIncognito { return IncognitoBadge.menuImage(icon: incognitoIcon) }
         let key = "\(space.icon.rawValue)/\(space.color.rawValue)"
         if let image = menuImages[key] { return image }
         let side: CGFloat = 24
@@ -60,10 +65,11 @@ struct SpaceMenuList: View {
         // Toggles of an image and two texts: a menu drops a picker option's subtitle, and the subtitle
         // inside a Label.
         Section {
-            ForEach(store.state.switchableSpaces) { space in
+            ForEach(store.state.shownSpaces) { space in
                 Toggle(isOn: Binding(get: { space.id == store.state.activeSpaceID },
                                      set: { if $0 { onSwitch(space.id) } })) {
-                    Image(uiImage: SpaceBadge.menuImage(for: space)).renderingMode(.original)
+                    Image(uiImage: SpaceBadge.menuImage(for: space, incognitoIcon: store.settings.incognitoIcon))
+                        .renderingMode(.original)
                     Text(space.name)
                     Text(subtitle(for: space))
                 }
@@ -75,7 +81,7 @@ struct SpaceMenuList: View {
         let count = store.state.tabCount(inSpace: space.id)
         let tabs = count == 1 ? "1 tab" : "\(count) tabs"
         let profile = store.state.profile(forSpace: space.id)
-        return profile.isDefault ? tabs : "\(tabs) · \(profile.name) profile"
+        return profile.isDefault || profile.isIncognito ? tabs : "\(tabs) · \(profile.name) profile"
     }
 }
 
@@ -100,7 +106,7 @@ struct SpaceStrip: View {
     static func slots(in width: CGFloat) -> Int { max(2, Int(width / slot)) }
 
     var body: some View {
-        let spaces = store.state.switchableSpaces
+        let spaces = store.state.shownSpaces
         let active = store.state.activeSpaceID
         let (shown, hidesSome) = Self.shown(spaces, active: active, slots: slots)
         // Each button spans its whole slot, so a tap near an icon, or between two, still lands.
@@ -125,12 +131,15 @@ struct SpaceStrip: View {
         return (shown, true)
     }
 
-    /// Every Space, as the tabs button's long press lists them, then the Space's Edit and Manage Spaces.
+    /// Every Space, as the tabs button's long press lists them, then the Space's Edit (not Incognito's,
+    /// which can't be edited) and Manage Spaces.
     @ViewBuilder
     private func menu(editing space: Space) -> some View {
         SpaceMenuList(onSwitch: onSwitch)
         Section {
-            Button("Edit \(space.name)", systemImage: "pencil") { store.showManageSpaces(editing: space.id) }
+            if !space.isIncognito {
+                Button("Edit \(space.name)", systemImage: "pencil") { store.showManageSpaces(editing: space.id) }
+            }
             Button("Manage Spaces", systemImage: "square.stack") { store.showManageSpaces() }
         }
     }
@@ -142,13 +151,24 @@ struct SpaceStrip: View {
         Menu {
             menu(editing: space)
         } label: {
-            Image(systemName: space.icon.rawValue)
-                .font(.system(size: glyph * 0.5, weight: .medium))
-                .foregroundStyle(isActive ? Color.white : space.color.color)
-                .frame(width: glyph, height: glyph)
-                .background { if isActive { Circle().fill(space.color.color) } }
-                .frame(width: Self.slot, height: slotHeight)
-                .contentShape(.rect)
+            Group {
+                if space.isIncognito {
+                    // Black on a disc of the page's opposite when active, as Incognito's badge is.
+                    IncognitoGlyph(icon: store.settings.incognitoIcon)
+                        .frame(width: glyph * 0.62)
+                        .foregroundStyle(isActive ? Color(.systemBackground) : Color.primary)
+                        .frame(width: glyph, height: glyph)
+                        .background { if isActive { Circle().fill(Color.primary) } }
+                } else {
+                    Image(systemName: space.icon.rawValue)
+                        .font(.system(size: glyph * 0.5, weight: .medium))
+                        .foregroundStyle(isActive ? Color.white : space.color.color)
+                        .frame(width: glyph, height: glyph)
+                        .background { if isActive { Circle().fill(space.color.color) } }
+                }
+            }
+            .frame(width: Self.slot, height: slotHeight)
+            .contentShape(.rect)
         } primaryAction: {
             onSwitch(space.id)
         }
@@ -156,10 +176,18 @@ struct SpaceStrip: View {
         // The menu opens upward; the Spaces read top-down in their own order, as in the tabs button's.
         .menuOrder(.fixed)
         .buttonStyle(.plain)
-        .accessibilityAction(named: "Edit \(space.name)") { store.showManageSpaces(editing: space.id) }
-        .accessibilityAction(named: "Manage Spaces") { store.showManageSpaces() }
+        .accessibilityActions {
+            if !space.isIncognito {
+                Button("Edit \(space.name)") { store.showManageSpaces(editing: space.id) }
+            }
+            Button("Manage Spaces") { store.showManageSpaces() }
+        }
         .accessibilityShowsLargeContentViewer {
-            Label(space.name, systemImage: space.icon.rawValue)
+            if space.isIncognito {
+                Label { Text(space.name) } icon: { Image(uiImage: store.settings.incognitoIcon.image(width: 28, isOn: true)) }
+            } else {
+                Label(space.name, systemImage: space.icon.rawValue)
+            }
         }
         .accessibilityLabel(space.name)
         .accessibilityAddTraits(isActive ? .isSelected : [])
@@ -185,5 +213,40 @@ struct SpaceStrip: View {
         }
         .accessibilityLabel("More Spaces")
         .accessibilityIdentifier("SpaceStripMore")
+    }
+}
+
+/// Incognito's badge: white sunglasses on a black rounded square, edged so it holds on dark chrome.
+/// For the switcher's title, menus and toasts.
+struct IncognitoBadge: View {
+    @Environment(BrowserStore.self) private var store
+    var side: CGFloat = 24
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: side * 0.27, style: .continuous)
+        IncognitoGlyph(icon: store.settings.incognitoIcon)
+            .frame(width: side * 0.7)
+            .foregroundStyle(.white)
+            .frame(width: side, height: side)
+            .background(Color.incognitoBackground, in: shape)
+            .overlay { shape.strokeBorder(.white.opacity(0.3), lineWidth: 1) }
+            .accessibilityHidden(true)
+    }
+
+    private static var menuImages: [IncognitoIcon: UIImage] = [:]
+
+    /// The badge as a menu image, black whatever the appearance (menus draw it as it is).
+    static func menuImage(icon: IncognitoIcon) -> UIImage {
+        if let image = menuImages[icon] { return image }
+        let side: CGFloat = 24
+        let glyph = icon.image(width: 17, isOn: true, color: .white).withTintColor(.white, renderingMode: .alwaysOriginal)
+        let image = UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
+            UIColor.incognitoBackground.setFill()
+            UIBezierPath(roundedRect: CGRect(x: 0, y: 0, width: side, height: side), cornerRadius: 6.5).fill()
+            glyph.draw(in: CGRect(x: (side - glyph.size.width) / 2, y: (side - glyph.size.height) / 2,
+                                  width: glyph.size.width, height: glyph.size.height))
+        }.withRenderingMode(.alwaysOriginal)
+        menuImages[icon] = image
+        return image
     }
 }

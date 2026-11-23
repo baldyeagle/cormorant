@@ -13,6 +13,8 @@ struct BrowserView: View {
     @State private var showManageSpaces = false
     @State private var isSearching = false
     @State private var barHeight: CGFloat = 0
+    /// The band under the status bar that says "Incognito" on an Incognito tab.
+    @ScaledMetric(relativeTo: .caption2) private var incognitoLabelHeight: CGFloat = 20
     /// The search panel's top edge in global coordinates, once it has laid out; the empty state keeps
     /// its mark above it.
     @State private var searchPanelTop: CGFloat?
@@ -38,6 +40,8 @@ struct BrowserView: View {
                 // status-bar column at the side on the iPhone Duo).
                 WebViewContainer(webView: session.webView, barHeight: barHeight,
                                  backSwipeClose: Self.backSwipeClose(for: session, in: store))
+                    // Below Incognito's label.
+                    .padding(.top, store.showsIncognitoStrip ? incognitoLabelHeight : 0)
                     .ignoresSafeArea(.container, edges: store.pageRunsUnderStatusBar ? .all : [.horizontal, .bottom])
                     .ignoresSafeArea(.keyboard)
             }
@@ -82,6 +86,14 @@ struct BrowserView: View {
                 .ignoresSafeArea()
                 .statusBarColorScheme(store.statusBarTint(in: colorScheme)?.colorScheme)
         }
+        .overlay(alignment: .top) {
+            if store.showsIncognitoStrip, store.activeSession != nil {
+                IncognitoLabel(icon: store.settings.incognitoIcon)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: incognitoLabelHeight)
+                    .background(Color.incognitoBackground)
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 FindOnPageBar(session: store.activeSession)
@@ -92,6 +104,8 @@ struct BrowserView: View {
                     showSwitcher: presentSwitcher,
                     showActions: presentActions
                 )
+                // Incognito's bar is dark in light mode too.
+                .environment(\.colorScheme, store.showsIncognitoStrip ? .dark : colorScheme)
                 // Beyond this the three controls stop fitting on one line on a phone. Applied out
                 // here so the bar's @ScaledMetric sizes are capped along with its fonts.
                 .dynamicTypeSize(...DynamicTypeSize.accessibility1)
@@ -453,5 +467,25 @@ struct BrowserView: View {
             return
         }
         if store.isComposingNewTab || store.isSearchingTabs { presentSearch() } else { searchIfBlank() }
+    }
+}
+
+/// "Incognito" with its sunglasses, white, for the band under the status bar on an Incognito tab.
+private struct IncognitoLabel: View {
+    let icon: IncognitoIcon
+    @ScaledMetric(relativeTo: .caption2) private var glyphWidth: CGFloat = 16
+
+    var body: some View {
+        HStack(spacing: 5) {
+            IncognitoGlyph(icon: icon)
+                .frame(width: glyphWidth)
+            Text("Incognito")
+                .font(.caption2.weight(.semibold))
+        }
+        .foregroundStyle(.white)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Incognito")
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier("IncognitoLabel")
     }
 }

@@ -91,7 +91,7 @@ public enum SpaceIcon: String, CaseIterable, Hashable, Codable, Sendable {
 // MARK: - Spaces and profiles on BrowserState
 
 extension BrowserState {
-    /// Spaces you can switch to, in order.
+    /// The Spaces you made that you can switch to, in order. Never Incognito (see `shownSpaces`).
     public var switchableSpaces: [Space] { spaces.filter { !$0.isArchived } }
 
     /// Archived Spaces, most recently archived first.
@@ -99,18 +99,24 @@ extension BrowserState {
         spaces.filter(\.isArchived).sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
     }
 
-    /// More than one Space to switch between. With only Home, Spaces stay out of sight.
-    public var hasSpacesToSwitch: Bool { switchableSpaces.count > 1 }
+    /// More than one Space to switch between, Incognito included while it's open. With only Home,
+    /// Spaces stay out of sight.
+    public var hasSpacesToSwitch: Bool { shownSpaces.count > 1 }
 
     public var activeSpace: Space { space(activeSpaceID) ?? .default }
 
-    public func space(_ id: UUID) -> Space? { spaces.first { $0.id == id } }
+    /// The Space with this ID: Incognito only while it's open.
+    public func space(_ id: UUID) -> Space? {
+        if id == Space.incognitoID { return isIncognitoOpen ? .incognito : nil }
+        return spaces.first { $0.id == id }
+    }
 
     public func profile(_ id: UUID) -> Profile? { profiles.first { $0.id == id } }
 
-    /// The profile `spaceID` uses; the default profile for an unknown Space.
+    /// The profile `spaceID` uses; the default profile for an unknown Space. Incognito's, open or not.
     public func profile(forSpace spaceID: UUID) -> Profile {
-        space(spaceID).flatMap { profile($0.profileID) } ?? .default
+        if spaceID == Space.incognitoID { return .incognito }
+        return space(spaceID).flatMap { profile($0.profileID) } ?? .default
     }
 
     /// Tabs in `spaceID`, most recently viewed first.
@@ -138,7 +144,7 @@ extension BrowserState {
     public mutating func normalize() {
         var seenSpaces = Set<UUID>(), seenProfiles = Set<UUID>()
         spaces.removeAll { !seenSpaces.insert($0.id).inserted }
-        profiles.removeAll { !seenProfiles.insert($0.id).inserted }
+        profiles.removeAll { $0.isIncognito || !seenProfiles.insert($0.id).inserted }
         if !profiles.contains(where: \.isDefault) { profiles.insert(.default, at: 0) }
         if let home = spaces.firstIndex(where: { $0.id == Space.defaultID }) {
             spaces[home].archivedAt = nil
@@ -153,7 +159,8 @@ extension BrowserState {
         for index in spaces.indices where !profileIDs.contains(spaces[index].profileID) {
             spaces[index].profileID = Profile.defaultID
         }
-        let spaceIDs = Set(spaces.map(\.id))
+        spaces.removeAll(where: \.isIncognito)
+        let spaceIDs = Set(spaces.map(\.id) + [Space.incognitoID])
         for index in tabs.indices where !spaceIDs.contains(tabs[index].spaceID) {
             tabs[index].spaceID = Space.defaultID
         }
@@ -161,7 +168,7 @@ extension BrowserState {
             self.activeTabID = nil
         }
         let leavesSpace = space(activeSpaceID)?.isArchived != false
-        if leavesSpace { activeSpaceID = Space.defaultID }
+        if leavesSpace { activeSpaceID = activeSpaceID == Space.incognitoID ? spaceOutsideIncognito : Space.defaultID }
         // A tab outside the active Space gives way to the Space's most recent one; so does none, when
         // the Space itself was replaced.
         let activeTabSpace = activeTabID.flatMap { id in tabs.first { $0.id == id }?.spaceID }
@@ -292,9 +299,9 @@ extension BrowserState {
     /// that profile's data store (its cookies stay behind). Nil when nothing moved.
     @discardableResult
     public mutating func moveTab(_ tabID: UUID, toSpace spaceID: UUID, now: Date = .now) -> Bool? {
-        guard space(spaceID)?.isArchived == false,
+        guard spaceID != Space.incognitoID, space(spaceID)?.isArchived == false,
               let index = tabs.firstIndex(where: { $0.id == tabID }),
-              tabs[index].spaceID != spaceID else { return nil }
+              tabs[index].spaceID != spaceID, !tabs[index].isIncognito else { return nil }
         let from = tabs[index].spaceID
         if activeTabID == tabID { activeTabID = tabAfterArchiving(tabID) }
         tabs[index].spaceID = spaceID

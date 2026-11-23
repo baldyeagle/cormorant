@@ -15,12 +15,15 @@ public enum LinkDestinationReason: Sendable, Equatable {
 extension BrowserState {
     /// Where a link from another app opens: the Space picked for it in the share extension, if it can
     /// still be switched to; else the Focus filter's Space, if that can; else the Space last used. A
-    /// deleted or archived Space falls through to the next.
+    /// deleted or archived Space falls through to the next. Never Incognito: from there, the Space
+    /// last used is the one it goes back to.
     public func destinationForLink(requestedSpace: UUID?, focusSpace: UUID?)
         -> (spaceID: UUID, reason: LinkDestinationReason) {
-        if let requestedSpace, space(requestedSpace)?.isArchived == false { return (requestedSpace, .requested) }
-        if let focusSpace, space(focusSpace)?.isArchived == false { return (focusSpace, .focus) }
-        return (activeSpaceID, .lastUsed)
+        if let requestedSpace, switchableSpaces.contains(where: { $0.id == requestedSpace }) {
+            return (requestedSpace, .requested)
+        }
+        if let focusSpace, switchableSpaces.contains(where: { $0.id == focusSpace }) { return (focusSpace, .focus) }
+        return (spaceOutsideIncognito, .lastUsed)
     }
 }
 
@@ -71,7 +74,7 @@ public struct SpacesSummary: Codable, Sendable, Equatable {
     }
 
     public init(_ state: BrowserState) {
-        self.init(spaces: state.switchableSpaces.map(Entry.init), activeSpaceID: state.activeSpaceID)
+        self.init(spaces: state.switchableSpaces.map(Entry.init), activeSpaceID: state.spaceOutsideIncognito)
     }
 
     /// More than one Space to choose between: the share extension shows its Space row.

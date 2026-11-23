@@ -89,6 +89,11 @@ final class TabSession {
     /// A link from the long-press menu, to open in a background tab in another Space, adopting the
     /// preview's web view when there is a `handoff`. Returns false if no tab opened.
     @ObservationIgnored var onOpenInSpace: ((_ url: URL, _ spaceID: UUID, _ handoff: LinkPreviewHandoff?) -> Bool)?
+    /// A link from the long-press menu, to open in a new Incognito tab, switched to. Returns false if
+    /// no tab opened.
+    @ObservationIgnored var onOpenInIncognito: ((URL) -> Bool)?
+    /// The sunglasses picked for Incognito, for the long-press menu's Open in Incognito.
+    @ObservationIgnored var incognitoIcon: (() -> IncognitoIcon)?
     /// The page called `window.close()`.
     @ObservationIgnored var onClose: (() -> Void)?
     /// The long-press menu's page preview, while one is up. See `LinkContextMenu.swift`.
@@ -176,17 +181,26 @@ final class TabSession {
     }
 
     /// The website data a profile's web views run on. The default profile has the app's default
-    /// store, as every tab did before profiles, so nobody is signed out; every other profile has its
-    /// own persistent store, identified by the profile's ID. Not cached: a store can only be removed
-    /// (`WKWebsiteDataStore.remove(forIdentifier:)`) once nothing holds it.
+    /// store, as every tab did before profiles, so nobody is signed out; Incognito has one kept in
+    /// memory (`IncognitoData`); every other profile has its own persistent store, identified by the
+    /// profile's ID. Not cached: a store can only be removed (`WKWebsiteDataStore.remove(forIdentifier:)`)
+    /// once nothing holds it.
     static func dataStore(for profileID: UUID) -> WKWebsiteDataStore {
-        profileID == Profile.defaultID ? .default() : WKWebsiteDataStore(forIdentifier: profileID)
+        switch profileID {
+        case Profile.defaultID: .default()
+        case Profile.incognitoID: IncognitoData.store
+        default: WKWebsiteDataStore(forIdentifier: profileID)
+        }
     }
 
-    /// The profile `store` belongs to: its identifier, or the default profile for the default store.
+    /// The profile `store` belongs to: Incognito for one kept in memory, else its identifier, or the
+    /// default profile for the default store.
     static func profileID(of store: WKWebsiteDataStore) -> UUID {
-        store.identifier ?? Profile.defaultID
+        store.isPersistent ? store.identifier ?? Profile.defaultID : Profile.incognitoID
     }
+
+    /// The tab is in Incognito: nothing of its pages is kept (history, icons, its back/forward list).
+    var isIncognito: Bool { profileID == Profile.incognitoID }
 
     /// - Parameters:
     ///   - profileID: whose website data a new web view runs on.

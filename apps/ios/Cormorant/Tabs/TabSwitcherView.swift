@@ -112,6 +112,9 @@ struct TabSwitcherView: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
+            // Incognito's cards sit on black, in light mode too, as its tabs' bar does.
+            .environment(\.colorScheme, isIncognito ? .dark : colorScheme)
+            .toolbarColorScheme(isIncognito ? .dark : nil, for: .navigationBar)
         }
         // A toast's Move… while the switcher is up: the browser can't present over it.
         .sheet(item: Binding(get: { store.moveRequest }, set: { store.moveRequest = $0 })) { request in
@@ -214,6 +217,8 @@ struct TabSwitcherView: View {
         }
     }
 
+    private var isIncognito: Bool { store.state.activeSpaceID == Space.incognitoID }
+
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         if let space = store.shownSpace {
@@ -244,11 +249,14 @@ struct TabSwitcherView: View {
                 .accessibilityIdentifier("SpaceTitleMenu")
             }
         }
-        ToolbarItem(placement: .topBarLeading) {
-            NavigationLink {
-                ArchiveListView(onRestore: { dismiss() })
-            } label: {
-                Label("Archive", systemImage: "archivebox")
+        // Nothing in Incognito is ever archived.
+        if !isIncognito {
+            ToolbarItem(placement: .topBarLeading) {
+                NavigationLink {
+                    ArchiveListView(onRestore: { dismiss() })
+                } label: {
+                    Label("Archive", systemImage: "archivebox")
+                }
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
@@ -370,7 +378,10 @@ private struct CardMenu: ViewModifier {
         if isEnabled {
             content
                 .contextMenu {
-                    MoveToSpaceMenu(tabID: tab.id, onMove: onMove)
+                    // Not for an Incognito tab, or with only Home and Incognito.
+                    if !store.moveDestinations(for: tab.id).isEmpty {
+                        MoveToSpaceMenu(tabID: tab.id, onMove: onMove)
+                    }
                     Button("Close Tab", systemImage: "xmark", role: .destructive, action: onClose)
                 }
                 .accessibilityActions {

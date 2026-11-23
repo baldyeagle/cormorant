@@ -147,7 +147,7 @@ struct BottomBar: View {
         .accessibilityValue(space?.name ?? "")
         .accessibilityActions {
             if space != nil {
-                ForEach(store.state.switchableSpaces.filter { $0.id != store.state.activeSpaceID }) { other in
+                ForEach(store.state.shownSpaces.filter { $0.id != store.state.activeSpaceID }) { other in
                     Button("Switch to \(other.name)") { store.switchToSpace(other.id) }
                 }
                 Button("Manage Spaces") { store.showManageSpaces() }

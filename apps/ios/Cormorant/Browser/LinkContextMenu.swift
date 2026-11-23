@@ -104,6 +104,8 @@ extension TabSession {
     struct LinkMenuAction {
         let title: String
         let systemImage: String
+        /// Drawn in place of `systemImage` (Open in Incognito's sunglasses, which SF Symbols hasn't got).
+        var image: UIImage? = nil
         let perform: () -> Void
     }
 
@@ -123,6 +125,14 @@ extension TabSession {
             open.append(LinkMenuAction(title: "Open in Background Tab", systemImage: "square.on.square") { [weak self] in
                 self?.openInBackgroundTab(url)
             })
+            // From an Incognito tab, New Tab and Background Tab open in Incognito already.
+            if !isIncognito {
+                open.append(LinkMenuAction(title: "Open in Incognito", systemImage: "eyeglasses",
+                                           image: incognitoIcon?().image(width: 24, isOn: true)) { [weak self] in
+                    guard let self, onOpenInIncognito?(url) == true else { return }
+                    setBarCollapsed(false)
+                })
+            }
         }
         let pass = [
             LinkMenuAction(title: "Copy Link", systemImage: "link") {
@@ -158,7 +168,7 @@ extension TabSession {
     // MARK: Private
 
     private static func menuItem(for action: LinkMenuAction) -> UIAction {
-        UIAction(title: action.title, image: UIImage(systemName: action.systemImage)) { _ in action.perform() }
+        UIAction(title: action.title, image: action.image ?? UIImage(systemName: action.systemImage)) { _ in action.perform() }
     }
 
     /// Menu actions run once the menu (and its preview) has gone, before WebKit reports the menu

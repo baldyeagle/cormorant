@@ -31,7 +31,9 @@ import Testing
         let b = state.openTab(url: url("https://b.com"), title: "B", now: now + 0.000_123)
         _ = state.openTab(url: url("https://c.com"), now: now)
         _ = state.openTab(url: nil, now: .now)
-        state.tabs.append(Tab(url: url("https://pinned.com"), kind: .pinned))
+        let pinned = state.openTab(url: url("https://pinned.com"), now: now)
+        state.pin(tabID: pinned.id)
+        state.renamePin(pinned.id, to: "Pin")
         state.archive(tabID: b.id, now: .now)
         state.tabs[0].lastViewedAt = now + 1 / 3
 
@@ -128,7 +130,7 @@ import Testing
     }
 
     @Test func unknownTabKindDecodesAsToday() throws {
-        let json = "{\"tabs\":[{\"id\":\"\(UUID())\",\"kind\":\"folder\"},{\"id\":\"\(UUID())\",\"kind\":\"pinned\"}]}"
+        let json = "{\"tabs\":[{\"id\":\"\(UUID())\",\"kind\":\"folder\"},{\"id\":\"\(UUID())\",\"url\":\"https://a.com\",\"kind\":\"pinned\"}]}"
         let state = try CoreJSON.decoder().decode(BrowserState.self, from: Data(json.utf8))
         #expect(state.tabs.map(\.kind) == [.today, .pinned])
     }

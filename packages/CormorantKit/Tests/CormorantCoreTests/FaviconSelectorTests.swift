@@ -208,4 +208,15 @@ import Testing
     func publicHosts(host: String) {
         #expect(!FaviconSelector.isLocal(host: host))
     }
+
+    @Test func sameOriginComparesSchemeHostAndPort() {
+        let page = URL(string: "https://App.Example.com/home")!
+        #expect(FaviconSelector.sameOrigin(URL(string: "https://app.example.com:443/favicon.ico")!, page))
+        #expect(FaviconSelector.sameOrigin(URL(string: "HTTPS://APP.EXAMPLE.COM/x.png")!, page))
+        #expect(!FaviconSelector.sameOrigin(URL(string: "http://app.example.com/favicon.ico")!, page))
+        #expect(!FaviconSelector.sameOrigin(URL(string: "https://app.example.com:8443/favicon.ico")!, page))
+        #expect(!FaviconSelector.sameOrigin(URL(string: "https://cdn.example.com/favicon.ico")!, page))
+        #expect(!FaviconSelector.sameOrigin(URL(string: "data:image/png;base64,AAAA")!, page))
+        #expect(FaviconSelector.sameOrigin(URL(string: "http://127.0.0.1:8080/a")!, URL(string: "http://127.0.0.1:8080/")!))
+    }
 }

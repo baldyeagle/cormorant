@@ -38,11 +38,11 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
     public static var `default`: Space { Space(id: defaultID, name: "Home", createdAt: .distantPast) }
 }
 
-/// Where a tab lives in the sidebar.
+/// Whether a tab is pinned.
 public enum TabKind: String, Hashable, Codable, Sendable {
-    /// Kept until the user removes it.
+    /// Pinned: never archived, and closing it takes it back to its pinned page (see `Pins.swift`).
     case pinned
-    /// Ephemeral; eligible for automatic archiving.
+    /// Any other tab, which archives once idle for its Space's time.
     case today
 
     /// Unknown raw values (written by a newer build) decode as `.today` instead of failing the whole file.
@@ -61,6 +61,12 @@ public struct Tab: Identifiable, Hashable, Codable, Sendable {
     public var kind: TabKind
     public let createdAt: Date
     public var lastViewedAt: Date
+    /// A pinned tab's page: where Close and Back to Pinned Page take it. Nil unless pinned.
+    public var pinnedURL: URL?
+    /// The title of a pinned tab's page, kept up to date while the tab is on it. Nil unless pinned.
+    public var pinnedTitle: String?
+    /// The name Rename gave a pinned tab, shown in place of `pinnedTitle`. Nil unless renamed.
+    public var customTitle: String?
 
     public init(
         id: UUID = UUID(),
@@ -69,7 +75,10 @@ public struct Tab: Identifiable, Hashable, Codable, Sendable {
         title: String = "",
         kind: TabKind = .today,
         createdAt: Date = .now,
-        lastViewedAt: Date? = nil
+        lastViewedAt: Date? = nil,
+        pinnedURL: URL? = nil,
+        pinnedTitle: String? = nil,
+        customTitle: String? = nil
     ) {
         self.id = id
         self.spaceID = spaceID
@@ -78,6 +87,9 @@ public struct Tab: Identifiable, Hashable, Codable, Sendable {
         self.kind = kind
         self.createdAt = createdAt
         self.lastViewedAt = lastViewedAt ?? createdAt
+        self.pinnedURL = pinnedURL
+        self.pinnedTitle = pinnedTitle
+        self.customTitle = customTitle
     }
 
     /// Title to show in lists: the page title, else the host, else a placeholder.
@@ -152,7 +164,10 @@ extension Tab {
             title: try container.decodeIfPresent(String.self, forKey: .title) ?? "",
             kind: try container.decodeIfPresent(TabKind.self, forKey: .kind) ?? .today,
             createdAt: createdAt,
-            lastViewedAt: try container.decodeIfPresent(Date.self, forKey: .lastViewedAt) ?? createdAt
+            lastViewedAt: try container.decodeIfPresent(Date.self, forKey: .lastViewedAt) ?? createdAt,
+            pinnedURL: try container.decodeIfPresent(URL.self, forKey: .pinnedURL),
+            pinnedTitle: try container.decodeIfPresent(String.self, forKey: .pinnedTitle),
+            customTitle: try container.decodeIfPresent(String.self, forKey: .customTitle)
         )
     }
 }

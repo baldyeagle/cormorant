@@ -68,6 +68,7 @@ extension BrowserStore {
         guard hasSpacesToMoveBetween, let tab = state.tab(tabID), !tab.isIncognito,
               let destination = state.space(spaceID), !destination.isIncognito else { return }
         let from = tab.spaceID, wasActive = state.activeTabID == tabID, viewedAt = tab.lastViewedAt
+        let pinnedBefore = state.pinAfter(tabID)
         let left = state.activeSpace
         guard applyMove(of: tabID, { $0.moveTabAndFollow(tabID, toSpace: spaceID) }) != nil else { return }
         let back = left.id == spaceID ? nil : Toast.Action("Back to \(left.name)", space: left) { [weak self] in
@@ -78,7 +79,7 @@ extension BrowserStore {
             Toast.Action("Undo") { [weak self] in
                 self?.applyMove(of: tabID) {
                     $0.moveTabBack(tabID, toSpace: from, wasActive: wasActive, lastViewedAt: viewedAt,
-                                   returningTo: left.id)
+                                   returningTo: left.id, pinnedBefore: pinnedBefore)
                 }
             },
         ]))

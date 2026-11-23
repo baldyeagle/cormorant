@@ -5,7 +5,8 @@ import Network
 /// app and the test runner share the simulator's loopback), its in-process tests, and any platform's.
 /// Every path gets the same page, except those in `files` (a download's body and headers); `delays`
 /// holds back the first request for some, `holds` every request for some until the test calls
-/// `release(_:)`.
+/// `release(_:)`. With `signIn`, it stands in for a site behind a sign-in (Cloudflare Access, say):
+/// every request but `/login`'s without that cookie is sent to `/login`.
 /// Counts requests by path, so a test can tell a page that was loaded again from one that wasn't.
 public final class FixtureServer {
     public struct StartFailed: Error {}
@@ -34,9 +35,12 @@ public final class FixtureServer {
     ///   a slow simulator takes to pick a menu item, without the tab's own load waiting too.
     /// - Parameter holds: paths whose requests go unanswered until `release(_:)` is called for them.
     /// - Parameter files: paths answered with a file instead of the page.
-    public init(html: String, delays: [String: Double] = [:], holds: Set<String> = [], files: [String: File] = [:]) throws {
+    /// - Parameter signIn: a cookie (`session=ok`) a request must carry, or be redirected to `/login`.
+    public init(html: String, delays: [String: Double] = [:], holds: Set<String> = [], files: [String: File] = [:],
+                signIn: String? = nil) throws {
         let page = Self.response(File(contentType: "text/html; charset=utf-8", body: Data(html.utf8)))
         let fileResponses = files.mapValues(Self.response)
+        let toLogin = Data("HTTP/1.1 302 Found\r\nLocation: /login\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
 
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
@@ -50,7 +54,10 @@ public final class FixtureServer {
             connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, _, _ in
                 let path = data.flatMap(Self.path(of:))
                 let nth = path.map { counts.add($0) }
-                let response = path.flatMap { fileResponses[$0] } ?? page
+                let signedOut = signIn.map { cookie in
+                    path != "/login" && !(data.map { Self.cookies(in: $0).contains(cookie) } ?? false)
+                } ?? false
+                let response = signedOut ? toLogin : path.flatMap { fileResponses[$0] } ?? page
                 let send: @Sendable () -> Void = {
                     connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
                 }
@@ -103,6 +110,14 @@ public final class FixtureServer {
             "Connection: close",
         ] + file.headers.map { "\($0.key): \($0.value)" }
         return Data((lines.joined(separator: "\r\n") + "\r\n\r\n").utf8) + file.body
+    }
+
+    /// The request's cookies, `name=value` each.
+    private static func cookies(in request: Data) -> [String] {
+        String(decoding: request, as: UTF8.self).split(separator: "\r\n")
+            .filter { $0.lowercased().hasPrefix("cookie:") }
+            .flatMap { $0.dropFirst("cookie:".count).split(separator: ";") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     /// `GET /next HTTP/1.1` → `/next`.

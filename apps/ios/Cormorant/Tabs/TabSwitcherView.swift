@@ -2,7 +2,8 @@ import CormorantCore
 import OSLog
 import SwiftUI
 
-/// Full-screen card stack of the active Space's tabs. The most recently viewed card sits on top.
+/// Full-screen card stack of the active Space's tabs, under a row of its pinned tabs (`PinnedRow`).
+/// The most recently viewed card sits on top.
 struct TabSwitcherView: View {
     @Environment(BrowserStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -26,6 +27,16 @@ struct TabSwitcherView: View {
 
     var body: some View {
         NavigationStack {
+          VStack(spacing: 0) {
+            if !store.pinnedTabs.isEmpty {
+                PinnedRow(pins: store.pinnedTabs, accent: store.shownSpace?.color.color ?? .accentColor,
+                          onOpen: { tab, frame in open(tab, from: frame, tilt: 0) },
+                          onMove: { tab, spaceID in move(tab, to: spaceID) },
+                          onClose: { close($0) })
+                    // Another Space's pins replace these whole, as its cards do.
+                    .id(store.state.activeSpaceID)
+                    .transition(.opacity)
+            }
             GeometryReader { geometry in
                 let cardSize = Self.cardSize(in: geometry.size)
                 let step = cardSize.width * (1 - Self.overlap)
@@ -54,8 +65,7 @@ struct TabSwitcherView: View {
                                 onClose: { close(tab) }
                             )
                             // Before the fan's tilt, so the menu's preview is the card as it is.
-                            .modifier(CardMenu(tab: tab, isEnabled: store.hasSpacesToSwitch,
-                                               onMove: { move(tab, to: $0) }, onClose: { close(tab) }))
+                            .modifier(CardMenu(tab: tab, onMove: { move(tab, to: $0) }, onClose: { close(tab) }))
                             .visualEffect { content, proxy in
                                 // Steps from the center, fractional while scrolling.
                                 let offset = fans ? (proxy.frame(in: .scrollView).midX - viewportMidX) / step : 0
@@ -81,6 +91,7 @@ struct TabSwitcherView: View {
                 .id(store.state.activeSpaceID)
                 .transition(.opacity)
             }
+          }
             // As switching Spaces here does, for a toast's Undo or Back, which switch from the store.
             .animation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.25), value: store.state.activeSpaceID)
             // Above the bottom bar: a card moved to another Space says so, with Undo and Back.
@@ -174,10 +185,10 @@ struct TabSwitcherView: View {
         }
     }
 
-    /// Oldest first so the newest is last: frontmost and scrolled into view. Held in place while a card
-    /// opens, since activating it makes it the newest.
+    /// The Space's tabs but its pinned ones, oldest first so the newest is last: frontmost and scrolled
+    /// into view. Held in place while a card opens, since activating it makes it the newest.
     private var stack: [CormorantCore.Tab] {
-        let tabs = Array(store.tabs.reversed())
+        let tabs = Array(store.unpinnedTabs.reversed())
         guard let order = opening?.order else { return tabs }
         return tabs.sorted { (order[$0.id] ?? .max) < (order[$1.id] ?? .max) }
     }
@@ -365,33 +376,34 @@ private struct BarButton: View {
     }
 }
 
-/// A card's long-press menu, with more than one Space: Move to Space, and Close Tab. With only Home
-/// a card has no menu, as before Spaces. VoiceOver gets each move as an action of its own.
+/// A card's long-press menu: Pin Tab (not in Incognito), Move to Space (with more than one Space),
+/// and Close Tab. VoiceOver gets Pin and each move as actions of their own.
 private struct CardMenu: ViewModifier {
     @Environment(BrowserStore.self) private var store
     let tab: CormorantCore.Tab
-    let isEnabled: Bool
     let onMove: (UUID) -> Void
     let onClose: () -> Void
 
     func body(content: Content) -> some View {
-        if isEnabled {
-            content
-                .contextMenu {
-                    // Not for an Incognito tab, or with only Home and Incognito.
-                    if !store.moveDestinations(for: tab.id).isEmpty {
-                        MoveToSpaceMenu(tabID: tab.id, onMove: onMove)
-                    }
-                    Button("Close Tab", systemImage: "xmark", role: .destructive, action: onClose)
+        content
+            .contextMenu {
+                if store.canPin(tab.id) {
+                    Button("Pin Tab", systemImage: "pin") { store.pin(tab.id) }
                 }
-                .accessibilityActions {
-                    ForEach(store.moveDestinations(for: tab.id).filter { !$0.isCurrent }) { destination in
-                        Button("Move to \(destination.space.name)") { onMove(destination.space.id) }
-                    }
+                // Not for an Incognito tab, or with only Home and Incognito.
+                if !store.moveDestinations(for: tab.id).isEmpty {
+                    MoveToSpaceMenu(tabID: tab.id, onMove: onMove)
                 }
-        } else {
-            content
-        }
+                Button("Close Tab", systemImage: "xmark", role: .destructive, action: onClose)
+            }
+            .accessibilityActions {
+                if store.canPin(tab.id) {
+                    Button("Pin Tab") { store.pin(tab.id) }
+                }
+                ForEach(store.moveDestinations(for: tab.id).filter { !$0.isCurrent }) { destination in
+                    Button("Move to \(destination.space.name)") { onMove(destination.space.id) }
+                }
+            }
     }
 }
 

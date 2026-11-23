@@ -67,7 +67,7 @@ public struct AddressSuggestions: Equatable, Sendable {
                 limits: Limits = .standard) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
-        self.openTabs = Array(openTabs.filter { Self.matches(text, title: $0.displayTitle, url: $0.url) }
+        self.openTabs = Array(openTabs.filter { Self.matches(text, title: $0.searchTitle, url: $0.url) }
             .prefix(limits.openTabs))
         let openKeys = Set(openTabs.compactMap { $0.url.flatMap(BrowsingHistory.key(for:)) })
 
@@ -130,7 +130,7 @@ public struct TabSearch: Equatable, Sendable {
             self.tabs = all
             return
         }
-        let matching = all.filter { AddressSuggestions.matches(query, title: $0.displayTitle, url: $0.url) }
+        let matching = all.filter { AddressSuggestions.matches(query, title: $0.searchTitle, url: $0.url) }
         header = "\(count) · \(matching.count == 1 ? "1 match" : "\(matching.count) matches")"
         self.tabs = matching
     }

@@ -6,7 +6,12 @@ extension BrowserStore {
     /// The page runs up under the status bar, as in Safari: WebKit carries a fixed header's color up
     /// behind the clock, and the scroll view's soft edge effect keeps the clock legible over content.
     /// With the setting off, the page stops below the status bar, which sits on the default strip.
-    var pageRunsUnderStatusBar: Bool { settings.pageUnderStatusBar }
+    /// Never in Incognito, whose tabs show their black strip and label there instead.
+    var pageRunsUnderStatusBar: Bool { settings.pageUnderStatusBar && !showsIncognitoStrip }
+
+    /// The tab on screen is in Incognito: black behind the status bar, "Incognito" under it, whatever
+    /// the page's color.
+    var showsIncognitoStrip: Bool { activeTab?.isIncognito == true }
 
     /// What's behind the status bar for the tab on screen: its page's background, nil for the default
     /// chrome. Also nil with the setting off, away from a page (the empty state, a load error), which
@@ -14,6 +19,9 @@ extension BrowserStore {
     /// WebKit's placeholder), and while the page's color is from the other appearance (it was just
     /// switched): until it's re-read, the system's own style is the better guess.
     func statusBarTint(in colorScheme: ColorScheme) -> ChromeTint? {
+        if showsIncognitoStrip, let black = RGBColor(.incognitoBackground, in: .current) {
+            return ChromeTint(background: black)
+        }
         let style: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
         guard settings.pageUnderStatusBar, activeTab?.url != nil,
               let session = activeSession, session.loadError == nil, !session.isAwaitingFirstPaint,

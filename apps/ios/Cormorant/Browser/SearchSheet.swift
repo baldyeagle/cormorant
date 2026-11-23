@@ -17,6 +17,7 @@ import SwiftUI
 struct SearchSheet: View {
     @Environment(BrowserStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
     let url: URL?
     var isFocused: FocusState<Bool>.Binding
     /// VoiceOver's cursor, moved to the field when the Edit row fills it (the row itself goes away).
@@ -76,6 +77,7 @@ struct SearchSheet: View {
         let profileID: UUID
         let engine: SearchEngine
         let asksEngine: Bool
+        let isPrivate: Bool
     }
 
     var body: some View {
@@ -110,12 +112,17 @@ struct SearchSheet: View {
         }
         .task(id: LookupKey(query: isTabSearch ? nil : query, profileID: store.activeProfileID,
                             engine: store.settings.searchEngine,
-                            asksEngine: store.settings.searchSuggestions)) {
+                            asksEngine: store.settings.searchSuggestions,
+                            isPrivate: store.searchesPrivately)) {
             await lookUp()
         }
     }
 
     private var isTabSearch: Bool { store.isSearchingTabs }
+    /// Incognito: the panel goes dark and keeps to what's typed (`BrowserStore.searchesPrivately`).
+    private var isPrivate: Bool { store.searchesPrivately }
+    /// The Incognito button shows while composing a new tab, not while editing this tab's address.
+    private var offersIncognito: Bool { (store.isComposingNewTab || store.activeSession == nil) && !isTabSearch }
 
     // MARK: Chrome
 
@@ -144,9 +151,12 @@ struct SearchSheet: View {
         .padding(.bottom, 8)
         .frame(height: panelHeight(hasRows: !shown.isEmpty), alignment: .top)
         .frame(maxWidth: 640)
-        // Tinted toward the background so titles stay legible over busy pages.
-        .glassEffect(.regular.tint(Color(.systemBackground).opacity(0.4)),
+        // Incognito is dark in light mode too, its keyboard with it.
+        .environment(\.colorScheme, isPrivate ? .dark : colorScheme)
+        // Tinted toward the background so titles stay legible over busy pages; nearly black in Incognito.
+        .glassEffect(.regular.tint(isPrivate ? Color.incognitoBackground.opacity(0.92) : Color(.systemBackground).opacity(0.4)),
                      in: .rect(cornerRadius: 30, style: .continuous))
+        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: isPrivate)
         .padding(.horizontal, 8)
         .padding(.bottom, 8)
         .accessibilityAction(.escape) { onDismiss() }
@@ -242,11 +252,41 @@ struct SearchSheet: View {
                 .frame(minWidth: 32, minHeight: 32)
                 .contentShape(.rect)
             }
+            if offersIncognito { incognitoButton }
         }
         .padding(.leading, 16)
         .padding(.trailing, 10)
         .frame(minHeight: fieldHeight)
         .background(.fill.tertiary, in: .capsule)
+    }
+
+    /// Opens the tab being composed in Incognito, or not: the sunglasses filled and "Incognito" beside
+    /// them when on, outlined when off.
+    private var incognitoButton: some View {
+        Button {
+            store.setComposesIncognito(!store.composesIncognito)
+            isFocused.wrappedValue = true
+        } label: {
+            HStack(spacing: 6) {
+                if store.composesIncognito {
+                    Text("Incognito")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+                IncognitoGlyph(icon: store.settings.incognitoIcon, isOn: store.composesIncognito)
+                    .frame(width: iconSide * 1.4)
+                    .foregroundStyle(store.composesIncognito ? .primary : .secondary)
+            }
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Incognito")
+        .accessibilityValue(store.composesIncognito ? "On" : "Off")
+        .accessibilityHint(store.composesIncognito ? "Opens this tab as usual" : "Opens this tab in Incognito")
+        .accessibilityAddTraits(store.composesIncognito ? .isSelected : [])
+        .accessibilityIdentifier("IncognitoToggle")
     }
 
     /// Says the field searches open tabs only; tapping it searches everything again.
@@ -283,9 +323,13 @@ struct SearchSheet: View {
         var pages: [HistoryEntry] = []
         var closed: [ArchivedTab] = []
         var searches: [SearchSuggestion] = []
+        /// Incognito before anything is typed: says what it keeps (nothing).
+        var incognitoNote = false
 
         /// Nothing to list. Search Tabs always has its line, "0 matches" included.
-        var isEmpty: Bool { tabsHeader.isEmpty && openTabs.isEmpty && pages.isEmpty && closed.isEmpty && searches.isEmpty }
+        var isEmpty: Bool {
+            tabsHeader.isEmpty && openTabs.isEmpty && pages.isEmpty && closed.isEmpty && searches.isEmpty && !incognitoNote
+        }
     }
 
     @ViewBuilder
@@ -304,6 +348,7 @@ struct SearchSheet: View {
     /// the Switch pill, the time since closing and the search icon tell them apart.
     private func rows(_ shown: Shown) -> some View {
         VStack(spacing: 8) {
+            if shown.incognitoNote { incognitoNote }
             if isTabSearch {
                 SectionHeader(title: shown.tabsHeader)
             }
@@ -325,12 +370,34 @@ struct SearchSheet: View {
 
     private var shown: Shown { Self.shown(for: query, lookup: lookup, in: store) }
 
+    private var incognitoNote: some View {
+        VStack(spacing: 6) {
+            Text("You’re browsing Incognito")
+                .font(.headline)
+            Text("Pages and searches aren’t kept. Sign-ins and site data end when the last Incognito tab closes.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 16)
+        .padding(.top, 28)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("IncognitoNote")
+    }
+
     /// What the panel lists for `query` (the typed text; nil for none), with `lookup` the latest
     /// history and engine results.
     static func shown(for query: String?, lookup: Lookup, in store: BrowserStore) -> Shown {
         if store.isSearchingTabs {
             let search = TabSearch(tabs: store.tabs, query: query)
             return Shown(tabsHeader: search.header, openTabs: search.tabs)
+        }
+        // Only the typed text, searched for: no history, tabs or suggestions.
+        if store.searchesPrivately {
+            guard let query else { return Shown(incognitoNote: true) }
+            return Shown(searches: AddressSuggestions(text: query, engine: store.settings.searchEngine, openTabs: [], archived: [],
+                                                 pages: [], pastSearches: [], engineSuggestions: []).searches)
         }
         let candidates = AddressSuggestions.openTabCandidates(store.tabs, activeTabID: store.state.activeTabID,
                                                               composingNewTab: store.isComposingNewTab)
@@ -496,7 +563,7 @@ struct SearchSheet: View {
     /// History matches at once, then (for a search, not an address) the engine's suggestions after
     /// a pause. Cancelled by the next key.
     private func lookUp() async {
-        guard !isTabSearch, let query else {
+        guard !isTabSearch, !store.searchesPrivately, let query else {
             lookup = Lookup()
             return
         }
@@ -555,7 +622,7 @@ struct SearchSheet: View {
         }
         // Typing over a completion or the address replaces a selection, so the caret is at the end by
         // definition (and the selection binding may still hold the old range).
-        guard !isDeletion, !isTabSearch, new != initialText, new.allSatisfy(\.isASCII),
+        guard !isDeletion, !isTabSearch, !store.searchesPrivately, new != initialText, new.allSatisfy(\.isASCII),
               previous != nil || replacesAddress || caretIsAtEnd(of: new),
               let found = InlineCompletion(completing: new, from: completionHosts) else { return }
         apply(found)

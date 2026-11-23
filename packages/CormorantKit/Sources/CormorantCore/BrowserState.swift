@@ -21,8 +21,16 @@ public struct BrowserState: Codable, Sendable, Equatable {
     /// an existing Space.
     public internal(set) var tabs: [Tab]
     public internal(set) var archived: [ArchivedTab]
-    /// Never an archived Space. Change with `switchToSpace` (or `activate`, `restore`).
-    public internal(set) var activeSpaceID: UUID
+    /// Never an archived Space. Change with `switchToSpace` (or `activate`, `restore`). Incognito
+    /// (`Space.incognitoID`) only while it has tabs.
+    public internal(set) var activeSpaceID: UUID {
+        didSet {
+            if activeSpaceID == Space.incognitoID, oldValue != Space.incognitoID { spaceBeforeIncognito = oldValue }
+        }
+    }
+    /// The Space that was active when Incognito became the active one, which closing its last tab
+    /// goes back to (`spaceOutsideIncognito`). Never saved.
+    public internal(set) var spaceBeforeIncognito: UUID?
     /// A tab in the active Space, or nil.
     public internal(set) var activeTabID: UUID?
     /// Profiles `deleteProfile` removed whose website data store and history the app hasn't erased yet
@@ -62,20 +70,24 @@ public struct BrowserState: Codable, Sendable, Equatable {
         activeSpaceID = try container.decodeIfPresent(UUID.self, forKey: .activeSpaceID) ?? Space.defaultID
         activeTabID = try container.decodeIfPresent(UUID.self, forKey: .activeTabID)
         profilesToErase = try container.decodeIfPresent([UUID].self, forKey: .profilesToErase) ?? []
+        // Never written (`encode` saves `persisted`), and never read back.
+        tabs.removeAll(where: \.isIncognito)
         normalize()
     }
 
     /// Always writes `currentSchemaVersion`: the encoded shape is this build's, whatever was read.
+    /// Writes `persisted`: nothing of Incognito.
     public func encode(to encoder: any Encoder) throws {
+        let state = persisted
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
-        try container.encode(spaces, forKey: .spaces)
-        try container.encode(profiles, forKey: .profiles)
-        try container.encode(tabs, forKey: .tabs)
-        try container.encode(archived, forKey: .archived)
-        try container.encode(activeSpaceID, forKey: .activeSpaceID)
-        try container.encodeIfPresent(activeTabID, forKey: .activeTabID)
-        if !profilesToErase.isEmpty { try container.encode(profilesToErase, forKey: .profilesToErase) }
+        try container.encode(state.spaces, forKey: .spaces)
+        try container.encode(state.profiles, forKey: .profiles)
+        try container.encode(state.tabs, forKey: .tabs)
+        try container.encode(state.archived, forKey: .archived)
+        try container.encode(state.activeSpaceID, forKey: .activeSpaceID)
+        try container.encodeIfPresent(state.activeTabID, forKey: .activeTabID)
+        if !state.profilesToErase.isEmpty { try container.encode(state.profilesToErase, forKey: .profilesToErase) }
     }
 
     public static let empty = BrowserState()
@@ -257,9 +269,13 @@ extension BrowserState {
     ///
     /// The tab goes in `spaceID` (a tab opened by another tab's page belongs with its opener, whatever
     /// Space is showing), or the active Space when that's nil, unknown or archived. A tab opened outside
-    /// the active Space never becomes active.
+    /// the active Space never becomes active. Incognito, named or active, opens it there
+    /// (`openIncognitoTab`), active only if Incognito is the active Space.
     public mutating func openTab(url: URL?, title: String = "", inSpace spaceID: UUID? = nil,
                                  activate: Bool = true, now: Date = .now) -> Tab {
+        if (spaceID ?? activeSpaceID) == Space.incognitoID {
+            return openIncognitoTab(url: url, title: title, activate: activate && activeSpaceID == Space.incognitoID, now: now)
+        }
         var target = activeSpaceID
         if let spaceID, space(spaceID)?.isArchived == false { target = spaceID }
         let tab = Tab(spaceID: target, url: url, title: title, kind: .today, createdAt: now)
@@ -282,11 +298,16 @@ extension BrowserState {
     ///
     /// If the archived tab was active, `tabAfterArchiving(_:)` becomes active (or nil if there is
     /// none). Archiving a background tab leaves the active tab alone.
+    ///
+    /// An Incognito tab is deleted, not archived. Its last one going ends Incognito: when it was the
+    /// active Space, the one before it is active again (`spaceOutsideIncognito`).
     public mutating func archive(tabID: UUID, now: Date = .now) {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
         if activeTabID == tabID { activeTabID = tabAfterArchiving(tabID) }
         let tab = tabs.remove(at: index)
-        if let entry = ArchivedTab(archiving: tab, at: now) {
+        if tab.isIncognito {
+            leaveIncognitoIfEmpty()
+        } else if let entry = ArchivedTab(archiving: tab, at: now) {
             archived.append(entry)
             trimArchive()
         }
@@ -318,12 +339,14 @@ extension BrowserState {
     /// Reopens an archived tab as a Today tab and makes it active.
     ///
     /// The tab returns to its original Space if that Space still exists and isn't archived (switching
-    /// to it), otherwise it opens in the active Space.
+    /// to it), otherwise it opens in the active Space (in Incognito, the Space Incognito goes back to:
+    /// an archived tab is never restored into it).
     @discardableResult
     public mutating func restore(archivedID: UUID, now: Date = .now) -> Tab? {
         guard let index = archived.firstIndex(where: { $0.id == archivedID }) else { return nil }
         let entry = archived.remove(at: index)
-        let spaceID = space(entry.spaceID)?.isArchived == false ? entry.spaceID : activeSpaceID
+        let spaceID = entry.spaceID != Space.incognitoID && space(entry.spaceID)?.isArchived == false
+            ? entry.spaceID : spaceOutsideIncognito
         let tab = Tab(spaceID: spaceID, url: entry.url, title: entry.title, kind: .today, createdAt: now)
         tabs.append(tab)
         if spaceID != activeSpaceID, let activeTabID { markViewed(tabID: activeTabID, now: now) }

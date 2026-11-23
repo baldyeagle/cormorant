@@ -103,7 +103,7 @@ struct ActionsSheet: View {
 
     private func pageGroup(session: TabSession) -> some View {
         RowGroup {
-            if let space = store.shownSpace {
+            if let space = store.shownSpace, !store.moveDestinations(for: session.tabID).isEmpty {
                 Button {
                     moveRequest = MoveRequest(tabID: session.tabID)
                 } label: {
@@ -144,6 +144,8 @@ struct ActionsSheet: View {
                 let site = Self.displayHost(host)
                 if store.blocking.preferences.isEnabled {
                     let isBlocking = store.blocking.isBlocking(host: host)
+                    // A site's choice is saved, so it isn't made from Incognito.
+                    let isIncognito = session?.isIncognito == true
                     Toggle(isOn: Binding(
                         get: { store.blocking.isBlocking(host: host) },
                         set: { new in
@@ -155,13 +157,16 @@ struct ActionsSheet: View {
                     )) {
                         ActionRow(
                             title: "Block ads & trackers",
-                            subtitle: isBlocking
+                            subtitle: isIncognito
+                                ? Text("Can’t be changed in Incognito: it would be saved.")
+                                : isBlocking
                                 ? Text("Page looks broken? Turn blockers off for \(Text(site).bold())")
                                 : Text("Off for \(Text(site).bold()). Other sites are still blocked."),
                             systemImage: "shield.lefthalf.filled"
                         )
                         .padding(.trailing, -16)
                     }
+                    .disabled(isIncognito)
                     .padding(.trailing, 16)
                 } else {
                     ActionRow(title: "Blockers are off", subtitle: Text("Turn them on in Settings."), systemImage: "shield.slash")

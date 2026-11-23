@@ -23,7 +23,7 @@ extension BrowserState {
     /// the Focus filter names `focusSpace` (nil: no Focus with the filter is on). Nil where Edit Space
     /// has none: only one Space, or the Space archived or gone.
     public func focusFilterGroup(editing spaceID: UUID, named name: String, focusSpace: UUID?) -> FocusFilterGroup? {
-        guard hasSpacesToSwitch, let saved = space(spaceID), !saved.isArchived else { return nil }
+        guard switchableSpaces.count > 1, let saved = space(spaceID), !saved.isArchived, !saved.isIncognito else { return nil }
         return focusSpace == spaceID
             ? FocusFilterGroup(isOn: true, status: "On now: links from other apps open in \(name)",
                                footer: "When the Focus ends, links open in the last Space you used.")

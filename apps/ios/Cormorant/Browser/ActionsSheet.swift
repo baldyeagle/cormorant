@@ -4,8 +4,8 @@ import SwiftUI
 import UIKit
 import WebKit
 
-/// The caret sheet: back/forward, the host (tap to search), copy and reload, Find on Page and
-/// Share, Move to Space (with more than one Space), page zoom, desktop site, per-site blockers, and
+/// The caret sheet: back/forward, the host (tap to search), copy and reload, Find on Page, Pin and
+/// Share, Back to Pinned Page (a pinned tab away from it), Move to Space (with more than one Space), page zoom, desktop site, per-site blockers, and
 /// Settings.
 ///
 /// The presenter must call `session.runPendingAction()` from the sheet's `onDismiss`: Find on
@@ -80,6 +80,16 @@ struct ActionsSheet: View {
             } label: {
                 TileLabel(title: "Find on Page", systemImage: "doc.text.magnifyingglass")
             }
+            // Not in Incognito: a pin is saved.
+            if let tab = store.state.tab(session.tabID), !tab.isIncognito {
+                Button {
+                    if tab.isPinned { store.unpin(tab.id) } else { store.pin(tab.id) }
+                    dismiss()
+                } label: {
+                    TileLabel(title: tab.isPinned ? "Unpin" : "Pin", systemImage: tab.isPinned ? "pin.slash" : "pin")
+                }
+                .accessibilityIdentifier("PinTile")
+            }
             if let file = session.shownFile {
                 // The file itself, as Safari and Arc share a PDF: Save to Files, Markup, Print. Already
                 // here, its sheet opens over this one, as a link's does; still to come, this one closes
@@ -103,6 +113,19 @@ struct ActionsSheet: View {
 
     private func pageGroup(session: TabSession) -> some View {
         RowGroup {
+            // A pinned tab that has left its page: back there, as a page load (Back returns).
+            if let tab = store.state.tab(session.tabID), tab.isAwayFromPin, let pinnedURL = tab.pinnedURL {
+                Button {
+                    store.backToPinnedPage(tab.id)
+                    dismiss()
+                } label: {
+                    ActionRow(title: "Back to Pinned Page", subtitle: Text(pinnedURL.displayHost),
+                              systemImage: "arrow.uturn.backward") { EmptyView() }
+                }
+                .buttonStyle(RowButtonStyle())
+                .accessibilityIdentifier("BackToPinnedPageRow")
+                RowDivider()
+            }
             if let space = store.shownSpace, !store.moveDestinations(for: session.tabID).isEmpty {
                 Button {
                     moveRequest = MoveRequest(tabID: session.tabID)
@@ -277,7 +300,8 @@ private struct NavigationRow: View {
             dismiss()
         }
         .disabled(!session.canGoBack && session.isRestoringHistory)
-        .accessibilityHint(closesTab ? "Closes this tab" : "")
+        .accessibilityHint(!closesTab ? "" : store.activeTab?.isPinned == true
+                           ? "Takes this pinned tab back to its page and shows the next tab" : "Closes this tab")
     }
 
     private var forward: some View {

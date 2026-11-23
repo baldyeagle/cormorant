@@ -7,7 +7,8 @@ public struct BrowserState: Codable, Sendable, Equatable {
     /// 2: profiles, and Space icon / color / profile / archive policy / archived date.
     /// 3: the archive time a Space gets back when Archive Idle Tabs is turned on (`archivePolicyBeforeOff`).
     /// 4: deleted profiles whose website data is still to be erased (`profilesToErase`).
-    public static let currentSchemaVersion = 4
+    /// 5: pinned tabs' page and names (`Tab.pinnedURL`, `pinnedTitle`, `customTitle`).
+    public static let currentSchemaVersion = 5
 
     /// Schema version this value was decoded from (or `currentSchemaVersion` for new values), for
     /// migrations. Encoding always writes `currentSchemaVersion`.
@@ -92,7 +93,7 @@ public struct BrowserState: Codable, Sendable, Equatable {
 
     public static let empty = BrowserState()
 
-    /// Tabs in the active Space, most recently viewed first.
+    /// Tabs in the active Space, pinned ones too, most recently viewed first.
     public var activeSpaceTabs: [Tab] { tabs(inSpace: activeSpaceID) }
 
     /// Archived tabs grouped by calendar day of archiving, newest day first.
@@ -380,10 +381,17 @@ extension BrowserState {
     }
 
     /// Sets whichever of `url` and `title` is non-nil. No-op for unknown IDs.
+    /// A pinned tab on its pinned page takes the page's title as its pin's (see `Tab.pinnedTitle`), but
+    /// not in a call that also moves it there: as a navigation starts, the web view has the new address
+    /// and still the old page's title.
     public mutating func update(tabID: UUID, url: URL?, title: String?) {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        let moved = url != nil && url != tabs[index].url
         if let url { tabs[index].url = url }
         if let title { tabs[index].title = title }
+        if !moved, let title, !title.isEmpty, tabs[index].isPinned, !tabs[index].isAwayFromPin {
+            tabs[index].pinnedTitle = title
+        }
     }
 
     /// Drops the oldest archived entries beyond `archiveCapacity`, preserving the order of the rest.

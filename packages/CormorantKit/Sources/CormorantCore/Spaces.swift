@@ -164,6 +164,7 @@ extension BrowserState {
         for index in tabs.indices where !spaceIDs.contains(tabs[index].spaceID) {
             tabs[index].spaceID = Space.defaultID
         }
+        normalizePins()
         if let activeTabID, !tabs.contains(where: { $0.id == activeTabID }) {
             self.activeTabID = nil
         }
@@ -306,6 +307,8 @@ extension BrowserState {
         if activeTabID == tabID { activeTabID = tabAfterArchiving(tabID) }
         tabs[index].spaceID = spaceID
         tabs[index].lastViewedAt = now
+        // A pinned tab goes last among the destination's pins (pin order is `tabs` order).
+        if tabs[index].isPinned { tabs.append(tabs.remove(at: index)) }
         if spaceID == activeSpaceID, activeTabID == nil { activeTabID = tabID }
         return profile(forSpace: from).id != profile(forSpace: spaceID).id
     }

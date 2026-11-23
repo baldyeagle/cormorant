@@ -34,11 +34,14 @@ extension BrowserState {
     /// again (this one, if it was). That needn't be the tab's own Space: a tab can be moved from a
     /// Space you aren't in. Otherwise as `moveTab`, including its return value: nil when nothing moved
     /// (the tab closed, the Space archived or deleted meanwhile, or the tab already back).
+    /// A pin goes back before `pinnedBefore`, the pin it was before (`pinAfter` as it left); last with nil.
     @discardableResult
     public mutating func moveTabBack(_ tabID: UUID, toSpace spaceID: UUID, wasActive: Bool,
-                                     lastViewedAt: Date? = nil, returningTo: UUID? = nil, now: Date = .now) -> Bool? {
+                                     lastViewedAt: Date? = nil, returningTo: UUID? = nil, pinnedBefore: UUID? = nil,
+                                     now: Date = .now) -> Bool? {
         let leaving = tab(tabID)?.spaceID
         guard let changesProfile = moveTab(tabID, toSpace: spaceID, now: now) else { return nil }
+        if let pinnedBefore { movePin(tabID, before: pinnedBefore) }
         let returnSpace = activeSpaceID == leaving ? returningTo : nil
         if !wasActive || (spaceID != activeSpaceID && returnSpace != spaceID), let lastViewedAt, activeTabID != tabID,
            let index = tabs.firstIndex(where: { $0.id == tabID }) {

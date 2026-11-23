@@ -319,6 +319,8 @@ struct SearchSheet: View {
     struct Shown {
         /// Search Tabs only: how many tabs, and how many match.
         var tabsHeader = ""
+        /// Composing a new tab, before anything is typed: the Space's pinned tabs, as tiles.
+        var pins: [CormorantCore.Tab] = []
         var openTabs: [CormorantCore.Tab] = []
         var pages: [HistoryEntry] = []
         var closed: [ArchivedTab] = []
@@ -328,7 +330,8 @@ struct SearchSheet: View {
 
         /// Nothing to list. Search Tabs always has its line, "0 matches" included.
         var isEmpty: Bool {
-            tabsHeader.isEmpty && openTabs.isEmpty && pages.isEmpty && closed.isEmpty && searches.isEmpty && !incognitoNote
+            tabsHeader.isEmpty && pins.isEmpty && openTabs.isEmpty && pages.isEmpty && closed.isEmpty && searches.isEmpty
+                && !incognitoNote
         }
     }
 
@@ -349,6 +352,12 @@ struct SearchSheet: View {
     private func rows(_ shown: Shown) -> some View {
         VStack(spacing: 8) {
             if shown.incognitoNote { incognitoNote }
+            if !shown.pins.isEmpty {
+                PinGrid(pins: shown.pins) { tab in
+                    if tab.id == store.state.activeTabID { store.cancelComposing() } else { store.activate(tab.id) }
+                    onDismiss()
+                }
+            }
             if isTabSearch {
                 SectionHeader(title: shown.tabsHeader)
             }
@@ -405,7 +414,10 @@ struct SearchSheet: View {
         guard let query else {
             // Most recently closed first.
             let recentlyClosed = closed.sorted { $0.archivedAt > $1.archivedAt }
-            return Shown(openTabs: Array(candidates.prefix(Self.rowLimit)),
+            // A new tab's panel starts with the Space's pins, which then aren't listed again as open tabs.
+            let pins = store.isComposingNewTab || store.activeTab == nil ? store.pinnedTabs : []
+            let openTabs = pins.isEmpty ? candidates : candidates.filter { !$0.isPinned }
+            return Shown(pins: pins, openTabs: Array(openTabs.prefix(Self.rowLimit)),
                          closed: Array(recentlyClosed.prefix(Self.rowLimit)))
         }
         // Until this query's own results arrive, the last ones that still fit it stand in, so rows

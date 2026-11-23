@@ -277,7 +277,8 @@ final class BrowserStore {
         stampActiveTab()
         state.runArchive()
         openInboxAndPending()
-        if state.activeTabID == nil, let first = state.activeSpaceTabs.first {
+        // Not a pin: one closed as the Space's last tab stays closed, the search panel up with its tile.
+        if state.activeTabID == nil, let first = state.activeSpaceTabs.first(where: { !$0.isPinned }) {
             state.activate(tabID: first.id)
         }
         stateDidChange()
@@ -419,11 +420,15 @@ final class BrowserStore {
     }
 
     /// Archives the tab (an Incognito one is deleted). Closing the last one leaves the Space empty (no
-    /// active tab); Incognito's last ends Incognito, back in the Space before it.
+    /// active tab); Incognito's last ends Incognito, back in the Space before it. A pinned tab stays
+    /// pinned: it goes back to its pinned page, its web view let go (`BrowserState.close(tabID:)`).
     func close(_ tabID: UUID) {
-        state.archive(tabID: tabID)
+        state.close(tabID: tabID)
         stateDidChange()
     }
+
+    /// The tab's web view, if it has one now. Never builds one.
+    func existingSession(for tabID: UUID) -> TabSession? { sessions[tabID] }
 
     /// The last snapshot of the tab `close(_:)` would land on, to show under the page while it's
     /// swiped away.
@@ -1198,7 +1203,8 @@ final class BrowserStore {
     /// show. After any queued history change, so a cleared site's icon goes with it.
     func forgetFavicons() {
         guard let browsingHistory else {
-            favicons.forgetSites(except: state.persisted.tabs.compactMap(\.url) + state.archived.map(\.url))
+            favicons.forgetSites(except: state.persisted.tabs.flatMap { [$0.url, $0.pinnedURL].compactMap(\.self) }
+                + state.archived.map(\.url))
             return
         }
         let previous = browsingHistoryChain
@@ -1207,7 +1213,9 @@ final class BrowserStore {
             let sites = await browsingHistory.sites()
             // Tabs and archive as they are now, not as they were when this was queued.
             // Not Incognito's: a site cleared from history keeps no icon for being open there.
-            favicons.forgetSites(except: state.persisted.tabs.compactMap(\.url) + state.archived.map(\.url) + sites)
+            // A pin's tile shows its pinned site's icon, wherever the tab is now.
+            favicons.forgetSites(except: state.persisted.tabs.flatMap { [$0.url, $0.pinnedURL].compactMap(\.self) }
+                + state.archived.map(\.url) + sites)
         }
     }
 

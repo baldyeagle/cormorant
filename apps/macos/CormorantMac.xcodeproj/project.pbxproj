@@ -271,6 +271,7 @@
 		0BB6E8AD05049832C7A9B0CE /* Debug configuration for PBXNativeTarget "CormorantMac" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Cormorant/Cormorant.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -310,6 +311,7 @@
 		6FF5BFEEC819F3D8AE924138 /* Release configuration for PBXNativeTarget "CormorantMac" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Cormorant/Cormorant.entitlements;
 				CODE_SIGN_STYLE = Automatic;

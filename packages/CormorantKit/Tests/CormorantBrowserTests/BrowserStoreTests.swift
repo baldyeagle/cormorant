@@ -66,6 +66,28 @@ struct BrowserStoreTests {
         withExtendedLifetime(server) {}
     }
 
+    @Test func reopenClosedTabBringsBackTheLastClosedFirst() async throws {
+        let server = try FixtureServer(html: "<!doctype html><title>Fixture page</title><p>Hello")
+        let (store, _, files) = try Self.makeStore()
+        defer { Self.end(store, files: files) }
+        await store.launch()
+        for path in ["one", "two", "three"] {
+            store.newTab()
+            _ = try await Self.open(server.url.appending(path: path), in: store)
+        }
+        let byPath = Dictionary(uniqueKeysWithValues: store.tabs.compactMap { tab in tab.url.map { ($0.path(), tab.id) } })
+
+        store.close(try #require(byPath["/two"]))
+        store.close(try #require(byPath["/one"]))
+        store.reopenClosedTab()
+        #expect(store.activeTab?.url?.path() == "/one")
+        store.reopenClosedTab()
+        #expect(store.activeTab?.url?.path() == "/two")
+        #expect(store.tabs.compactMap { $0.url?.path() }.sorted() == ["/one", "/three", "/two"])
+        #expect(store.state.archived.isEmpty)
+        withExtendedLifetime(server) {}
+    }
+
     /// The Mac's: a calendar file is a download like any other, for Finder to open.
     @Test func aCalendarFileIsADownloadWhenTheAppHandsNothingOff() async throws {
         let invite = Data("""

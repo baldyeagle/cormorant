@@ -126,6 +126,8 @@ public final class BrowserStore {
     @ObservationIgnored private var stagedLoads: [UUID: Task<Void, Never>] = [:]
     /// Background tabs waiting for a stage slot, oldest first. They have no web view yet.
     @ObservationIgnored private var backgroundQueue: [UUID] = []
+    /// Tabs closed this run, the last closed last: what `reopenClosedTab()` brings back first.
+    @ObservationIgnored private var closedTabIDs: [UUID] = []
     @ObservationIgnored let platform: any BrowserPlatform
     /// Links from other apps waiting for the tabs to load, each with the Space it was sent to, if any.
     @ObservationIgnored private var pendingURLs: [(url: URL, spaceID: UUID?)] = []
@@ -415,8 +417,20 @@ public final class BrowserStore {
     /// active tab); Incognito's last ends Incognito, back in the Space before it. A pinned tab stays
     /// pinned: it goes back to its pinned page, its web view let go (`BrowserState.close(tabID:)`).
     public func close(_ tabID: UUID) {
+        if let tab = state.tab(tabID), !tab.isPinned, !tab.isIncognito, tab.url != nil { closedTabIDs.append(tabID) }
         state.close(tabID: tabID)
         stateDidChange()
+    }
+
+    /// Brings back the tab closed last this run that's still archived, or else the tab archived last,
+    /// on its page (not its back/forward history).
+    public func reopenClosedTab() {
+        guard isLoaded else { return }
+        while let tabID = closedTabIDs.popLast() {
+            // An archived tab keeps its tab's ID.
+            if state.archived.contains(where: { $0.id == tabID }) { return restore(tabID) }
+        }
+        if let newest = state.archived.max(by: { $0.archivedAt < $1.archivedAt }) { restore(newest.id) }
     }
 
     /// The tab's web view, if it has one now. Never builds one.

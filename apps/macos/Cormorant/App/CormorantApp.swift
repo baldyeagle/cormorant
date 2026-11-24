@@ -15,6 +15,7 @@ struct CormorantApp: App {
                 .onOpenURL { delegate.store.handle(openURL: $0) }
         }
         .defaultSize(width: 1280, height: 820)
+        .windowStyle(.hiddenTitleBar)
         .commands { BrowserCommands(store: delegate.store, commands: commands) }
     }
 }
@@ -60,10 +61,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// What the menu bar asks of the window.
+/// What the menu bar and the window share.
 @Observable
 final class WindowCommands {
     var addressFocusRequest = 0
+    /// Keeps a hidden sidebar out while its address field is in use.
+    var isEditingAddress = false
+    var showsSidebar = UserDefaults.standard.object(forKey: "showsSidebar") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showsSidebar, forKey: "showsSidebar") }
+    }
+    var sidebarWidth = UserDefaults.standard.object(forKey: "sidebarWidth") as? Double ?? 264 {
+        didSet { UserDefaults.standard.set(sidebarWidth, forKey: "sidebarWidth") }
+    }
 }
 
 struct BrowserCommands: Commands {
@@ -74,8 +83,17 @@ struct BrowserCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Tab") { store.newTab() }
                 .keyboardShortcut("t")
-            Button("Open Location") { commands.addressFocusRequest += 1 }
-                .keyboardShortcut("l")
+            Button("Reopen Closed Tab") { store.reopenClosedTab() }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+            Button("Open Location") {
+                commands.isEditingAddress = true
+                commands.addressFocusRequest += 1
+            }
+            .keyboardShortcut("l")
+        }
+        CommandGroup(before: .sidebar) {
+            Button(commands.showsSidebar ? "Hide Sidebar" : "Show Sidebar") { commands.showsSidebar.toggle() }
+                .keyboardShortcut("s")
         }
         CommandGroup(replacing: .saveItem) {
             Button("Close Tab") {

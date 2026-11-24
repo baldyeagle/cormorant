@@ -1,3 +1,4 @@
+import CormorantBrowser
 import SwiftUI
 
 /// A site's icon, or its initial on the host's tint until one arrives. Reads the store itself, so an

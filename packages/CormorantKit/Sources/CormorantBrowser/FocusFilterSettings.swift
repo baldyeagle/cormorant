@@ -9,10 +9,10 @@ import Observation
 /// being killed; the system calls the filter again when the Focus ends.
 @MainActor
 @Observable
-final class FocusFilterSettings {
+public final class FocusFilterSettings {
     /// The filter's Space; nil while no Focus with the filter is on. May name a Space since deleted or
     /// archived: `BrowserState.destinationForLink` then falls back to the Space last used.
-    private(set) var spaceID: UUID?
+    public private(set) var spaceID: UUID?
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let systemFilterSpace: (@MainActor () async -> UUID??)?
@@ -23,13 +23,13 @@ final class FocusFilterSettings {
 
     /// - Parameter systemFilterSpace: asks the system for the Space of the filter in force: nil if it
     ///   couldn't say, `.some(nil)` for none. Nil never asks (UI tests set the filter themselves).
-    init(defaults: UserDefaults, systemFilterSpace: (@MainActor () async -> UUID??)?) {
+    public init(defaults: UserDefaults, systemFilterSpace: (@MainActor () async -> UUID??)?) {
         self.defaults = defaults
         self.systemFilterSpace = systemFilterSpace
         spaceID = FocusFilterSpace.read(from: defaults)
     }
 
-    func set(_ spaceID: UUID?) {
+    public func set(_ spaceID: UUID?) {
         generation += 1
         FocusFilterSpace.write(spaceID, to: defaults)
         if self.spaceID != spaceID { self.spaceID = spaceID }
@@ -38,7 +38,7 @@ final class FocusFilterSettings {
     /// On launch and foreground: what was stored (the system may have called the filter in another
     /// launch), then, once the system answers, the filter actually in force, in case a call was missed.
     /// One question at a time; an answer the system has overtaken by setting the filter is dropped.
-    func refresh() {
+    public func refresh() {
         let stored = FocusFilterSpace.read(from: defaults)
         if spaceID != stored { spaceID = stored }
         guard let systemFilterSpace else { return }

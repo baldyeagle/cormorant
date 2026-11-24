@@ -3,6 +3,7 @@ import CormorantTestSupport
 import Foundation
 import Testing
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// What Manage Spaces and Edit Space change: Home renamed, never archived or deleted; archiving keeps

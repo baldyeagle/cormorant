@@ -5,6 +5,7 @@ import Testing
 import UIKit
 import WebKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// The long-press link menu's actions, run as the menu runs them: its preview is the one UIKit asks

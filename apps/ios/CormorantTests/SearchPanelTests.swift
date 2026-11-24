@@ -3,6 +3,7 @@ import CormorantTestSupport
 import Foundation
 import Testing
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// The search panel's rows, as `SearchSheet` lists them (`shown(for:lookup:in:)`, with history

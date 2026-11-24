@@ -4,6 +4,7 @@ import Foundation
 import Testing
 import WebKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// Pinned tabs in the browser: pinning (a toast with Undo), closing one (it stays pinned, back on

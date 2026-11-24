@@ -2,30 +2,30 @@ import CormorantCore
 import Foundation
 
 /// A tab the Move to Space sheet is up for.
-struct MoveRequest: Identifiable {
-    let tabID: UUID
-    var id: UUID { tabID }
+public struct MoveRequest: Identifiable {
+    public let tabID: UUID
+    public var id: UUID { tabID }
 
-    init(tabID: UUID) {
+    public init(tabID: UUID) {
         self.tabID = tabID
     }
 }
 
 /// A Space a tab can move to, as the move menus and sheet list it.
-struct MoveDestination: Identifiable {
-    let space: Space
+public struct MoveDestination: Identifiable {
+    public let space: Space
     /// The Space the tab is in: listed, checked, not choosable.
-    let isCurrent: Bool
+    public let isCurrent: Bool
     /// Its profile isn't the one the tab's Space uses: the page loads again there, signed in with that
     /// profile's accounts.
-    let changesProfile: Bool
-    let profile: Profile
-    let tabCount: Int
-    var id: UUID { space.id }
+    public let changesProfile: Bool
+    public let profile: Profile
+    public let tabCount: Int
+    public var id: UUID { space.id }
 
     /// "Here now" for the tab's own Space. Otherwise its tab count, then its profile where it isn't the
     /// default or the move changes profile, then "Reloads" if it does: "1 tab · Vialumi profile · Reloads".
-    var subtitle: String {
+    public var subtitle: String {
         if isCurrent { return "Here now" }
         var parts = [tabCount == 1 ? "1 tab" : "\(tabCount) tabs"]
         if changesProfile || !profile.isDefault { parts.append("\(profile.name) profile") }
@@ -35,13 +35,13 @@ struct MoveDestination: Identifiable {
 }
 
 /// Another Space a link can open in, for the link menu's Open in Space.
-struct LinkSpaceOption {
-    let space: Space
+public struct LinkSpaceOption {
+    public let space: Space
     /// Its profile, where it isn't the default.
-    let profileName: String?
+    public let profileName: String?
     /// It uses the opener's profile, so a tab there can adopt the menu preview's page (loaded with the
     /// opener's website data). Elsewhere the tab loads the link itself.
-    let adoptsPreview: Bool
+    public let adoptsPreview: Bool
 }
 
 /// Moving tabs between Spaces, opening links in another, and the toasts that say so. None of it
@@ -55,7 +55,7 @@ extension BrowserStore {
 
     /// Every Space a tab could be in, in order, its own marked current. Empty with only one Space, or
     /// for an unknown or Incognito tab.
-    func moveDestinations(for tabID: UUID) -> [MoveDestination] {
+    public func moveDestinations(for tabID: UUID) -> [MoveDestination] {
         guard hasSpacesToMoveBetween, let tab = state.tab(tabID), !tab.isIncognito else { return [] }
         return state.switchableSpaces.map { space in
             MoveDestination(space: space, isCurrent: space.id == tab.spaceID,
@@ -68,7 +68,7 @@ extension BrowserStore {
     /// Moves the tab at once and goes with it: its new Space shows it. A toast says "Moved" (where to is
     /// on its badge and the bar; VoiceOver hears it), led by Back to the Space you left (← and its badge;
     /// the tab stays) and ending in Undo (back where you were, the tab with you).
-    func moveTab(_ tabID: UUID, toSpace spaceID: UUID) {
+    public func moveTab(_ tabID: UUID, toSpace spaceID: UUID) {
         guard hasSpacesToMoveBetween, let tab = state.tab(tabID), !tab.isIncognito,
               let destination = state.space(spaceID), !destination.isIncognito else { return }
         let from = tab.spaceID, wasActive = state.activeTabID == tabID, viewedAt = tab.lastViewedAt
@@ -122,7 +122,7 @@ extension BrowserStore {
     /// Opens the link in a background tab in `spaceID`, never switching there. A toast offers Show.
     /// Returns false if no tab was opened (one Space, or the Space is the opener's or archived).
     @discardableResult
-    func openLink(_ url: URL, inSpace spaceID: UUID, from opener: TabSession?, handoff: LinkPreviewHandoff?) -> Bool {
+    public func openLink(_ url: URL, inSpace spaceID: UUID, from opener: TabSession?, handoff: LinkPreviewHandoff?) -> Bool {
         guard hasSpacesToMoveBetween, let space = state.space(spaceID), !space.isArchived, !space.isIncognito,
               spaceID != opener.flatMap({ state.tab($0.tabID)?.spaceID }) else { return false }
         guard let tabID = openLink(url, inBackground: true, inSpace: spaceID, from: opener, handoff: handoff)
@@ -156,8 +156,8 @@ extension BrowserStore {
 }
 
 /// A tab opened for a link from another app, where it opened, and why there.
-struct OpenedLink {
-    let tabID: UUID
-    let spaceID: UUID
+public struct OpenedLink {
+    public let tabID: UUID
+    public let spaceID: UUID
     let reason: LinkDestinationReason
 }

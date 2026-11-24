@@ -1,3 +1,4 @@
+import CormorantBrowser
 import SwiftUI
 
 struct AppearanceSettings: View {

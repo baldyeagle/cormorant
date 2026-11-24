@@ -6,6 +6,7 @@ import Testing
 import UIKit
 import WebKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// What the browser screen puts behind the status bar, and the clock's style on it, for the tab on

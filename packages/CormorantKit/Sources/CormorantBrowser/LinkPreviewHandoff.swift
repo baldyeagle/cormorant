@@ -3,7 +3,7 @@ import WebKit
 
 /// A link preview's web view on its way to becoming a tab, with what the tab needs to carry on from
 /// where the preview got to.
-struct LinkPreviewHandoff {
+public struct LinkPreviewHandoff {
     let webView: WKWebView
     let contentController: WKUserContentController
     let appliedHost: String?
@@ -12,7 +12,7 @@ struct LinkPreviewHandoff {
     let effectiveContentMode: WKWebpagePreferences.ContentMode
     let requestedURL: URL
 
-    init(webView: WKWebView, contentController: WKUserContentController, appliedHost: String?,
+    public init(webView: WKWebView, contentController: WKUserContentController, appliedHost: String?,
                 appliedListsVersion: Int?, requestedContentMode: WKWebpagePreferences.ContentMode,
                 effectiveContentMode: WKWebpagePreferences.ContentMode, requestedURL: URL) {
         self.webView = webView

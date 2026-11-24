@@ -8,7 +8,7 @@ Personal WebKit browser for iPhone (first), macOS (second), iPad (later), replac
 apps/ios/            Xcode 27 project: Cormorant app + CormorantShare extension + CormorantTests + CormorantUITests
 apps/macos/          placeholder until the iOS app is daily-usable
 apps/site/           cormorant.baldyeagle.dev (Astro 7 + Tailwind 4, deployed with Wrangler)
-packages/CormorantKit/   Swift package: CormorantCore, CormorantBlocking, CormorantAI, CormorantSync (+ CormorantTestSupport, tests only)
+packages/CormorantKit/   Swift package: CormorantCore, CormorantBlocking, CormorantBrowser (the engine: store, tabs, web views), CormorantAI, CormorantSync (+ CormorantTestSupport, tests only)
 assets/brand/        source artwork + make-icons.swift (regenerates app icons and favicons)
 scripts/             repo scripts (default-browser plist checklist, UI test shards, quarantine, flake report)
 docs/                gitignored, local-only: research, scope decisions, docs/product/todo.md (plan of record)
@@ -33,7 +33,8 @@ Simulator builds need an iOS 26+ runtime. Device builds and TestFlight need Xcod
 
 ## Conventions
 
-- Swift 6.4, strict concurrency. The app target uses `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` and approachable concurrency; the package does not.
+- Swift 6.4, strict concurrency. The app target uses `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` and approachable concurrency, and so does the package's CormorantBrowser target (`.defaultIsolation(MainActor.self)` and the same upcoming features); the package's other targets do not.
+- The browser engine (`BrowserStore`, `TabSession`, downloads, favicons) is CormorantBrowser, shared by the apps and built for iOS and macOS. What differs by platform comes from the app: app-wide through `BrowserPlatform`, per tab through `TabChrome` (the iPhone's are `IOSBrowserPlatform` and `IOSTabChrome`).
 - iOS 26 / macOS 26 deployment targets. No third-party dependencies anywhere in Swift.
 - Tests use Swift Testing (`import Testing`). Package tests run on macOS; WebKit APIs (`WKContentRuleListStore`, `WKWebView`) work there under `swift test`.
 - A test goes in the lowest layer that can see what it checks. Logic that needs only package types (state in, text or a decision out) lives in CormorantKit and is tested there, where the macOS app will share it. App behaviour (`BrowserStore`, `TabSession`, WebKit, persistence across a relaunch) is tested in `apps/ios/CormorantTests`: Swift Testing hosted in the app (which shows an empty window when XCTest hosts it), every suite an extension of the serialized root suite `AppTests`, driving a real `BrowserStore` and real `WKWebView`s on `FixtureServer` pages through `TestBrowser` (`relaunch()` stands in for a kill and relaunch). Nothing is tapped and nothing reads the screen, so a loaded runner makes these slower, never wrong; wait with `TestBrowser.until`, never a sleep. A UI test is only for what only the screen shows (gestures, menus and sheets coming up, layout, focus) plus one end-to-end smoke per feature: rather than keep a UI test for a view's logic, lift the logic into a static function or CormorantCore. `FixtureServer` is CormorantKit's `CormorantTestSupport`, linked into both test targets and never into an app.

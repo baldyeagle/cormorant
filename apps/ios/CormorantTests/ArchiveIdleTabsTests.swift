@@ -3,6 +3,7 @@ import CormorantTestSupport
 import Foundation
 import Testing
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// Settings' Archive Idle Tabs: the switch turns auto-archive off for every Space at once and back on

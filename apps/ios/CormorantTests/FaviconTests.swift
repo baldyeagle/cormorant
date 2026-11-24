@@ -4,6 +4,7 @@ import Foundation
 import Testing
 import UIKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// Site icons for tiles, cards and the search panel's rows (`FaviconStore`).

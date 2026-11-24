@@ -4,6 +4,7 @@ import Foundation
 import Testing
 import WebKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// Downloads: what WebKit can't show, what the server says to save (`Content-Disposition:

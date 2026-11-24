@@ -5,10 +5,10 @@ import OSLog
 /// survives a relaunch. Kept out of `BrowserState`: it can be large, and the share extension has
 /// no use for it. Best effort throughout: a lost or unreadable file only costs that tab its history.
 /// Not backed up: entries can carry form contents.
-actor TabHistoryStore {
+public actor TabHistoryStore {
     let directory: URL
 
-    init(directory: URL = .applicationSupportDirectory.appending(path: "TabHistory", directoryHint: .isDirectory)) {
+    public init(directory: URL = .applicationSupportDirectory.appending(path: "TabHistory", directoryHint: .isDirectory)) {
         self.directory = directory
     }
 

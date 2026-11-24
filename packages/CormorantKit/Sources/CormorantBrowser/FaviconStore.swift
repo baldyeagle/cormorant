@@ -11,7 +11,7 @@ import WebKit
 /// main actor, and every failure just leaves the site without an icon.
 @MainActor
 @Observable
-final class FaviconStore {
+public final class FaviconStore {
     /// A cached icon older than this is fetched again on the next visit, so a site's new icon shows up.
     static let refreshInterval: TimeInterval = 24 * 60 * 60
     /// After a fetch where nothing usable came back, the host isn't tried again for this long.
@@ -50,7 +50,7 @@ final class FaviconStore {
         return { links, userAgent: navigator.userAgent };
         """
 
-    init(directory: URL = .cachesDirectory.appending(path: "Favicons", directoryHint: .isDirectory)) {
+    public init(directory: URL = .cachesDirectory.appending(path: "Favicons", directoryHint: .isDirectory)) {
         self.directory = directory
         // Ephemeral with no cookies or cache: an icon fetch must not carry or set the user's session.
         // Only where that met a sign-in does the page itself fetch its own icon (`downloadThroughPage`).
@@ -66,7 +66,7 @@ final class FaviconStore {
 
     /// The icon for `url`'s site, if one is known. Read from a view body: the first ask for a host
     /// starts a disk lookup, and the view re-renders when it (or a later fetch) lands.
-    func icon(for url: URL?) -> CGImage? {
+    public func icon(for url: URL?) -> CGImage? {
         guard let url, let key = FaviconSelector.hostKey(for: url) else { return nil }
         if diskChecked.insert(key).inserted {
             Task { await loadFromDisk(key) }

@@ -1,4 +1,5 @@
 import CormorantBlocking
+import CormorantBrowser
 import CormorantCore
 import SwiftUI
 import UIKit

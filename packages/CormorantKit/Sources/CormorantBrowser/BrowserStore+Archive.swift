@@ -7,12 +7,12 @@ import Foundation
 extension BrowserStore {
     /// Off in every Space at once, or back on with each Space's time as it was (see
     /// `BrowserState.stopArchivingIdleTabs` / `resumeArchivingIdleTabs`). Archives nothing.
-    func setArchivesIdleTabs(_ on: Bool) {
+    public func setArchivesIdleTabs(_ on: Bool) {
         changeState { on ? $0.resumeArchivingIdleTabs() : $0.stopArchivingIdleTabs() }
     }
 
     /// The Space's idle time, as Edit Space's Archive Idle Tabs After picker sets it.
-    func setArchivePolicy(_ policy: ArchivePolicy, forSpace spaceID: UUID) {
+    public func setArchivePolicy(_ policy: ArchivePolicy, forSpace spaceID: UUID) {
         changeState { $0.updateSpace(spaceID) { $0.archivePolicy = policy } }
     }
 }

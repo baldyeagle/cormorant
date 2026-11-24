@@ -1,3 +1,4 @@
+import CormorantBrowser
 import QuickLook
 import SwiftUI
 import UIKit

@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		1CE04802616E74CF17FDEDDA /* CormorantCore in Frameworks */ = {isa = PBXBuildFile; productRef = 700B0CB68F0786F4252724CC /* CormorantCore */; };
 		17C123A574565FE251DF9BE1 /* CormorantBlocking in Frameworks */ = {isa = PBXBuildFile; productRef = 30500791E9B38AB1BA308E84 /* CormorantBlocking */; };
+		5A1C0E7B3D2F4A6B8C9D0E31 /* CormorantBrowser in Frameworks */ = {isa = PBXBuildFile; productRef = 5A1C0E7B3D2F4A6B8C9D0E30 /* CormorantBrowser */; };
 		505F30BE7AA56C1F4D28E7AA /* CormorantCore in Frameworks */ = {isa = PBXBuildFile; productRef = D567961EB3ECC734DF3D1CC0 /* CormorantCore */; };
 		B4D54984ED0ACACD3EEBC341 /* CormorantShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3B7745DF524857147A30AFBC /* CormorantShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		5A1C0E7B3D2F4A6B8C9D0E22 /* CormorantTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = 5A1C0E7B3D2F4A6B8C9D0E20 /* CormorantTestSupport */; };
@@ -110,6 +111,7 @@
 			files = (
 				1CE04802616E74CF17FDEDDA /* CormorantCore in Frameworks */,
 				17C123A574565FE251DF9BE1 /* CormorantBlocking in Frameworks */,
+				5A1C0E7B3D2F4A6B8C9D0E31 /* CormorantBrowser in Frameworks */,
 			);
 		};
 		7A5860FC385E58D69808F443 /* Frameworks */ = {
@@ -179,6 +181,7 @@
 			packageProductDependencies = (
 				700B0CB68F0786F4252724CC /* CormorantCore */,
 				30500791E9B38AB1BA308E84 /* CormorantBlocking */,
+				5A1C0E7B3D2F4A6B8C9D0E30 /* CormorantBrowser */,
 			);
 			productName = Cormorant;
 			productReference = FA6C646AE948F63157255329 /* Cormorant.app */;
@@ -830,6 +833,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 58CD59F024BF47BD7BBE5B25 /* XCLocalSwiftPackageReference "../../packages/CormorantKit" */;
 			productName = CormorantBlocking;
+		};
+		5A1C0E7B3D2F4A6B8C9D0E30 /* CormorantBrowser */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 58CD59F024BF47BD7BBE5B25 /* XCLocalSwiftPackageReference "../../packages/CormorantKit" */;
+			productName = CormorantBrowser;
 		};
 		D567961EB3ECC734DF3D1CC0 /* CormorantCore */ = {
 			isa = XCSwiftPackageProductDependency;

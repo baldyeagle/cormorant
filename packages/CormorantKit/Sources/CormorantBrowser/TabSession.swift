@@ -7,39 +7,39 @@ import WebKit
 /// One tab's live `WKWebView` plus the state the browser chrome renders from it.
 @MainActor
 @Observable
-final class TabSession {
+public final class TabSession {
     /// A main-frame load that failed; the browser shows it in place of the page.
-    struct LoadError: Equatable {
-        let message: String
-        let url: URL?
+    public struct LoadError: Equatable {
+        public let message: String
+        public let url: URL?
     }
 
-    let tabID: UUID
-    let webView: WKWebView
+    public let tabID: UUID
+    public let webView: WKWebView
     /// The profile whose website data the web view runs on, read from the store it was built with
     /// (`profileID(of:)`). Fixed for the web view's life: a tab whose Space comes to use another
     /// profile gets a new web view (`BrowserStore.releaseSessionsOnOtherProfiles()`).
-    let profileID: UUID
+    public let profileID: UUID
 
-    private(set) var canGoBack = false
-    private(set) var canGoForward = false
-    private(set) var isLoading = false
-    private(set) var progress = 0.0
+    public private(set) var canGoBack = false
+    public private(set) var canGoForward = false
+    public private(set) var isLoading = false
+    public private(set) var progress = 0.0
     /// The color WebKit paints under the page, which is what shows behind the status bar above the
     /// page's top. Nil until a page has committed (before that it's only the web view's own
     /// background), or if the chrome can't read it. Settled: see `pageBackgroundDidChange()`.
-    private(set) var pageBackground: PageBackground?
+    public private(set) var pageBackground: PageBackground?
     /// The first page hasn't drawn yet (`coversFirstPage`): from its load until the page reports its
     /// first contentful paint (`firstPaintScript`), loading stops, or a few seconds after it commits.
     /// WebKit can show a white canvas for a moment before a page's own (dark) styles apply, so the
     /// browser keeps the wash over the page until then (`BrowserStore.showsWash`). Only for the first
     /// page: after that, WebKit keeps the last page up until the next one draws.
-    private(set) var isAwaitingFirstPaint = false
+    public private(set) var isAwaitingFirstPaint = false
     /// The first page gets the wash (`isAwaitingFirstPaint`). Set by the store for a tab's first web
     /// view this run (a new tab, one restored at launch, a popup), before it loads; not for one rebuilt
     /// after it was let go, which the snapshot taken while it was up covers instead.
     @ObservationIgnored var coversFirstPage = false
-    private(set) var loadError: LoadError?
+    public private(set) var loadError: LoadError?
     /// A navigation in this tab (or its link menu's Download Linked File) became a download; the
     /// store hands it to its `DownloadCenter`.
     @ObservationIgnored var onDownload: ((WKDownload) -> Void)?
@@ -47,13 +47,13 @@ final class TabSession {
     /// the tab closes again rather than staying blank, as in Safari.
     @ObservationIgnored var closesIfFirstLoadDownloads = false
     /// Current page zoom, one of `zoomSteps`. Per tab, not persisted.
-    private(set) var pageZoom: CGFloat = 1
+    public private(set) var pageZoom: CGFloat = 1
     /// The content mode the last committed main-frame navigation actually got.
-    private(set) var effectiveContentMode: WKWebpagePreferences.ContentMode = .recommended
+    public private(set) var effectiveContentMode: WKWebpagePreferences.ContentMode = .recommended
     /// Saved back/forward history (from eviction or the last launch) waiting to go back in.
     private(set) var pendingHistory: Any?
     /// Until the history is back in, `canGoBack` reads false.
-    var isRestoringHistory: Bool { pendingHistory != nil }
+    public var isRestoringHistory: Bool { pendingHistory != nil }
 
     @ObservationIgnored var onPageChange: ((URL?, String) -> Void)?
     /// A page arrived: a main-frame navigation committed, or the page changed its own address
@@ -77,23 +77,23 @@ final class TabSession {
     @ObservationIgnored var onCreateWebView: ((WKWebViewConfiguration, WKNavigationAction) -> WKWebView?)?
     /// A link from the long-press menu, to open in a new tab (switched to unless `inBackground`),
     /// adopting the menu's preview web view when there is a `handoff`. Returns false if no tab opened.
-    @ObservationIgnored var onOpenInNewTab: ((_ url: URL, _ inBackground: Bool, _ handoff: LinkPreviewHandoff?) -> Bool)?
+    @ObservationIgnored public internal(set) var onOpenInNewTab: ((_ url: URL, _ inBackground: Bool, _ handoff: LinkPreviewHandoff?) -> Bool)?
     /// The Spaces other than this tab's that the long-press menu's Open in Space lists; none with only
     /// one Space.
-    @ObservationIgnored var spacesToOpenLinksIn: (() -> [LinkSpaceOption])?
+    @ObservationIgnored public internal(set) var spacesToOpenLinksIn: (() -> [LinkSpaceOption])?
     /// A link from the long-press menu, to open in a background tab in another Space, adopting the
     /// preview's web view when there is a `handoff`. Returns false if no tab opened.
-    @ObservationIgnored var onOpenInSpace: ((_ url: URL, _ spaceID: UUID, _ handoff: LinkPreviewHandoff?) -> Bool)?
+    @ObservationIgnored public internal(set) var onOpenInSpace: ((_ url: URL, _ spaceID: UUID, _ handoff: LinkPreviewHandoff?) -> Bool)?
     /// A link from the long-press menu, to open in a new Incognito tab, switched to. Returns false if
     /// no tab opened.
-    @ObservationIgnored var onOpenInIncognito: ((URL) -> Bool)?
+    @ObservationIgnored public internal(set) var onOpenInIncognito: ((URL) -> Bool)?
     /// The sunglasses picked for Incognito, for the long-press menu's Open in Incognito.
-    @ObservationIgnored var incognitoIcon: (() -> IncognitoIcon)?
+    @ObservationIgnored public internal(set) var incognitoIcon: (() -> IncognitoIcon)?
     /// The page called `window.close()`.
     @ObservationIgnored var onClose: (() -> Void)?
     /// Takes away a tab a page opened only for a download (`closesIfFirstLoadDownloads`), unarchived.
     @ObservationIgnored var onDropForDownload: (() -> Void)?
-    var chrome: any TabChrome { coordinator.chrome }
+    public var chrome: any TabChrome { coordinator.chrome }
     @ObservationIgnored var onProcessTerminated: (() -> Void)?
     /// The session, and with it its web view, is gone: nothing of it holds its profile's website data
     /// any more. Called on the main actor, before the web view itself is released; see `deinit`.
@@ -104,7 +104,7 @@ final class TabSession {
     /// Media is held while the tab loads unseen in the background; released when it's first shown.
     @ObservationIgnored private var isMediaSuspendedUntilShown = false
 
-    @ObservationIgnored let blocking: BlockingService
+    @ObservationIgnored public let blocking: BlockingService
     @ObservationIgnored private let contentController: WKUserContentController
     /// Made once the session exists, which its chrome is made with.
     @ObservationIgnored private var coordinator: WebViewCoordinator!
@@ -156,9 +156,9 @@ final class TabSession {
         })()
         """, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .defaultClient)
     /// Schemes WebKit loads itself. Anything else belongs to another app.
-    static let webSchemes: Set<String> = ["http", "https", "about", "blob", "data", "javascript"]
+    public static let webSchemes: Set<String> = ["http", "https", "about", "blob", "data", "javascript"]
     /// Never acted on from inside a page: our own scheme (pages must not drive the app) and local files.
-    static let refusedSchemes: Set<String> = ["cormorant", "file"]
+    public static let refusedSchemes: Set<String> = ["cormorant", "file"]
 
     /// A tab's web view configuration, on `profileID`'s website data. Link previews are built from it
     /// too (on their opener's profile), so a preview's web view can become a tab
@@ -166,7 +166,7 @@ final class TabSession {
     /// Configuration-level settings, user scripts included, belong here; anything that needs the
     /// session (script message handlers) goes in `init(tabID:blocking:webView:contentController:)`.
     /// Each web view gets its own content controller, so rules applied to one never touch another.
-    static func makeConfiguration(profileID: UUID, platform: any BrowserPlatform)
+    public static func makeConfiguration(profileID: UUID, platform: any BrowserPlatform)
         -> (WKWebViewConfiguration, WKUserContentController) {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore(for: profileID)
@@ -191,12 +191,12 @@ final class TabSession {
 
     /// The profile `store` belongs to: Incognito for one kept in memory, else its identifier, or the
     /// default profile for the default store.
-    static func profileID(of store: WKWebsiteDataStore) -> UUID {
+    public static func profileID(of store: WKWebsiteDataStore) -> UUID {
         store.isPersistent ? store.identifier ?? Profile.defaultID : Profile.incognitoID
     }
 
     /// The tab is in Incognito: nothing of its pages is kept (history, icons, its back/forward list).
-    var isIncognito: Bool { profileID == Profile.incognitoID }
+    public var isIncognito: Bool { profileID == Profile.incognitoID }
 
     /// - Parameters:
     ///   - profileID: whose website data a new web view runs on.
@@ -300,7 +300,7 @@ final class TabSession {
         appliedListsVersion = cached.version
     }
 
-    func load(_ url: URL) {
+    public func load(_ url: URL) {
         lastRequestedURL = url
         awaitFirstPaint()
         let navigation = webView.load(URLRequest(url: url))
@@ -308,37 +308,37 @@ final class TabSession {
         nextLoadIsTyped = false
     }
 
-    func goBack() { webView.goBack() }
-    func goForward() { webView.goForward() }
+    public func goBack() { webView.goBack() }
+    public func goForward() { webView.goForward() }
 
     /// The pages Back would step through, nearest first. Not observed: a view reading it re-renders
     /// only for what else it reads (the caret sheet's row also reads the URL, `canGoBack` and
     /// `isLoading`, so its list can trail a page's own navigation until that load finishes).
-    var backHistory: [WKBackForwardListItem] { webView.backForwardList.backList.reversed() }
+    public var backHistory: [WKBackForwardListItem] { webView.backForwardList.backList.reversed() }
     /// The pages Forward would step through, nearest first.
-    var forwardHistory: [WKBackForwardListItem] { webView.backForwardList.forwardList }
+    public var forwardHistory: [WKBackForwardListItem] { webView.backForwardList.forwardList }
 
     /// Jumps straight to a page in the tab's history (the Back / Forward long-press menu).
-    func go(to item: WKBackForwardListItem) { webView.go(to: item) }
+    public func go(to item: WKBackForwardListItem) { webView.go(to: item) }
 
-    func reloadOrStop() {
+    public func reloadOrStop() {
         if isLoading { webView.stopLoading() } else { reload() }
     }
 
     // MARK: Page actions
 
-    var canZoomIn: Bool { pageZoom < Self.zoomSteps[Self.zoomSteps.count - 1] - 0.001 }
-    var canZoomOut: Bool { pageZoom > Self.zoomSteps[0] + 0.001 }
+    public var canZoomIn: Bool { pageZoom < Self.zoomSteps[Self.zoomSteps.count - 1] - 0.001 }
+    public var canZoomOut: Bool { pageZoom > Self.zoomSteps[0] + 0.001 }
 
-    func zoomIn() {
+    public func zoomIn() {
         if let next = Self.zoomSteps.first(where: { $0 > pageZoom + 0.001 }) { setPageZoom(next) }
     }
 
-    func zoomOut() {
+    public func zoomOut() {
         if let previous = Self.zoomSteps.last(where: { $0 < pageZoom - 0.001 }) { setPageZoom(previous) }
     }
 
-    func resetZoom() { setPageZoom(1) }
+    public func resetZoom() { setPageZoom(1) }
 
     private func setPageZoom(_ zoom: CGFloat) {
         pageZoom = zoom
@@ -346,14 +346,14 @@ final class TabSession {
     }
 
     /// The page is showing its desktop layout (as committed, not just requested).
-    var isDesktopSite: Bool { effectiveContentMode == .desktop }
+    public var isDesktopSite: Bool { effectiveContentMode == .desktop }
 
     /// Asks for the other layout for the rest of this tab's life and reloads.
     /// Like Safari, goes back to the URL the page was first requested at, so a user-agent
     /// redirect (`example.com` to `m.example.com`) is undone rather than reloaded.
     /// Only a change of site counts: other redirects (http to https, adding `www.`) and `replaceState`
     /// would load a stale URL or add a duplicate history entry, so those just reload.
-    func toggleDesktopSite() {
+    public func toggleDesktopSite() {
         requestedContentMode = isDesktopSite ? .mobile : .desktop
         let site = { (url: URL?) in url?.host().map(BlockingPreferences.normalize(host:)) }
         if let initial = webView.backForwardList.currentItem?.initialURL, site(initial) != site(webView.url) {
@@ -364,17 +364,17 @@ final class TabSession {
     }
 
     /// Zoom and requested layout, carried over to a rebuilt web view or a popup from this tab.
-    struct ViewSettings {
-        let pageZoom: CGFloat
-        let contentMode: WKWebpagePreferences.ContentMode
+    public struct ViewSettings {
+        public let pageZoom: CGFloat
+        public let contentMode: WKWebpagePreferences.ContentMode
     }
 
-    var viewSettings: ViewSettings {
+    public var viewSettings: ViewSettings {
         ViewSettings(pageZoom: pageZoom, contentMode: requestedContentMode)
     }
 
     /// Call before the first navigation, so it already gets the requested layout.
-    func apply(_ settings: ViewSettings) {
+    public func apply(_ settings: ViewSettings) {
         requestedContentMode = settings.contentMode
         setPageZoom(settings.pageZoom)
     }
@@ -389,7 +389,7 @@ final class TabSession {
     }
 
     /// Clears the error view and loads the failed URL again.
-    func retry() {
+    public func retry() {
         let url = loadError?.url
         loadError = nil
         // A page restored from history that failed to come back is reloaded in place; loading it
@@ -499,7 +499,7 @@ final class TabSession {
     }
 
     /// The page on screen, if it is a file WebKit shows (a PDF, an image): Share hands over the file.
-    var shownFile: PageFile? {
+    public var shownFile: PageFile? {
         webView.url.flatMap { fileDocuments[Self.withoutFragment($0)] }
     }
 
@@ -533,7 +533,7 @@ final class TabSession {
     }
 
     /// Download Linked File, from the link menu.
-    func downloadLinkedFile(_ url: URL) {
+    public func downloadLinkedFile(_ url: URL) {
         webView.startDownload(using: URLRequest(url: url)) { [weak self] download in
             self?.onDownload?(download)
         }
@@ -618,7 +618,7 @@ final class TabSession {
         reload()
     }
 
-    func reload() {
+    public func reload() {
         // The first page again after it failed or was stopped: covered as it was the first time.
         awaitFirstPaint()
         // After a content-process crash `url` is nil but the history survives: reloading its current
@@ -656,14 +656,14 @@ final class TabSession {
     }
 
     /// Asks before handing `url` to the app that owns its scheme.
-    func confirmOpeningInOtherApp(_ url: URL) {
+    public func confirmOpeningInOtherApp(_ url: URL) {
         present(.openInOtherApp(url, appName: Self.appName(for: url)))
     }
 
     /// Puts up `dialog` over this tab, if it's the one on screen (a background tab loading on the stage
     /// is in the window, but its dialogs mustn't appear). Returns false if it wasn't put up.
     @discardableResult
-    func present(_ dialog: PageDialog) -> Bool {
+    public func present(_ dialog: PageDialog) -> Bool {
         isActiveTab && chrome.present(dialog)
     }
 
@@ -771,7 +771,7 @@ final class TabSession {
     /// Takes WebKit's under-page color once it has held for a moment. Around a load WebKit passes
     /// through a placeholder (white) for ~100 ms before the page's own, which would flip the status
     /// bar's style and flash the iPhone Duo's status-bar column.
-    func pageBackgroundDidChange() {
+    public func pageBackgroundDidChange() {
         pageBackgroundTask?.cancel()
         pageBackgroundTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))

@@ -4,6 +4,7 @@ import Foundation
 import Testing
 import WebKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// Profiles keep website data apart: a cookie set in one profile isn't seen in another, and the

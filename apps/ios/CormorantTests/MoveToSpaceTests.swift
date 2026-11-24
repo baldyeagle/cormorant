@@ -3,6 +3,7 @@ import CormorantTestSupport
 import Foundation
 import Testing
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// Moving a tab to another Space (what the caret sheet's Move to Space sheet calls), opening a link in

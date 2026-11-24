@@ -5,6 +5,7 @@ import Testing
 import UIKit
 import WebKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// Arc's back-to-close: going back from the first page of any tab closes it and returns to the tab

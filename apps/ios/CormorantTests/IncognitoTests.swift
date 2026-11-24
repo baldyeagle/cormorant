@@ -4,6 +4,7 @@ import Foundation
 import Testing
 import WebKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// Incognito keeps nothing: its tabs, their back/forward lists, visits and icons never reach disk,

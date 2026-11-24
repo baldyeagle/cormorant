@@ -5,20 +5,20 @@ import WebKit
 /// Safari's do; where the page runs under the status bar, the band behind it is kept apart for what
 /// lands on the page (a card growing into it, the back swipe's underlay) to draw there, so the page's
 /// fixed header or content carried up behind the clock arrives with it.
-struct PageSnapshot {
-    let content: CGImage
+public struct PageSnapshot {
+    public let content: CGImage
     /// Nil where the page doesn't run under a status bar along the top.
-    let statusBand: CGImage?
-    let scale: CGFloat
+    public let statusBand: CGImage?
+    public let scale: CGFloat
 
-    init(content: CGImage, statusBand: CGImage?, scale: CGFloat) {
+    public init(content: CGImage, statusBand: CGImage?, scale: CGFloat) {
         self.content = content
         self.statusBand = statusBand
         self.scale = scale
     }
 
     /// Splits a picture of a whole web view `height` points tall, `band` points from its top.
-    init(_ image: CGImage, scale: CGFloat, band: CGFloat, of height: CGFloat) {
+    public init(_ image: CGImage, scale: CGFloat, band: CGFloat, of height: CGFloat) {
         self.scale = scale
         let rows = height > 0 ? Int((band / height * CGFloat(image.height)).rounded()) : 0
         guard rows > 0, rows < image.height,
@@ -36,7 +36,7 @@ struct PageSnapshot {
 
 extension PageSnapshot {
     /// Without the status band: for a page that no longer runs under the status bar.
-    var contentOnly: PageSnapshot { PageSnapshot(content: content, statusBand: nil, scale: scale) }
+    public var contentOnly: PageSnapshot { PageSnapshot(content: content, statusBand: nil, scale: scale) }
 }
 
 extension WKWebView {

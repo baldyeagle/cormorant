@@ -3,7 +3,7 @@ import Foundation
 import WebKit
 
 /// What the app the engine runs in provides.
-protocol BrowserPlatform: AnyObject {
+public protocol BrowserPlatform: AnyObject {
     /// Applied to every tab's web view configuration, and to anything that may become a tab's.
     func configure(_ configuration: WKWebViewConfiguration)
 
@@ -31,7 +31,7 @@ protocol BrowserPlatform: AnyObject {
 /// A tab's own part of the app: what its web view gets on this platform (gestures, menus, dialogs).
 /// If it's a `WKUIDelegate` too, it gets the UI delegate methods the engine doesn't implement, such
 /// as the iPhone's link menu or the Mac's file picker.
-protocol TabChrome: AnyObject {
+public protocol TabChrome: AnyObject {
     /// Returns false if it couldn't; the caller then answers the dialog itself.
     func present(_ dialog: PageDialog) -> Bool
 
@@ -45,19 +45,19 @@ protocol TabChrome: AnyObject {
     func sessionDidDetach()
 }
 
-struct PageBackground: Equatable {
-    let color: CormorantCore.RGBColor
+public struct PageBackground: Equatable {
+    public let color: CormorantCore.RGBColor
     /// The appearance it was read in: a page's colors can follow it.
-    let appearance: Appearance
+    public let appearance: Appearance
 
-    init(color: CormorantCore.RGBColor, appearance: Appearance) {
+    public init(color: CormorantCore.RGBColor, appearance: Appearance) {
         self.color = color
         self.appearance = appearance
     }
 }
 
 /// Once presented, its `done` (where it has one) is called exactly once.
-enum PageDialog {
+public enum PageDialog {
     case alert(title: String?, message: String, done: @MainActor () -> Void)
     case confirm(title: String?, message: String, done: @MainActor (Bool) -> Void)
     /// `done` gets nil for Cancel.

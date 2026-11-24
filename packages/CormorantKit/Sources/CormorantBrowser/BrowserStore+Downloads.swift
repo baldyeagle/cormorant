@@ -4,16 +4,16 @@ import OSLog
 import PassKit
 
 /// A Wallet pass a page handed over, for the Add to Wallet sheet.
-struct WalletPassRequest: Identifiable {
-    let id = UUID()
-    let pass: PKPass
+public struct WalletPassRequest: Identifiable {
+    public let id = UUID()
+    public let pass: PKPass
 }
 
 /// The events of a calendar file a page handed over, for the New Event editor.
-struct CalendarImport: Identifiable {
-    let id = UUID()
-    let filename: String
-    let events: [CalendarEvent]
+public struct CalendarImport: Identifiable {
+    public let id = UUID()
+    public let filename: String
+    public let events: [CalendarEvent]
 }
 
 extension BrowserStore {

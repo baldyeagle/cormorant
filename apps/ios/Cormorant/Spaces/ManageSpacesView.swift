@@ -1,3 +1,4 @@
+import CormorantBrowser
 import CormorantCore
 import SwiftUI
 

@@ -5,7 +5,7 @@ import WebKit
 /// popup it opens. Made when the first Incognito web view needs it; `end()` lets it go once the last
 /// Incognito tab has closed, and the next Incognito tab starts with nothing.
 @MainActor
-enum IncognitoData {
+public enum IncognitoData {
     private static var current: WKWebsiteDataStore?
 
     static var store: WKWebsiteDataStore {

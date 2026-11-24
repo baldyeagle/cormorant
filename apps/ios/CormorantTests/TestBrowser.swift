@@ -4,6 +4,7 @@ import Testing
 import UIKit
 import WebKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 /// The browser as the app builds it (`CormorantApp.makeStore` under `-uiTesting`), on files of its
 /// own, launched, with the tab on screen shown in a window of its own so pages lay out, paint and

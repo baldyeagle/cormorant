@@ -1,4 +1,5 @@
 import AppIntents
+import CormorantBrowser
 import CormorantCore
 import Foundation
 import Observation

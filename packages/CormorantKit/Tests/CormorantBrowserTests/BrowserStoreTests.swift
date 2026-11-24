@@ -88,6 +88,29 @@ struct BrowserStoreTests {
         withExtendedLifetime(server) {}
     }
 
+    @Test func anAddressAnOpenTabIsOnOffersThatTab() async throws {
+        let server = try FixtureServer(html: "<!doctype html><title>Fixture page</title><p>Hello")
+        let (store, _, files) = try Self.makeStore()
+        defer { Self.end(store, files: files) }
+        await store.launch()
+        for path in ["one", "two"] {
+            store.newTab()
+            _ = try await Self.open(server.url.appending(path: path), in: store)
+        }
+        let one = try #require(store.tabs.first { $0.url?.path() == "/one" })
+        let two = try #require(store.activeTab)
+
+        // Edited, the active tab isn't offered for its own page; another tab is, written as typed.
+        #expect(AddressPanel.openTab(on: server.url.appending(path: "two"), in: store) == nil)
+        let typed = try #require(URL(string: server.url.absoluteString.replacing("http://", with: "HTTP://") + "one/"))
+        #expect(AddressPanel.openTab(on: typed, in: store)?.id == one.id)
+        // Composing a new tab, the one it came from is offered too.
+        store.newTab()
+        #expect(AddressPanel.openTab(on: server.url.appending(path: "two"), in: store)?.id == two.id)
+        #expect(AddressPanel.openTab(on: server.url.appending(path: "three"), in: store) == nil)
+        withExtendedLifetime(server) {}
+    }
+
     /// The Mac's: a calendar file is a download like any other, for Finder to open.
     @Test func aCalendarFileIsADownloadWhenTheAppHandsNothingOff() async throws {
         let invite = Data("""

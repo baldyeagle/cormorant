@@ -64,14 +64,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// What the menu bar and the window share.
 @Observable
 final class WindowCommands {
-    var addressFocusRequest = 0
-    /// Keeps a hidden sidebar out while its address field is in use.
+    /// The command bar is up editing this tab's address.
     var isEditingAddress = false
+    var isFinding = false
+    /// Find Next and Previous (`backwards`), or nil to put the cursor back in the find field.
+    var findRequest = FindRequest(backwards: nil)
+
+    struct FindRequest: Equatable {
+        let id = UUID()
+        let backwards: Bool?
+    }
     var showsSidebar = UserDefaults.standard.object(forKey: "showsSidebar") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showsSidebar, forKey: "showsSidebar") }
     }
     var sidebarWidth = UserDefaults.standard.object(forKey: "sidebarWidth") as? Double ?? 264 {
         didSet { UserDefaults.standard.set(sidebarWidth, forKey: "sidebarWidth") }
+    }
+
+    /// With no tab there's no address to edit: a new tab's instead.
+    func editAddress(in store: BrowserStore) {
+        if store.activeTab == nil {
+            store.newTab()
+        } else {
+            store.cancelComposing()
+            isEditingAddress = true
+        }
     }
 }
 
@@ -81,15 +98,42 @@ struct BrowserCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("New Tab") { store.newTab() }
-                .keyboardShortcut("t")
+            // Again, puts the bar away.
+            Button("New Tab") {
+                if store.isComposingNewTab { store.cancelComposing() } else { store.newTab() }
+            }
+            .keyboardShortcut("t")
             Button("Reopen Closed Tab") { store.reopenClosedTab() }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
             Button("Open Location") {
-                commands.isEditingAddress = true
-                commands.addressFocusRequest += 1
+                if commands.isEditingAddress { commands.isEditingAddress = false } else { commands.editAddress(in: store) }
             }
             .keyboardShortcut("l")
+        }
+        CommandGroup(after: .pasteboard) {
+            Button("Copy Link") {
+                guard let url = store.activeTab?.url else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.writeObjects([url as NSURL])
+                commands.isEditingAddress = false
+            }
+            .keyboardShortcut("c", modifiers: [.command, .shift])
+            Button("Paste and Go") {
+                guard let pasted = NSPasteboard.general.string(forType: .string) else { return }
+                store.submit(pasted)
+                commands.isEditingAddress = false
+            }
+            .keyboardShortcut("v", modifiers: [.command, .shift])
+        }
+        CommandGroup(replacing: .textEditing) {
+            Button("Find…") {
+                if commands.isFinding { commands.findRequest = .init(backwards: nil) } else { commands.isFinding = true }
+            }
+            .keyboardShortcut("f")
+            Button("Find Next") { find(backwards: false) }
+                .keyboardShortcut("g")
+            Button("Find Previous") { find(backwards: true) }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
         }
         CommandGroup(before: .sidebar) {
             Button(commands.showsSidebar ? "Hide Sidebar" : "Show Sidebar") { commands.showsSidebar.toggle() }
@@ -114,8 +158,15 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("]")
             Button("Reload") { shownSession?.reload() }
                 .keyboardShortcut("r")
+            Button("Reload Ignoring Cache") { shownSession?.reload(fromOrigin: true) }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
         }
     }
 
-    private var shownSession: TabSession? { store.isComposingNewTab ? nil : store.activeSession }
+    /// The page stays on screen under ⌘T's bar, so these act on it then too.
+    private var shownSession: TabSession? { store.activeSession }
+
+    private func find(backwards: Bool) {
+        if commands.isFinding { commands.findRequest = .init(backwards: backwards) } else { commands.isFinding = true }
+    }
 }

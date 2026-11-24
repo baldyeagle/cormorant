@@ -11,14 +11,12 @@ struct Sidebar: View {
     let commands: WindowCommands
     /// The top row shares the title bar's height, so its buttons line up with the window's.
     let titleBarHeight: CGFloat
-    /// False for the docked sidebar while it's away, so only the one on screen takes the address.
-    let isShown: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             controls
                 .frame(height: titleBarHeight)
-            AddressField(store: store, commands: commands, takesRequests: isShown)
+            HostField(store: store, commands: commands)
                 .padding(.top, 6)
             ScrollView {
                 VStack(spacing: 2) {
@@ -39,7 +37,7 @@ struct Sidebar: View {
     }
 
     private var controls: some View {
-        let session = store.isComposingNewTab ? nil : store.activeSession
+        let session = store.activeSession
         return HStack(spacing: 0) {
             Spacer()
             IconButton(commands.showsSidebar ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") {
@@ -71,36 +69,19 @@ struct Sidebar: View {
     }
 }
 
-/// The page's host, or the whole address while it's edited. A new tab's address is typed here too.
-private struct AddressField: View {
+/// The page's host; a click edits the whole address in the command bar.
+private struct HostField: View {
     let store: BrowserStore
     let commands: WindowCommands
-    let takesRequests: Bool
-    @State private var text = ""
-    @State private var submitted = false
-    @FocusState private var focused: Bool
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 7) {
-            ZStack(alignment: .leading) {
-                TextField("Search or enter address", text: $text)
-                    .textFieldStyle(.plain)
-                    .focused($focused)
-                    .opacity(focused || store.isComposingNewTab ? 1 : 0)
-                    .onSubmit {
-                        submitted = true
-                        store.submit(text)
-                        focused = false
-                    }
-                    .onExitCommand { focused = false }
-                if !focused, !store.isComposingNewTab {
-                    Text(host ?? "")
-                        .lineLimit(1)
-                        .allowsHitTesting(false)
-                }
-            }
-            if !focused, let host { PageMenu(store: store, host: host) }
+            Text(host ?? "Search or enter address")
+                .foregroundStyle(host == nil ? .secondary : .primary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            if let host { PageMenu(store: store, host: host) }
         }
         .font(.system(size: 13.5))
         .padding(.leading, 11)
@@ -108,41 +89,15 @@ private struct AddressField: View {
         .frame(height: 36)
         .background(colorScheme == .dark ? .white.opacity(0.08) : .black.opacity(0.055), in: .rect(cornerRadius: 10))
         .contentShape(.rect)
-        .onTapGesture { focused = true }
-        // A hidden sidebar comes out for the address, then this field takes the request.
-        .onAppear { if takesRequests, store.isComposingNewTab || commands.isEditingAddress { focused = true } }
-        .onChange(of: store.addressFocusRequest) { if takesRequests { focused = true } }
-        .onChange(of: commands.addressFocusRequest) { if takesRequests { focused = true } }
-        // The docked sidebar coming back takes over from the sliding one, which goes.
-        .onChange(of: takesRequests) { _, takes in
-            focused = takes && (store.isComposingNewTab || commands.isEditingAddress)
-        }
-        .onChange(of: focused) { _, focused in
-            guard takesRequests else { return }
-            commands.isEditingAddress = focused
-            guard !focused else { return }
-            if store.isComposingNewTab {
-                store.cancelComposing()
-            } else if submitted {
-                // What was typed stays until the page it asked for commits.
-                submitted = false
-            } else {
-                showAddress()
-            }
-        }
-        // Not over what's being typed, unless it's another tab's address now.
-        .onChange(of: store.activeTab?.url, initial: true) { if !focused { showAddress() } }
-        .onChange(of: store.activeTab?.id) { showAddress() }
-        .onChange(of: store.isComposingNewTab) { showAddress() }
+        .onTapGesture { commands.editAddress(in: store) }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(host.map { "Address, \($0)" } ?? "Search or enter address")
+        .accessibilityAction { commands.editAddress(in: store) }
     }
 
     private var host: String? {
-        guard !store.isComposingNewTab, let host = store.activeTab?.url?.host() else { return nil }
-        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
-    }
-
-    private func showAddress() {
-        text = store.isComposingNewTab ? "" : store.activeTab?.url?.absoluteString ?? ""
+        store.activeTab?.url?.host().map { $0.hasPrefix("www.") ? String($0.dropFirst(4)) : $0 }
     }
 }
 

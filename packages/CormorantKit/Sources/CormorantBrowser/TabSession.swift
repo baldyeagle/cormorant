@@ -618,13 +618,15 @@ public final class TabSession {
         reload()
     }
 
-    public func reload() {
+    /// - Parameter fromOrigin: everything fetched again from the server, nothing from the cache
+    ///   (a hard reload).
+    public func reload(fromOrigin: Bool = false) {
         // The first page again after it failed or was stopped: covered as it was the first time.
         awaitFirstPaint()
         // After a content-process crash `url` is nil but the history survives: reloading its current
         // item keeps the tab where it was, where loading `lastRequestedURL` would add an entry.
         if webView.url != nil || webView.backForwardList.currentItem != nil {
-            webView.reload()
+            if fromOrigin { webView.reloadFromOrigin() } else { webView.reload() }
         } else if let lastRequestedURL {
             load(lastRequestedURL)
         }

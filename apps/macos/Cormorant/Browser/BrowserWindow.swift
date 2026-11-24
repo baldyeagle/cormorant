@@ -19,6 +19,11 @@ struct BrowserWindow: View {
     @State private var peekHasButtons = false
     /// Whether the docked sidebar is out and the page beside it: the two slide together.
     @State private var isDocked: Bool
+    /// Where the command bar was dragged from its place, while it's up.
+    @State private var barMove: CGSize = .zero
+    @GestureState private var barDrag: CGSize = .zero
+    /// The command bar's frame, so a click outside it can put it away.
+    @State private var barFrame: CGRect = .zero
     @Environment(\.colorScheme) private var colorScheme
 
     init(store: BrowserStore, commands: WindowCommands) {
@@ -35,19 +40,19 @@ struct BrowserWindow: View {
             let titleBar = max(proxy.safeAreaInsets.top, 28)
             let pageLeading = isDocked ? commands.sidebarWidth : 8
             ZStack(alignment: .topLeading) {
-                PageArea(webView: store.isComposingNewTab ? nil : store.activeSession?.webView, leading: pageLeading)
+                PageArea(webView: store.activeSession?.webView, leading: pageLeading)
                 PageOverlays(store: store)
                     .padding(8)
                     .padding(.leading, pageLeading - 8)
                 // In the margin above the page, so the page never moves for it.
-                if let session = store.activeSession, session.isLoading, !store.isComposingNewTab {
+                if let session = store.activeSession, session.isLoading {
                     LoadingIndicator(color: store.state.activeSpace.color.loadingColor(dark: colorScheme == .dark),
                                      progress: session.progress)
                         .id(session.tabID)
                         .position(x: pageLeading + (proxy.size.width - pageLeading - 8) / 2, y: 4)
                         .transition(.opacity)
                 }
-                Sidebar(store: store, commands: commands, titleBarHeight: titleBar, isShown: commands.showsSidebar)
+                Sidebar(store: store, commands: commands, titleBarHeight: titleBar)
                     .frame(width: commands.sidebarWidth)
                     .background(spaceTint)
                     .overlay(alignment: .trailing) { SidebarResizer(commands: commands).allowsHitTesting(isDocked) }
@@ -55,7 +60,7 @@ struct BrowserWindow: View {
                     .offset(x: isDocked ? 0 : 8 - commands.sidebarWidth)
                     .accessibilityHidden(!commands.showsSidebar)
                 if peekIsOut {
-                    Sidebar(store: store, commands: commands, titleBarHeight: max(titleBar - 8, 28), isShown: true)
+                    Sidebar(store: store, commands: commands, titleBarHeight: max(titleBar - 8, 28))
                         .frame(width: commands.sidebarWidth)
                         .background(spaceTint, in: .rect(cornerRadius: 12))
                         .clipShape(.rect(cornerRadius: 12))
@@ -63,8 +68,38 @@ struct BrowserWindow: View {
                         .padding(8)
                         .transition(.move(edge: .leading))
                 }
+                if commands.isFinding, let session = store.activeSession {
+                    FindBar(webView: session.webView, commands: commands)
+                        .id(session.tabID)
+                        .offset(x: proxy.size.width - 8 - 12 - FindBar.width, y: 20)
+                        .transition(.opacity)
+                }
+                if let mode = barMode {
+                    let pageWidth = proxy.size.width - pageLeading - 8
+                    let width = mode == .newTab ? min(860, pageWidth - 64) : min(720, proxy.size.width - 16)
+                    // ⌘T's over the middle of the page; ⌘L's out of the sidebar, where the host is.
+                    let place = CGPoint(x: mode == .newTab ? pageLeading + (pageWidth - width) / 2 : commands.showsSidebar ? 10 : 8,
+                                        y: mode == .newTab ? proxy.size.height * 0.16 : commands.showsSidebar ? titleBar + 6 : 8)
+                    let moved = barMove
+                    CommandBar(mode: mode, store: store, dismiss: dismissBar)
+                        .id(mode)
+                        .frame(width: width)
+                        // Before the offset: measured after it, the frame leaves the offset out.
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { barFrame = $0 }
+                        .offset(x: place.x + moved.width + barDrag.width, y: place.y + moved.height + barDrag.height)
+                        // By anything but the field, which keeps its own drags for selecting text.
+                        .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                            .updating($barDrag) { drag, state, _ in state = drag.translation }
+                            .onEnded { drag in
+                                let x = min(max(place.x + moved.width + drag.translation.width, 8), proxy.size.width - width - 8)
+                                let y = min(max(place.y + moved.height + drag.translation.height, 8), proxy.size.height - 80)
+                                barMove = CGSize(width: x - place.x, height: y - place.y)
+                            })
+                        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: mode == .newTab ? .top : .topLeading)))
+                }
             }
-            .animation(.easeOut(duration: 0.2), value: store.activeSession?.isLoading == true && !store.isComposingNewTab)
+            .animation(.easeOut(duration: 0.12), value: barMode)
+            .animation(.easeOut(duration: 0.2), value: store.activeSession?.isLoading == true)
             .background(spaceTint)
             .background(WindowChrome(showsButtons: commands.showsSidebar || peekHasButtons) { x in
                 // From the pointer, not hover on views that move under it: out near the left edge,
@@ -75,12 +110,24 @@ struct BrowserWindow: View {
                 } else if x > commands.sidebarWidth + 32 {
                     peeksSidebar = false
                 }
+            } pointerPressed: { point in
+                // Nothing covers the page while the bar is up, so it still scrolls; a click outside the
+                // bar puts it away and goes on to what was clicked.
+                if barMode != nil, !barFrame.contains(point) { dismissBar() }
             })
             .ignoresSafeArea()
         }
         .onChange(of: commands.showsSidebar) { _, shows in
             peeksSidebar = false
             withAnimation(Self.slide) { isDocked = shows }
+        }
+        .onChange(of: barMode) { barMove = .zero }
+        .onChange(of: store.state.activeTabID) {
+            commands.isFinding = false
+            commands.isEditingAddress = false
+        }
+        .onChange(of: store.isComposingNewTab) { _, composing in
+            if composing { commands.isEditingAddress = false }
         }
         .onChange(of: peekShown) { _, shown in
             peekHasButtons = false
@@ -112,8 +159,23 @@ struct BrowserWindow: View {
         }
     }
 
+    private var barMode: CommandBar.Mode? {
+        if store.isComposingNewTab { return .newTab }
+        return commands.isEditingAddress ? .editAddress : nil
+    }
+
+    private func dismissBar() {
+        store.cancelComposing()
+        commands.isEditingAddress = false
+        // Keys go back to the page, so Space and the arrows scroll it; once a new tab's is in place.
+        Task {
+            guard let webView = store.activeSession?.webView else { return }
+            webView.window?.makeFirstResponder(webView)
+        }
+    }
+
     private var peekShown: Bool {
-        !commands.showsSidebar && (peeksSidebar || store.isComposingNewTab || commands.isEditingAddress)
+        !commands.showsSidebar && peeksSidebar
     }
 
     private var spaceTint: Color {
@@ -122,16 +184,18 @@ struct BrowserWindow: View {
 }
 
 /// The window's own buttons, shown only with the sidebar; the window dragged by its background; and where
-/// the pointer is across the window, page included.
+/// the pointer is and is pressed across the window (top-left origin), page included.
 private struct WindowChrome: NSViewRepresentable {
     let showsButtons: Bool
     let pointerMoved: (CGFloat) -> Void
+    let pointerPressed: (CGPoint) -> Void
 
     func makeNSView(context: Context) -> ChromeView { ChromeView() }
 
     func updateNSView(_ view: ChromeView, context: Context) {
         view.showsButtons = showsButtons
         view.pointerMoved = pointerMoved
+        view.pointerPressed = pointerPressed
     }
 
     final class ChromeView: NSView {
@@ -139,6 +203,7 @@ private struct WindowChrome: NSViewRepresentable {
             didSet { apply() }
         }
         var pointerMoved: ((CGFloat) -> Void)?
+        var pointerPressed: ((CGPoint) -> Void)?
         private var monitor: Any?
 
         override func viewDidMoveToWindow() {
@@ -148,8 +213,16 @@ private struct WindowChrome: NSViewRepresentable {
             guard let window else { return }
             window.isMovableByWindowBackground = true
             window.acceptsMouseMovedEvents = true
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
-                if let self, event.window === self.window { pointerMoved?(event.locationInWindow.x) }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .leftMouseDown]) {
+                [weak self] event in
+                guard let self, event.window === self.window else { return event }
+                let location = event.locationInWindow
+                if event.type == .leftMouseDown {
+                    let height = self.window?.contentView?.bounds.height ?? 0
+                    pointerPressed?(CGPoint(x: location.x, y: height - location.y))
+                } else {
+                    pointerMoved?(location.x)
+                }
                 return event
             }
             apply()

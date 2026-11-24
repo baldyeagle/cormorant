@@ -134,7 +134,7 @@ fileprivate extension TestBrowser {
     /// so far are in (they're recorded as a page commits, queued before this lookup).
     func panel(typing text: String) async -> SearchSheet.Shown {
         _ = await store.afterBrowsingHistoryWrites { _ in }
-        let lookup = await SearchSheet.historyLookup(for: text, in: store)
+        let lookup = await AddressPanel.historyLookup(for: text, in: store)
         return SearchSheet.shown(for: text, lookup: lookup, in: store)
     }
 }

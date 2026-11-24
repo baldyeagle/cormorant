@@ -34,6 +34,27 @@ import Testing
         #expect(state.pinnedTabs(inSpace: Space.defaultID).map(\.id) == [c.id, a.id])
     }
 
+    @Test func aTabOpenedUnderAnotherIsListedRightBelowIt() {
+        var (state, a, b, c) = home()
+        #expect(state.listedTabs(inSpace: Space.defaultID).map(\.id) == [c.id, b.id, a.id])
+        let child = state.openTab(url: url("https://b.example/next"), under: b.id, activate: false)
+        let other = state.openTab(url: url("https://d.example"))
+        #expect(state.listedTabs(inSpace: Space.defaultID).map(\.id) == [other.id, c.id, b.id, child.id, a.id])
+        // Not under a pin, which isn't listed: first instead, and the pins keep their order.
+        _ = state.pin(tabID: c.id)
+        _ = state.pin(tabID: a.id)
+        let afterPin = state.openTab(url: url("https://e.example"), under: c.id)
+        #expect(state.listedTabs(inSpace: Space.defaultID).first?.id == afterPin.id)
+        #expect(state.pinnedTabs(inSpace: Space.defaultID).map(\.id) == [c.id, a.id])
+        // Unpinned, a tab is listed first.
+        state.unpin(tabID: c.id)
+        #expect(state.listedTabs(inSpace: Space.defaultID).first?.id == c.id)
+        // In Incognito too, under the page it came from.
+        let page = state.openIncognitoTab(url: url("https://f.example"))
+        let fromPage = state.openTab(url: url("https://f.example/next"), inSpace: Space.incognitoID, under: page.id)
+        #expect(state.listedTabs(inSpace: Space.incognitoID).map(\.id) == [page.id, fromPage.id])
+    }
+
     @Test func pinnedTabsNeverArchive() {
         var (state, a, b, _) = home()
         state.pin(tabID: a.id)

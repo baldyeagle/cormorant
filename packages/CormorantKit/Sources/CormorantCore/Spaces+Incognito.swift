@@ -50,9 +50,10 @@ extension BrowserState {
     /// Opens a tab in Incognito, opening the Space if it isn't. Made active unless `activate` is false
     /// (a background tab), switching to Incognito if it isn't the active Space.
     @discardableResult
-    public mutating func openIncognitoTab(url: URL?, title: String = "", activate: Bool = true, now: Date = .now) -> Tab {
+    public mutating func openIncognitoTab(url: URL?, title: String = "", under openerID: UUID? = nil,
+                                          activate: Bool = true, now: Date = .now) -> Tab {
         let tab = Tab(spaceID: Space.incognitoID, url: url, title: title, kind: .today, createdAt: now)
-        tabs.append(tab)
+        insert(tab, under: openerID)
         if activate {
             if activeSpaceID != Space.incognitoID, let activeTabID { markViewed(tabID: activeTabID, now: now) }
             activeSpaceID = Space.incognitoID

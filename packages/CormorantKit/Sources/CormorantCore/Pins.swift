@@ -60,6 +60,13 @@ extension BrowserState {
         tabs(inSpace: spaceID).filter { !$0.isPinned }
     }
 
+    /// The Space's other tabs in the order a list of them keeps (the Mac's sidebar): the newest first,
+    /// a tab opened from a page under it (`openTab(under:)`). That's `tabs` last first, so tabs saved
+    /// before there was a list are listed newest first.
+    public func listedTabs(inSpace spaceID: UUID) -> [Tab] {
+        tabs.filter { $0.spaceID == spaceID && !$0.isPinned }.reversed()
+    }
+
     /// Whether `pin(tabID:)` would pin the tab: a web page (http or https), not Incognito, not pinned yet.
     public func canPin(_ tabID: UUID) -> Bool {
         guard let tab = tab(tabID), !tab.isPinned, !tab.isIncognito,
@@ -91,7 +98,7 @@ extension BrowserState {
         return true
     }
 
-    /// Unpins the tab: one of the Space's other tabs again, on the page it's on, counted as viewed now
+    /// Unpins the tab: one of the Space's other tabs again, listed first, on the page it's on, counted as viewed now
     /// (so it doesn't archive at once for the time it sat pinned). Returns what `undoUnpin` needs, or
     /// nil for an unknown or unpinned tab.
     @discardableResult
@@ -105,6 +112,8 @@ extension BrowserState {
         tabs[index].pinnedTitle = nil
         tabs[index].customTitle = nil
         tabs[index].lastViewedAt = max(tab.lastViewedAt, now)
+        // Listed first (`listedTabs`), not wherever it sat among the pins.
+        tabs.append(tabs.remove(at: index))
         return undo
     }
 

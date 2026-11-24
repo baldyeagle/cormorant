@@ -21,13 +21,14 @@ struct Sidebar: View {
             ScrollView {
                 VStack(spacing: 2) {
                     NewTabRow(store: store)
-                    // Newest first, and staying put: the store's own order is the last viewed.
-                    ForEach(store.unpinnedTabs.sorted { $0.createdAt > $1.createdAt }) { tab in
+                    ForEach(store.listedTabs) { tab in
                         TabRow(tab: tab, store: store,
                                isActive: tab.id == store.state.activeTabID && !store.isComposingNewTab)
+                            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                     }
                 }
                 .padding(.top, 12)
+                .animation(.snappy(duration: 0.2), value: store.listedTabs.map(\.id))
             }
             .scrollIndicators(.never)
             footer

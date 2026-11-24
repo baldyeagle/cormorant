@@ -111,6 +111,55 @@ struct BrowserStoreTests {
         withExtendedLifetime(server) {}
     }
 
+    /// As a Mac's ⌘-click: the link opens in a background tab and this page stays where it is.
+    @Test func aClickTheChromeTakesForANewTabOpensOneBehind() async throws {
+        let server = try FixtureServer(html: "<!doctype html><title>Fixture page</title><a href=\"/next\">Next</a>")
+        let (store, platform, files) = try Self.makeStore()
+        defer { Self.end(store, files: files) }
+        await store.launch()
+        let session = try await Self.open(server.url.appending(path: "page"), in: store)
+        try #require(platform.chromes.first).newTabForClicks = NewTabRequest(inBackground: true)
+
+        _ = try await session.webView.evaluateJavaScript("document.links[0].click(), true")
+        // Another tab: followed here instead, this tab would be the one on /next.
+        try await Self.until("another tab on /next") {
+            store.tabs.contains { $0.id != session.tabID && $0.url?.path() == "/next" }
+        }
+        #expect(store.activeSession === session)
+        #expect(session.webView.url?.path() == "/page")
+        withExtendedLifetime(server) {}
+    }
+
+    /// Pages opened from one are listed under it, in the order they were opened; a new tab goes first.
+    @Test func tabsOpenedFromAPageAreListedUnderIt() async throws {
+        let server = try FixtureServer(html: "<!doctype html><title>Fixture page</title><a href=\"/a\">A</a><a href=\"/b\">B</a>")
+        let (store, platform, files) = try Self.makeStore()
+        defer { Self.end(store, files: files) }
+        await store.launch()
+        _ = try await Self.open(server.url.appending(path: "first"), in: store)
+        store.newTab()
+        let session = try await Self.open(server.url.appending(path: "page"), in: store)
+        try #require(platform.chromes.last).newTabForClicks = NewTabRequest(inBackground: true)
+
+        for index in 0..<2 {
+            _ = try await session.webView.evaluateJavaScript("document.links[\(index)].click(), true")
+            try await Self.until("\(index + 1) tabs opened") { store.tabs.count == 3 + index }
+        }
+        #expect(store.listedTabs.map { $0.url?.path() } == ["/page", "/a", "/b", "/first"])
+        // A `target=_blank` link, followed as is, goes under them too.
+        platform.chromes.last?.newTabForClicks = nil
+        _ = try await session.webView.evaluateJavaScript("""
+            const link = Object.assign(document.createElement('a'), {href: '/c', target: '_blank'});
+            document.body.append(link); link.click(); true
+            """)
+        try await Self.until("a tab on /c") { store.tabs.contains { $0.url?.path() == "/c" } }
+        #expect(store.listedTabs.map { $0.url?.path() } == ["/page", "/a", "/b", "/c", "/first"])
+        store.newTab()
+        _ = try await Self.open(server.url.appending(path: "new"), in: store)
+        #expect(store.listedTabs.first?.url?.path() == "/new")
+        withExtendedLifetime(server) {}
+    }
+
     /// The Mac's: a calendar file is a download like any other, for Finder to open.
     @Test func aCalendarFileIsADownloadWhenTheAppHandsNothingOff() async throws {
         let invite = Data("""

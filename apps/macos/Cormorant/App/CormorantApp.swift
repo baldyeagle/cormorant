@@ -10,7 +10,7 @@ struct CormorantApp: App {
 
     var body: some Scene {
         Window("Cormorant", id: "browser") {
-            BrowserWindow(store: delegate.store, commands: commands)
+            BrowserWindow(store: delegate.store, commands: commands, platform: delegate.platform)
                 .task { await delegate.store.launch() }
                 .onOpenURL { delegate.store.handle(openURL: $0) }
         }

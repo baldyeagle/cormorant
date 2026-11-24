@@ -2,7 +2,18 @@ import AppKit
 import CormorantBrowser
 import WebKit
 
+/// Somewhere in the window, out of sight, for background tabs to load at the size they'll be shown.
+protocol BackgroundTabStage: AnyObject {
+    /// In a window: WebKit only loads a page in a web view that is.
+    var holdsTabs: Bool { get }
+    func add(_ webView: WKWebView)
+    func remove(_ webView: WKWebView)
+}
+
 final class MacBrowserPlatform: BrowserPlatform {
+    /// The page area, once the window has one.
+    weak var backgroundStage: BackgroundTabStage?
+
     /// Writes the engine asked to see through, which quitting waits for.
     private var running: [UUID: Task<Void, Never>] = [:]
 
@@ -41,8 +52,9 @@ final class MacBrowserPlatform: BrowserPlatform {
         }
     }
 
-    var canStage: Bool { false }
+    var canStage: Bool { backgroundStage?.holdsTabs == true }
+    /// Every tab is shown at the page area's size, whichever tab opened it.
     func prepareStage(from opener: WKWebView) {}
-    func stage(_ webView: WKWebView) {}
-    func unstage(_ webView: WKWebView) {}
+    func stage(_ webView: WKWebView) { backgroundStage?.add(webView) }
+    func unstage(_ webView: WKWebView) { backgroundStage?.remove(webView) }
 }

@@ -65,6 +65,12 @@ final class MacTabChrome: NSObject, TabChrome, WKUIDelegate {
             appearance: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .dark : .light)
     }
 
+    /// ⌘-click opens the link in a background tab; ⇧⌘-click opens it and goes there.
+    func newTab(for click: WKNavigationAction) -> NewTabRequest? {
+        guard click.modifierFlags.contains(.command) else { return nil }
+        return NewTabRequest(inBackground: !click.modifierFlags.contains(.shift))
+    }
+
     func tabDidBecomeActive() {}
     func tabDidResignActive() {}
     func sessionDidDetach() {}

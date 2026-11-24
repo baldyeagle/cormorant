@@ -11,6 +11,9 @@ extension BrowserStore {
     /// The active Space's other tabs, most recently viewed first: the switcher's cards.
     public var unpinnedTabs: [Tab] { state.unpinnedTabs(inSpace: state.activeSpaceID) }
 
+    /// The active Space's other tabs in the order a list of them keeps (`BrowserState.listedTabs`).
+    public var listedTabs: [Tab] { state.listedTabs(inSpace: state.activeSpaceID) }
+
     /// Whether the tab can be pinned: a web page, not Incognito, not pinned already.
     public func canPin(_ tabID: UUID) -> Bool { state.canPin(tabID) }
 

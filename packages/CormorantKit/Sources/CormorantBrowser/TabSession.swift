@@ -459,6 +459,11 @@ public final class TabSession {
         }
         // `<a download>`: saved, whatever the response would have been.
         if action.shouldPerformDownload { return .download }
+        // In any frame, a `target=_blank` link's (no target frame) too: cancelled here, it opens no window.
+        if action.navigationType == .linkActivated, let request = chrome.newTab(for: action),
+           onOpenInNewTab?(url, request.inBackground, nil) == true {
+            return .cancel
+        }
         guard action.targetFrame?.isMainFrame == true else { return .allow }
         let host = url.host()?.lowercased()
         // A re-apply may be in flight (toggle, list change) and may have been started with the

@@ -126,6 +126,9 @@ public final class BrowserStore {
     @ObservationIgnored private var stagedLoads: [UUID: Task<Void, Never>] = [:]
     /// Background tabs waiting for a stage slot, oldest first. They have no web view yet.
     @ObservationIgnored private var backgroundQueue: [UUID] = []
+    /// The tab last opened from a page, listed under it: the next one from that page goes under this
+    /// one, so they stay in the order they were opened. Until another tab is chosen.
+    @ObservationIgnored private var lastOpenedFrom: (opener: UUID, tab: UUID)?
     /// Tabs closed this run, the last closed last: what `reopenClosedTab()` brings back first.
     @ObservationIgnored private var closedTabIDs: [UUID] = []
     @ObservationIgnored let platform: any BrowserPlatform
@@ -370,6 +373,7 @@ public final class BrowserStore {
     }
 
     public func activate(_ tabID: UUID) {
+        lastOpenedFrom = nil
         isComposingNewTab = false
         composesIncognito = false
         isSearchingTabs = false
@@ -546,7 +550,9 @@ public final class BrowserStore {
         }
         // An adopted page may have redirected; the tab records where it ended up.
         let tab = state.openTab(url: handoff?.webView.url ?? url, title: handoff?.webView.title ?? "",
-                                inSpace: spaceID ?? self.spaceID(of: opener), activate: !inBackground)
+                                inSpace: spaceID ?? self.spaceID(of: opener), under: listingPlace(from: opener),
+                                activate: !inBackground)
+        noteOpened(tab, from: opener)
         unvisitedTabIDs.insert(tab.id)
         // Stamped after, so the page being read stays first in the switcher, the new tab next.
         if inBackground { stampActiveTab() }
@@ -860,6 +866,22 @@ public final class BrowserStore {
         state.removeBlankTabs()
     }
 
+    /// The tab a tab opened from `opener` is listed under: the one last opened from it, while that's
+    /// still listed with it, so tabs from one page stay in the order they were opened; else the opener.
+    private func listingPlace(from opener: TabSession?) -> UUID? {
+        guard let opener, let openerTab = state.tab(opener.tabID) else { return nil }
+        if let last = lastOpenedFrom, last.opener == opener.tabID, let tab = state.tab(last.tab),
+           !tab.isPinned, tab.spaceID == openerTab.spaceID {
+            return tab.id
+        }
+        return opener.tabID
+    }
+
+    private func noteOpened(_ tab: Tab, from opener: TabSession?) {
+        guard let opener, state.tab(opener.tabID)?.spaceID == tab.spaceID else { return }
+        lastOpenedFrom = (opener.tabID, tab.id)
+    }
+
     /// `window.open` / `target=_blank`: a new active tab whose web view WebKit will navigate.
     private func openChild(configuration: WKWebViewConfiguration, for action: WKNavigationAction,
                            from opener: TabSession?) -> WKWebView? {
@@ -876,7 +898,9 @@ public final class BrowserStore {
         // `window.open('')` has no URL yet; the opener navigates or writes into the new view.
         let requested = action.request.url.flatMap { $0.absoluteString.isEmpty ? nil : $0 }
         stampActiveTab()
-        let tab = state.openTab(url: requested ?? URL(string: "about:blank"), inSpace: openerSpace)
+        let tab = state.openTab(url: requested ?? URL(string: "about:blank"), inSpace: openerSpace,
+                                under: listingPlace(from: opener))
+        noteOpened(tab, from: opener)
         let session = makeSession(for: tab, configuration: configuration)
         // Before WebKit navigates it, so a popup from a desktop-mode tab opens in desktop mode too.
         if let opener { session.apply(opener.viewSettings) }

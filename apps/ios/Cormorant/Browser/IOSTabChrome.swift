@@ -110,6 +110,8 @@ final class IOSTabChrome: NSObject, TabChrome, WKUIDelegate {
         }
     }
 
+    func newTab(for click: WKNavigationAction) -> NewTabRequest? { nil }
+
     func tabDidBecomeActive() {
         // Asked for while another tab's sheet was open; it must not fire on a later dismissal.
         pendingAction = nil

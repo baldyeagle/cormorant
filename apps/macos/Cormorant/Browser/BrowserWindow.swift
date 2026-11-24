@@ -13,6 +13,7 @@ private let sidebarSlideDuration = 0.08
 struct BrowserWindow: View {
     let store: BrowserStore
     let commands: WindowCommands
+    let platform: MacBrowserPlatform
     @State private var peeksSidebar = false
     /// The slide-out sidebar on screen, and its window buttons, which come once it's in place.
     @State private var peekIsOut = false
@@ -26,9 +27,10 @@ struct BrowserWindow: View {
     @State private var barFrame: CGRect = .zero
     @Environment(\.colorScheme) private var colorScheme
 
-    init(store: BrowserStore, commands: WindowCommands) {
+    init(store: BrowserStore, commands: WindowCommands, platform: MacBrowserPlatform) {
         self.store = store
         self.commands = commands
+        self.platform = platform
         _isDocked = State(initialValue: commands.showsSidebar)
     }
 
@@ -40,7 +42,7 @@ struct BrowserWindow: View {
             let titleBar = max(proxy.safeAreaInsets.top, 28)
             let pageLeading = isDocked ? commands.sidebarWidth : 8
             ZStack(alignment: .topLeading) {
-                PageArea(webView: store.activeSession?.webView, leading: pageLeading)
+                PageArea(webView: store.activeSession?.webView, leading: pageLeading, platform: platform)
                 PageOverlays(store: store)
                     .padding(8)
                     .padding(.leading, pageLeading - 8)
@@ -236,6 +238,13 @@ private struct WindowChrome: NSViewRepresentable {
     }
 }
 
+/// Background tabs' web views: never clicked or read by VoiceOver.
+private final class StageView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
+    override func accessibilityChildren() -> [Any]? { [] }
+}
+
 /// The sidebar's trailing edge, dragged to make it wider or narrower.
 private struct SidebarResizer: View {
     let commands: WindowCommands
@@ -376,16 +385,25 @@ private struct ToastView: View {
 private struct PageArea: NSViewRepresentable {
     let webView: WKWebView?
     let leading: CGFloat
+    let platform: MacBrowserPlatform
 
-    func makeNSView(context: Context) -> PageAreaView { PageAreaView() }
+    func makeNSView(context: Context) -> PageAreaView {
+        let view = PageAreaView()
+        platform.backgroundStage = view
+        return view
+    }
 
     func updateNSView(_ view: PageAreaView, context: Context) {
         view.show(webView)
         view.setLeading(leading, animated: context.transaction.animation != nil)
     }
 
-    final class PageAreaView: NSView {
+    /// Background tabs load on `stage`, at the page's size so they need no relayout once shown, just
+    /// past the window's right edge: in the window, so WebKit loads and lays them out, but where no
+    /// pointer reaches (a tracking area only counts what's visible) and nothing shows.
+    final class PageAreaView: NSView, BackgroundTabStage {
         private let page = NSView()
+        private let stage = StageView()
         private var webView: WKWebView?
         private var leading: CGFloat = 8
         /// Where the page's leading edge is drawn: `leading` itself, or on its way there.
@@ -400,6 +418,7 @@ private struct PageArea: NSViewRepresentable {
             page.layer?.cornerCurve = .continuous
             page.layer?.masksToBounds = true
             page.layer?.borderWidth = 0.5
+            addSubview(stage)
             addSubview(page)
             updateColors()
         }
@@ -417,6 +436,17 @@ private struct PageArea: NSViewRepresentable {
                 newWebView.frame = page.bounds
                 page.addSubview(newWebView)
             }
+        }
+
+        var holdsTabs: Bool { window != nil }
+
+        func add(_ webView: WKWebView) {
+            webView.frame = stage.bounds
+            stage.addSubview(webView)
+        }
+
+        func remove(_ webView: WKWebView) {
+            if webView.superview === stage { webView.removeFromSuperview() }
         }
 
         func setLeading(_ newLeading: CGFloat, animated: Bool) {
@@ -464,6 +494,12 @@ private struct PageArea: NSViewRepresentable {
             page.frame = NSRect(x: shownLeading, y: 8, width: max(bounds.width - shownLeading - 8, 0),
                                 height: max(bounds.height - 16, 0))
             webView?.frame = page.bounds
+            // The size the page will have once the sidebar's slide is done, not on its way.
+            let size = NSSize(width: max(bounds.width - leading - 8, 0), height: page.frame.height)
+            if stage.frame.size != size || stage.frame.minX != bounds.width + 64 {
+                stage.frame = NSRect(origin: NSPoint(x: bounds.width + 64, y: 8), size: size)
+                for staged in stage.subviews { staged.frame = stage.bounds }
+            }
         }
 
         /// SwiftUI's `easeOut`, the sidebar's curve: the cubic Bézier through (0, 0), (0.58, 1).

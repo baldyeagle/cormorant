@@ -66,13 +66,41 @@ struct BrowserStoreTests {
         withExtendedLifetime(server) {}
     }
 
+    /// The Mac's: a calendar file is a download like any other, for Finder to open.
+    @Test func aCalendarFileIsADownloadWhenTheAppHandsNothingOff() async throws {
+        let invite = Data("""
+            BEGIN:VCALENDAR\r
+            BEGIN:VEVENT\r
+            SUMMARY:Launch\r
+            DTSTART:20261201T180000Z\r
+            END:VEVENT\r
+            END:VCALENDAR\r
+
+            """.utf8)
+        let server = try FixtureServer(html: "<!doctype html><a href=\"/invite.ics\">Invite</a>",
+                                       files: ["/invite.ics": .init(contentType: "text/calendar", body: invite)])
+        let (store, _, files) = try Self.makeStore(handoffs: [])
+        defer { Self.end(store, files: files) }
+        await store.launch()
+        let session = try await Self.open(server.url.appending(path: "page"), in: store)
+
+        _ = try await session.webView.evaluateJavaScript("document.links[0].click(), true")
+        try await Self.until("invite.ics to download") {
+            store.downloads.listed.contains { $0.filename == "invite.ics" && $0.status == .finished }
+        }
+        #expect(store.calendarImport == nil)
+        #expect(store.toast?.message == "Downloaded invite.ics")
+        withExtendedLifetime(server) {}
+    }
+
     /// The store's own files: a defaults suite and a temporary directory, removed by `end`.
     private struct Files {
         let suite: String
         let directory: URL
     }
 
-    private static func makeStore() throws -> (BrowserStore, TestPlatform, Files) {
+    private static func makeStore(handoffs: Set<DownloadHandoff> = [.walletPass, .calendar, .arModel]) throws
+        -> (BrowserStore, TestPlatform, Files) {
         let directory = URL.temporaryDirectory.appending(path: "cormorant-browser-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         let suite = "dev.baldyeagle.cormorant.browser-tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -80,7 +108,8 @@ struct BrowserStoreTests {
         let store = BrowserStore(
             stateStore: JSONBrowserStateStore(fileURL: directory.appending(path: "state.json")),
             historyStore: TabHistoryStore(directory: directory.appending(path: "History", directoryHint: .isDirectory)),
-            blocking: BlockingService(usesFilterLists: false),
+            blocking: BlockingService(usesFilterLists: false, cacheDirectory: directory.appending(path: "Blocking", directoryHint: .isDirectory),
+                                      defaults: defaults),
             settings: AppSettings(defaults: defaults),
             favicons: FaviconStore(directory: directory.appending(path: "Favicons", directoryHint: .isDirectory)),
             browsingHistory: nil,
@@ -88,7 +117,7 @@ struct BrowserStoreTests {
             focusFilter: FocusFilterSettings(defaults: defaults, systemFilterSpace: nil),
             inbox: nil,
             spacesSummary: nil,
-            downloads: DownloadCenter(directory: directory.appending(path: "Downloads", directoryHint: .isDirectory)),
+            downloads: DownloadCenter(directory: directory.appending(path: "Downloads", directoryHint: .isDirectory), handoffs: handoffs),
             platform: platform
         )
         return (store, platform, Files(suite: suite, directory: directory))
@@ -115,5 +144,17 @@ struct BrowserStoreTests {
 
     private struct LoadTimeout: Error {
         let url: URL?
+    }
+
+    private static func until(_ what: String, _ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(60)
+        while !condition() {
+            guard ContinuousClock.now < deadline else { throw TimedOut(what: what) }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    private struct TimedOut: Error {
+        let what: String
     }
 }

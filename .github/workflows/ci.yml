@@ -52,7 +52,7 @@ jobs:
           # Against the base branch's tip: everything the PR would change, both sides of a move.
           CHANGED=$(git diff --name-only --no-renames HEAD^1 HEAD)
           echo "$CHANGED"
-          if echo "$CHANGED" | grep -qE '^(apps/ios|packages|Cormorant\.xcworkspace|scripts|\.github)/'; then
+          if echo "$CHANGED" | grep -qE '^(apps/ios|apps/macos|packages|Cormorant\.xcworkspace|scripts|\.github)/'; then
             echo "ios=true" >> "$GITHUB_OUTPUT"
           else
             echo "ios=false" >> "$GITHUB_OUTPUT"
@@ -84,9 +84,9 @@ jobs:
         run: scripts/ui-test-shard.py --check-quarantine
 
   ios:
-    # Shard 1 also runs the package's tests, the app's in-process tests and checks the built app; the
-    # others only run UI tests.
-    name: ${{ matrix.shard == 1 && 'iOS app, CormorantKit, app tests and UI tests (shard 1)' || format('UI tests (shard {0})', matrix.shard) }}
+    # Shard 1 also builds the Mac app, runs the package's tests and the iPhone app's in-process tests and
+    # checks the built app; the others only run UI tests.
+    name: ${{ matrix.shard == 1 && 'iOS and Mac apps, CormorantKit, app tests and UI tests (shard 1)' || format('UI tests (shard {0})', matrix.shard) }}
     needs: changes
     if: needs.changes.outputs.ios == 'true'
     runs-on: xcode-27
@@ -166,6 +166,19 @@ jobs:
             echo "Compiler warnings in packages (macOS)"; exit 1
           fi
           swift test --package-path packages/CormorantKit
+      - name: Mac app
+        # Built only: it has no tests yet. Before the simulator boots, like the iPhone app's build.
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        run: |
+          mkdir -p build
+          xcodebuild -workspace Cormorant.xcworkspace -scheme CormorantMac \
+            -destination 'platform=macOS,arch=arm64' -configuration Debug \
+            -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO \
+            build | tee build/xcodebuild-mac.log | grep -E "error:|warning:|BUILD" | grep -v appintentsmetadataprocessor || true
+          grep -q "BUILD SUCCEEDED" build/xcodebuild-mac.log
+          if grep -E "apps/macos/.*warning:" build/xcodebuild-mac.log; then
+            echo "Compiler warnings in apps/macos"; exit 1
+          fi
       - name: Boot a simulator
         id: boot
         # After the build, not during it: on these 3-core, 7 GB runners a build beside a booting

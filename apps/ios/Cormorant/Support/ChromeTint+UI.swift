@@ -22,13 +22,10 @@ extension BrowserStore {
         if showsIncognitoStrip, let black = RGBColor(.incognitoBackground, in: .current) {
             return ChromeTint(background: black)
         }
-        let style: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
         guard settings.pageUnderStatusBar, activeTab?.url != nil,
               let session = activeSession, session.loadError == nil, !session.isAwaitingFirstPaint,
-              session.pageBackgroundStyle == style else { return nil }
-        let traits = UITraitCollection(userInterfaceStyle: style)
-        return ChromeTint(pageBackground: RGBColor(session.pageBackground, in: traits),
-                          defaultBackground: .launchBackground(in: colorScheme))
+              let background = session.pageBackground, background.appearance == Appearance(colorScheme) else { return nil }
+        return ChromeTint(pageBackground: background.color, defaultBackground: .launchBackground(in: colorScheme))
     }
 
     /// The color behind the status bar, for anything that has to match it: the iPhone Duo's status-bar
@@ -58,6 +55,20 @@ extension RGBColor {
     static func launchBackground(in colorScheme: ColorScheme) -> RGBColor {
         let traits = UITraitCollection(userInterfaceStyle: colorScheme == .dark ? .dark : .light)
         return RGBColor(UIColor(resource: .launchBackground), in: traits) ?? .white
+    }
+}
+
+extension Appearance {
+    init(_ colorScheme: ColorScheme) {
+        self = colorScheme == .dark ? .dark : .light
+    }
+
+    init?(_ style: UIUserInterfaceStyle) {
+        switch style {
+        case .light: self = .light
+        case .dark: self = .dark
+        default: return nil
+        }
     }
 }
 

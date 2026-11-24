@@ -52,7 +52,7 @@ struct CardExpansion: View {
             backdrop().opacity(expanded ? 1 : 0)
             // What the page shows behind the status bar, fading in with the backdrop above the card.
             if let band = snapshot?.statusBand, page.minY > 0 {
-                Image(uiImage: band)
+                Image(decorative: band, scale: 1)
                     .resizable()
                     .frame(width: page.width, height: page.minY)
                     .position(x: page.midX, y: page.minY / 2)

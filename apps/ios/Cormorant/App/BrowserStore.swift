@@ -2,7 +2,6 @@ import CormorantBlocking
 import CormorantCore
 import Observation
 import OSLog
-import UIKit
 import WebKit
 
 /// Owns the persisted tab state and the live web views behind it.
@@ -85,7 +84,6 @@ final class BrowserStore {
     let downloads: DownloadCenter
     let settings: AppSettings
     let favicons: FaviconStore
-    let defaultBrowser: DefaultBrowserStatus
     /// Pages visited, for the search panel. Nil if the database couldn't be opened; browsing goes on
     /// without it.
     let browsingHistory: BrowsingHistory?
@@ -128,11 +126,7 @@ final class BrowserStore {
     @ObservationIgnored private var stagedLoads: [UUID: Task<Void, Never>] = [:]
     /// Background tabs waiting for a stage slot, oldest first. They have no web view yet.
     @ObservationIgnored private var backgroundQueue: [UUID] = []
-    @ObservationIgnored private let backgroundStage = BackgroundPageStage()
-    /// Where background tabs load, and at what size: the window and layout of the tab they were opened
-    /// from, so they're ready to show as they are.
-    @ObservationIgnored private weak var stagingWindow: UIWindow?
-    @ObservationIgnored private var stagingLayout: PageLayout?
+    @ObservationIgnored let platform: any BrowserPlatform
     /// Links from other apps waiting for the tabs to load, each with the Space it was sent to, if any.
     @ObservationIgnored private var pendingURLs: [(url: URL, spaceID: UUID?)] = []
     @ObservationIgnored private var sceneIsActive = true
@@ -163,13 +157,13 @@ final class BrowserStore {
         blocking: BlockingService = BlockingService(),
         settings: AppSettings = AppSettings(),
         favicons: FaviconStore = FaviconStore(),
-        defaultBrowser: DefaultBrowserStatus = DefaultBrowserStatus(),
         browsingHistory: BrowsingHistory? = BrowserStore.openBrowsingHistory(),
         searchSuggestions: SearchSuggestionClient? = SearchSuggestionClient(),
-        focusFilter: FocusFilterSettings = .shared,
+        focusFilter: FocusFilterSettings,
         inbox: SharedInbox? = SharedInbox(appGroup: AppGroup.identifier),
         spacesSummary: SpacesSummaryFile? = SpacesSummaryFile(appGroup: AppGroup.identifier),
-        downloads: DownloadCenter = DownloadCenter()
+        downloads: DownloadCenter = DownloadCenter(),
+        platform: any BrowserPlatform
     ) {
         var usesFallbackStorage = false
         if let stateStore {
@@ -195,10 +189,10 @@ final class BrowserStore {
         self.downloads = downloads
         self.settings = settings
         self.favicons = favicons
-        self.defaultBrowser = defaultBrowser
         self.browsingHistory = browsingHistory
         self.searchSuggestions = searchSuggestions
         self.focusFilter = focusFilter
+        self.platform = platform
         showsStorageFallbackWarning = usesFallbackStorage
             && !UserDefaults.standard.bool(forKey: Self.warnedStorageFallbackKey)
         blocking.onListsChanged = { [weak self] in self?.reapplyBlockingEverywhere() }
@@ -207,7 +201,7 @@ final class BrowserStore {
         downloads.retryWebView = { [weak self] profileID in
             let profileID = profileID ?? Profile.defaultID
             guard let self, state.profiles.contains(where: { $0.id == profileID }) else { return nil }
-            return WKWebView(frame: .zero, configuration: TabSession.makeConfiguration(profileID: profileID).0)
+            return WKWebView(frame: .zero, configuration: TabSession.makeConfiguration(profileID: profileID, platform: platform).0)
         }
     }
 
@@ -269,7 +263,6 @@ final class BrowserStore {
     /// Archives idle tabs, then opens anything handed to us while we were away.
     func didBecomeActive() {
         sceneIsActive = true
-        defaultBrowser.didBecomeActive()
         focusFilter.refresh()
         // Files added or removed in the Files app while we were away.
         downloads.reload()
@@ -320,7 +313,6 @@ final class BrowserStore {
                 }
             }
         case "http", "https":
-            defaultBrowser.didReceiveWebURL()
             pendingURLs.append((url, nil))
         default:
             return
@@ -563,10 +555,7 @@ final class BrowserStore {
             pendingViewSettings[tab.id] = opener.viewSettings
         }
         if inBackground {
-            if let opener, let window = opener.webView.window {
-                stagingWindow = window
-                stagingLayout = PageLayout(of: opener.webView)
-            }
+            if let opener { platform.prepareStage(from: opener.webView) }
             loadInBackground(tab.id)
         }
         stateDidChange()
@@ -588,17 +577,17 @@ final class BrowserStore {
 
     // MARK: Toasts
 
-    /// How long a toast stays up: longer with VoiceOver, which reads it first, and not at all while
-    /// VoiceOver is on it (`holdToast`). UI tests keep it up until it's dismissed (no test can depend on
-    /// beating a timer), unless `-uiTestingToastSeconds`.
-    private static var toastLifetime: Duration? {
+    /// How long a toast stays up: the platform's (longer with VoiceOver, which reads it first), and not
+    /// at all while VoiceOver is on it (`holdToast`). UI tests keep it up until it's dismissed (no test
+    /// can depend on beating a timer), unless `-uiTestingToastSeconds`.
+    private var toastLifetime: Duration? {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-uiTesting") {
             let seconds = UserDefaults.standard.double(forKey: "uiTestingToastSeconds")
             return seconds > 0 ? .seconds(seconds) : nil
         }
         #endif
-        return UIAccessibility.isVoiceOverRunning ? .seconds(15) : .seconds(5)
+        return platform.toastLifetime
     }
 
     /// Puts up `toast` in place of any other, and announces it to VoiceOver (queued, so a menu or sheet
@@ -607,9 +596,7 @@ final class BrowserStore {
         self.toast = toast
         toastsShown += 1
         let actions = toast.allActions.map(\.title).joined(separator: ", ")
-        let announcement = NSAttributedString(string: actions.isEmpty ? toast.spokenMessage : "\(toast.spokenMessage). \(actions).",
-                                              attributes: [.accessibilitySpeechQueueAnnouncement: true])
-        UIAccessibility.post(notification: .announcement, argument: announcement)
+        platform.announce(actions.isEmpty ? toast.spokenMessage : "\(toast.spokenMessage). \(actions).")
         startToastExpiry()
     }
 
@@ -627,7 +614,7 @@ final class BrowserStore {
     private func startToastExpiry() {
         toastExpiry?.cancel()
         toastExpiry = nil
-        guard let toast, !toast.staysUp, let lifetime = Self.toastLifetime else { return }
+        guard let toast, !toast.staysUp, let lifetime = toastLifetime else { return }
         let id = toast.id
         toastExpiry = Task { [weak self] in
             try? await Task.sleep(for: lifetime)
@@ -720,9 +707,9 @@ final class BrowserStore {
         let height = session.webView.bounds.height
         let tabID = session.tabID
         return Task {
-            guard let image = try? await session.webView.takeSnapshot(configuration: configuration),
+            guard let snapshot = try? await session.webView.snapshotImage(configuration: configuration),
                   state.tabs.contains(where: { $0.id == tabID }) else { return }
-            snapshots[tabID] = PageSnapshot(image, band: band, of: height)
+            snapshots[tabID] = PageSnapshot(snapshot.image, scale: snapshot.scale, band: band, of: height)
         }
     }
 
@@ -743,7 +730,7 @@ final class BrowserStore {
 
     /// With nowhere to stage (no window seen yet), queued tabs wait to load until they're shown.
     private func startQueuedBackgroundLoads() {
-        guard stagingWindow != nil else { return }
+        guard platform.canStage else { return }
         while stagedLoads.count < Self.backgroundLoadLimit, !backgroundQueue.isEmpty {
             let tabID = backgroundQueue.removeFirst()
             // Shown, closed, or given a web view some other way meanwhile.
@@ -757,11 +744,11 @@ final class BrowserStore {
 
     /// Without a window to stage in, the page still loads but is snapshotted only once shown.
     private func stage(_ session: TabSession) {
-        guard let window = stagingWindow, let layout = stagingLayout else { return }
+        guard platform.canStage else { return }
         let tabID = session.tabID
         // Out of sight and earshot: no media until the tab is first shown.
         session.suspendMediaUntilShown()
-        backgroundStage.add(session.webView, layout: layout, in: window)
+        platform.stage(session.webView)
         stagedLoads[tabID] = Task { [weak self] in
             try? await Task.sleep(for: Self.backgroundLoadTimeout)
             if !Task.isCancelled { self?.finishBackgroundLoad(tabID) }
@@ -788,10 +775,10 @@ final class BrowserStore {
                 let webView = session.webView
                 Task { [weak self] in
                     await snapshotting.value
-                    self?.backgroundStage.remove(webView)
+                    self?.platform.unstage(webView)
                 }
             } else {
-                backgroundStage.remove(session.webView)
+                platform.unstage(session.webView)
             }
         }
         startQueuedBackgroundLoads()
@@ -803,7 +790,7 @@ final class BrowserStore {
         backgroundQueue.removeAll { $0 == tabID }
         guard let timer = stagedLoads.removeValue(forKey: tabID) else { return }
         timer.cancel()
-        if unstaging, let session = sessions[tabID] { backgroundStage.remove(session.webView) }
+        if unstaging, let session = sessions[tabID] { platform.unstage(session.webView) }
     }
 
     // MARK: Internals
@@ -859,7 +846,7 @@ final class BrowserStore {
         state.removeBlankTabs()
     }
 
-    /// `window.open` / `target=_blank`: a new active Today tab whose web view WebKit will navigate.
+    /// `window.open` / `target=_blank`: a new active tab whose web view WebKit will navigate.
     private func openChild(configuration: WKWebViewConfiguration, for action: WKNavigationAction,
                            from opener: TabSession?) -> WKWebView? {
         // In the opener's Space: the web view WebKit hands over runs on the opener's website data. An
@@ -968,7 +955,7 @@ final class BrowserStore {
         recentTabIDs.removeAll { $0 == tabID }
         cancelBackgroundLoad(tabID, unstaging: true)
         if let session = sessions.removeValue(forKey: tabID) {
-            backgroundStage.remove(session.webView)
+            platform.unstage(session.webView)
             // Still restoring, its web view's history is empty: keep the one waiting to go in.
             if let history = session.isRestoringHistory ? session.pendingHistory : session.webView.interactionState {
                 interactionStates[tabID] = history
@@ -1036,10 +1023,11 @@ final class BrowserStore {
     private func makeSession(for tab: Tab, configuration: WKWebViewConfiguration? = nil,
                              adopting handoff: LinkPreviewHandoff? = nil) -> TabSession {
         let profileID = state.profile(forSpace: tab.spaceID).id
-        let session = handoff.map { TabSession(tabID: tab.id, blocking: blocking, adopting: $0) }
-            ?? TabSession(tabID: tab.id, profileID: profileID, blocking: blocking, configuration: configuration)
+        let chrome = { [platform] (session: TabSession) in platform.makeChrome(for: session, in: self) }
+        let session = handoff.map { TabSession(tabID: tab.id, blocking: blocking, adopting: $0, chrome: chrome) }
+            ?? TabSession(tabID: tab.id, profileID: profileID, blocking: blocking, configuration: configuration,
+                          platform: platform, chrome: chrome)
         builtTabIDs.insert(tab.id)
-        session.activeStripColor = { [weak self] in self?.stripUIColor(for: $0) }
         let tabID = tab.id
         // History goes where the page was seen: the profile whose website data it loaded with.
         let visitProfile = session.profileID
@@ -1111,7 +1099,7 @@ final class BrowserStore {
         }
         // Whatever state a closed tab's web view was in, it doesn't stay on the stage.
         for (tabID, session) in sessions where !live.contains(tabID) {
-            backgroundStage.remove(session.webView)
+            platform.unstage(session.webView)
         }
         sessions = sessions.filter { live.contains($0.key) }
         interactionStates = interactionStates.filter { live.contains($0.key) }
@@ -1275,12 +1263,7 @@ final class BrowserStore {
 
     /// Asks for background time until `task` finishes, so a write isn't cut off by suspension.
     private func keepRunning(until task: Task<Void, Never>, named name: String) {
-        let application = UIApplication.shared
-        let backgroundTask = application.beginBackgroundTask(withName: name, expirationHandler: nil)
-        Task {
-            await task.value
-            application.endBackgroundTask(backgroundTask)
-        }
+        platform.keepRunning(until: task, named: name)
     }
 
     /// Writes each tab's back/forward history that changed since the last save, so it survives a

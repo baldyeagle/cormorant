@@ -5,7 +5,7 @@ import SwiftUI
 /// tinted placeholder). Swipe up to close.
 struct TabCard: View {
     let tab: CormorantCore.Tab
-    let snapshot: UIImage?
+    let snapshot: CGImage?
     let favicons: FaviconStore
     let isActive: Bool
     /// The active card's outline: the Space's color, or the app's accent with only Home.
@@ -118,7 +118,7 @@ struct TabCard: View {
 /// A tab's page as the card shows it: the snapshot pinned to the top at `width`, or the host on its
 /// tint. Also what grows to fill the screen when a card opens.
 struct TabPreview: View {
-    let snapshot: UIImage?
+    let snapshot: CGImage?
     let host: String
     let width: CGFloat
 
@@ -126,7 +126,7 @@ struct TabPreview: View {
         if let snapshot {
             // The overlay keeps the filled image from sizing the view (it would push the card's header out).
             Color.clear.overlay(alignment: .top) {
-                Image(uiImage: snapshot)
+                Image(decorative: snapshot, scale: 1)
                     .resizable()
                     .scaledToFill()
                     .frame(width: width, alignment: .top)

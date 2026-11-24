@@ -108,7 +108,7 @@ struct BrowserView: View {
             // the content, and at the end of a page that offset clamp reads as a scroll-up, which
             // re-expands the bar, which shrinks the content again: a visible flicker.
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                if store.activeSession?.isBarCollapsed != true, height > 0 { barHeight = height }
+                if store.activeSession?.ui.isBarCollapsed != true, height > 0 { barHeight = height }
             }
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { barTop = $0 }
         }
@@ -385,7 +385,7 @@ struct BrowserView: View {
     // MARK: Presentation
 
     private func presentSearch() {
-        store.activeSession?.isBarCollapsed = false
+        store.activeSession?.ui.isBarCollapsed = false
         isSearching = true
         // Set in the same update that inserts the field, so the keyboard comes up with the panel.
         searchFocused = true
@@ -409,7 +409,7 @@ struct BrowserView: View {
     private func actionsDidDismiss() {
         // Settings went with the sheet, Manage Spaces' page with it, whatever its own `onDisappear` did.
         store.isManagingSpacesInSettings = false
-        store.activeSession?.runPendingAction()
+        store.activeSession?.ui.runPendingAction()
         // The last tab may have closed while the sheet was up.
         searchIfBlank()
     }

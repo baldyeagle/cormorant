@@ -59,16 +59,16 @@ extension TabSession {
         // played its own commit on iOS 27 (the menu's background and card animating over the growing
         // card), so the card doesn't wait on it.
         animator.preferredCommitStyle = .pop
-        let handoff = takeHandoff(for: url, freezingPreview: true)
+        let taken = takeHandoff(for: url, freezingPreview: true)
         // Where the browser draws the page, read before the switch: below the status bar, where the card
         // starts, if the page runs under it.
         let window = webView.window
         let page = window.map { webView.convert(webView.bounds, to: $0) }
             .map { $0.inset(by: UIEdgeInsets(top: min(webView.obscuredContentInsets.top, $0.height), left: 0, bottom: 0, right: 0)) }
-        guard onOpenInNewTab?(url, false, handoff) == true else { return }
+        guard onOpenInNewTab?(url, false, taken?.handoff) == true else { return }
         // The new tab is showing the adopted page underneath; the card grows over it, as the switcher's
         // does, in place of the system's card.
-        if let card = handoff?.card, let window, let page {
+        if let card = taken?.card, let window, let page {
             card.platter?.isHidden = true
             CardExpansionOverlay.play(
                 in: window,
@@ -76,7 +76,7 @@ extension TabSession {
                 snapshot: card.snapshot, host: url.displayHost, page: page,
                 // The new tab's page color, known now (it came with the preview's page).
                 backdrop: { [weak self, style = window.traitCollection.userInterfaceStyle] in
-                    CardExpansion.backdrop(stripColor: self?.activeStripColor?(style))
+                    CardExpansion.backdrop(stripColor: self?.ui.activeStripColor?(style))
                 }
             )
         }
@@ -85,9 +85,9 @@ extension TabSession {
     /// The menu for `url` closed (dismissed, an action chosen, or the preview tapped). Its end can
     /// arrive after the next menu's preview exists; that one is left running.
     func linkMenuDidEnd(for url: URL?) {
-        guard let preview = linkPreview, preview.url == url else { return }
+        guard let preview = ui.linkPreview, preview.url == url else { return }
         preview.stop()
-        linkPreview = nil
+        ui.linkPreview = nil
     }
 
     /// Open Link: loads in this tab, or asks before handing it to another app.
@@ -130,7 +130,7 @@ extension TabSession {
                 open.append(LinkMenuAction(title: "Open in Incognito", systemImage: "eyeglasses",
                                            image: incognitoIcon?().image(width: 24, isOn: true)) { [weak self] in
                     guard let self, onOpenInIncognito?(url) == true else { return }
-                    setBarCollapsed(false)
+                    ui.setBarCollapsed(false)
                 })
             }
         }
@@ -181,12 +181,12 @@ extension TabSession {
     /// ended, so the preview's web view is still there to take.
     @discardableResult
     private func openInNewTab(_ url: URL, inBackground: Bool) -> Bool {
-        onOpenInNewTab?(url, inBackground, takeHandoff(for: url, freezingPreview: false)) == true
+        onOpenInNewTab?(url, inBackground, takeHandoff(for: url, freezingPreview: false)?.handoff) == true
     }
 
     /// The preview's web view for `url`, if its page can become a tab. See `LinkPreviewController.handoff`.
-    private func takeHandoff(for url: URL, freezingPreview: Bool) -> LinkPreviewHandoff? {
-        guard let preview = linkPreview, preview.url == url else { return nil }
+    private func takeHandoff(for url: URL, freezingPreview: Bool) -> (handoff: LinkPreviewHandoff, card: LinkPreviewCard?)? {
+        guard let preview = ui.linkPreview, preview.url == url else { return nil }
         return preview.handoff(freezing: freezingPreview)
     }
 
@@ -208,16 +208,16 @@ extension TabSession {
     /// A background tab in another Space; the store's toast says where, with Show. The preview's page
     /// goes with it only to a Space on this tab's profile: it was loaded with this tab's website data.
     func openInSpace(_ url: URL, option: LinkSpaceOption) {
-        let handoff = option.adoptsPreview ? takeHandoff(for: url, freezingPreview: false) : nil
+        let handoff = option.adoptsPreview ? takeHandoff(for: url, freezingPreview: false)?.handoff : nil
         guard onOpenInSpace?(url, option.space.id, handoff) == true else { return }
-        setBarCollapsed(false)
+        ui.setBarCollapsed(false)
     }
 
     /// The current page stays. The bar expands so the badge can be seen counting up, with a
     /// VoiceOver announcement (queued, so the menu closing doesn't cut it off).
     private func openInBackgroundTab(_ url: URL) {
         guard openInNewTab(url, inBackground: true) else { return }
-        setBarCollapsed(false)
+        ui.setBarCollapsed(false)
         let announcement = NSAttributedString(string: "Opened in background tab",
                                               attributes: [.accessibilitySpeechQueueAnnouncement: true])
         UIAccessibility.post(notification: .announcement, argument: announcement)
@@ -235,42 +235,28 @@ extension TabSession {
 
     /// The menu's preview, which UIKit asks for as the menu comes up (`linkMenuConfiguration(for:)`).
     func makeLinkPreview(for url: URL) -> LinkPreviewController {
-        linkPreview?.stop()
-        let preview = LinkPreviewController(url: url, profileID: profileID, blocking: blocking,
+        ui.linkPreview?.stop()
+        let preview = LinkPreviewController(url: url, profileID: profileID, blocking: blocking, platform: ui.platform,
                                             settings: viewSettings, layout: PageLayout(of: webView))
         // Small: about half the screen, full menu width.
         if let bounds = webView.window?.bounds {
             preview.preferredContentSize = CGSize(width: bounds.width, height: (bounds.height * 0.5).rounded())
         }
-        linkPreview = preview
+        ui.linkPreview = preview
         return preview
     }
 }
 
-/// A link preview's web view on its way to becoming a tab, with what the tab needs to carry on from
-/// where the preview got to.
-struct LinkPreviewHandoff {
-    /// Where the preview's card was on screen, and what it showed, for the tab to grow from.
-    struct Card {
-        /// In window coordinates.
-        let frame: CGRect
-        let cornerRadius: CGFloat
-        /// The page at the tab's size (the card showed its top below the status bar, shrunk to the
-        /// card's width).
-        let snapshot: PageSnapshot?
-        /// The system's card, hidden while the tab grows from where it was.
-        weak var platter: UIView?
-    }
-
-    let webView: WKWebView
-    let contentController: WKUserContentController
-    let appliedHost: String?
-    let appliedListsVersion: Int?
-    let requestedContentMode: WKWebpagePreferences.ContentMode
-    let effectiveContentMode: WKWebpagePreferences.ContentMode
-    let requestedURL: URL
-    /// Nil unless the preview was on screen (a tapped preview; menu actions run after it has gone).
-    let card: Card?
+/// Where a link preview's card was on screen, and what it showed, for the tab it becomes to grow from.
+struct LinkPreviewCard {
+    /// In window coordinates.
+    let frame: CGRect
+    let cornerRadius: CGFloat
+    /// The page at the tab's size (the card showed its top below the status bar, shrunk to the
+    /// card's width).
+    let snapshot: PageSnapshot?
+    /// The system's card, hidden while the tab grows from where it was.
+    weak var platter: UIView?
 }
 
 /// A link's page, shown under its long-press menu. Built from a tab's configuration and laid out at
@@ -304,12 +290,13 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
 
     /// - Parameter profileID: the opener's, whose website data the preview loads with (signed in as
     ///   the tab it came from is).
-    init(url: URL, profileID: UUID, blocking: BlockingService, settings: TabSession.ViewSettings, layout: PageLayout) {
+    init(url: URL, profileID: UUID, blocking: BlockingService, platform: IOSBrowserPlatform, settings: TabSession.ViewSettings,
+         layout: PageLayout) {
         self.url = url
         self.blocking = blocking
         self.settings = settings
         self.layout = layout
-        let (configuration, contentController) = TabSession.makeConfiguration(profileID: profileID)
+        let (configuration, contentController) = TabSession.makeConfiguration(profileID: profileID, platform: platform)
         self.contentController = contentController
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init(nibName: nil, bundle: nil)
@@ -374,13 +361,14 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
     /// http(s), or one that already has back history (a tab's must start at this page). A page still
     /// loading its subresources is fine; the tab carries on with the load.
     ///
-    /// - Parameter freezing: leave a snapshot in the card, for a preview still on screen.
-    func handoff(freezing: Bool) -> LinkPreviewHandoff? {
+    /// - Parameter freezing: leave a snapshot in the card, for a preview still on screen. The card is
+    ///   nil unless it's on screen (a tapped preview; menu actions run after it has gone).
+    func handoff(freezing: Bool) -> (handoff: LinkPreviewHandoff, card: LinkPreviewCard?)? {
         guard !isHandedOff, !isStopped, hasCommitted, !isBroken, pendingMainFrameDecisions == 0,
               let current = webView.url,
               TabSession.linkKind(for: current) == .page, webView.backForwardList.backList.isEmpty
         else { return nil }
-        var card: LinkPreviewHandoff.Card?
+        var card: LinkPreviewCard?
         if freezing, let window = view.window {
             if let (platter, frame) = onScreenPlatter(in: window) {
                 // What the menu's card showed, as it was: the page at its full size, with the band the
@@ -390,9 +378,9 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
                 let snapshot = UIGraphicsImageRenderer(bounds: webView.bounds).image { _ in
                     drawn = webView.drawHierarchy(in: webView.bounds, afterScreenUpdates: false)
                 }
-                card = LinkPreviewHandoff.Card(frame: frame, cornerRadius: cornerRadius(of: platter),
-                                               snapshot: drawn ? PageSnapshot(snapshot, band: statusBandHeight, of: webView.bounds.height) : nil,
-                                               platter: platter)
+                card = LinkPreviewCard(frame: frame, cornerRadius: cornerRadius(of: platter),
+                                       snapshot: drawn ? PageSnapshot(snapshot, band: statusBandHeight, of: webView.bounds.height) : nil,
+                                       platter: platter)
             }
             if let frozen = webView.snapshotView(afterScreenUpdates: false) {
                 frozen.bounds = webView.bounds
@@ -407,11 +395,12 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
         // Left where it is (under the frozen snapshot, if any) for its new home to move it straight
         // across: taking it out of the window in between would tell WebKit the page went hidden.
         layout.apply(to: webView)
-        return LinkPreviewHandoff(
+        let handoff = LinkPreviewHandoff(
             webView: webView, contentController: contentController, appliedHost: appliedHost,
             appliedListsVersion: appliedListsVersion, requestedContentMode: settings.contentMode,
-            effectiveContentMode: effectiveContentMode, requestedURL: url, card: card
+            effectiveContentMode: effectiveContentMode, requestedURL: url
         )
+        return (handoff, card)
     }
 
     /// The top of the page the tab's status bar covers (WebKit lays the page out below it, as in the

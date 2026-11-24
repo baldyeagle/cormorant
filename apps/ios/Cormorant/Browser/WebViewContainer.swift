@@ -280,8 +280,8 @@ private final class BackSwipe {
         for (image, frame) in [(snapshot?.statusBand, CGRect(x: 0, y: 0, width: webView.bounds.width, height: band)),
                                (snapshot?.content, CGRect(x: 0, y: band, width: webView.bounds.width,
                                                           height: webView.bounds.height - band))] {
-            guard let image, frame.height > 0 else { continue }
-            let view = UIImageView(image: image)
+            guard let image, let snapshot, frame.height > 0 else { continue }
+            let view = UIImageView(image: UIImage(cgImage: image, scale: snapshot.scale, orientation: .up))
             view.frame = frame
             view.contentMode = .scaleAspectFill
             view.clipsToBounds = true

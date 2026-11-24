@@ -5,6 +5,10 @@ import Foundation
 struct MoveRequest: Identifiable {
     let tabID: UUID
     var id: UUID { tabID }
+
+    init(tabID: UUID) {
+        self.tabID = tabID
+    }
 }
 
 /// A Space a tab can move to, as the move menus and sheet list it.

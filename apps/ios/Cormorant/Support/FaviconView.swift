@@ -16,7 +16,7 @@ struct FaviconView: View {
     var body: some View {
         Group {
             if let image = favicons.icon(for: url) {
-                Image(uiImage: image)
+                Image(decorative: image, scale: 1)
                     .resizable()
                     .scaledToFit()
                     .background(backsDarkIcons && colorScheme == .dark ? Color.white.opacity(0.92) : .clear)

@@ -139,9 +139,8 @@ fileprivate extension TestBrowser {
     /// The status bar's background and clock for the tab on screen, in `scheme`; nil until its page's
     /// color has settled in that appearance and the first page has drawn.
     private func statusBar(in scheme: ColorScheme) -> (background: RGBColor, foreground: ChromeTint.Foreground)? {
-        let style: UIUserInterfaceStyle = scheme == .dark ? .dark : .light
-        guard let session = store.activeSession, session.pageBackground != nil,
-              session.pageBackgroundStyle == style, !session.isAwaitingFirstPaint else { return nil }
+        guard let session = store.activeSession, session.pageBackground?.appearance == Appearance(scheme),
+              !session.isAwaitingFirstPaint else { return nil }
         let tint = store.statusBarTint(in: scheme)
         // No tint: the default strip (`stripColor(in:)`), with the system's style for the appearance
         // (`statusBarColorScheme(nil)`).

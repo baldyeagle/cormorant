@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct CormorantApp: App {
     @State private var store = Self.makeStore()
+    @State private var defaultBrowser = Self.makeDefaultBrowser()
 
     init() {
         #if DEBUG
@@ -33,7 +34,9 @@ struct CormorantApp: App {
             if Self.isHostingTests { return }
             #endif
             switch phase {
-            case .active: store.didBecomeActive()
+            case .active:
+                defaultBrowser.didBecomeActive()
+                store.didBecomeActive()
             case .inactive: store.didBecomeInactive()
             case .background: store.didEnterBackground()
             @unknown default: break
@@ -47,8 +50,12 @@ struct CormorantApp: App {
             .overlay(alignment: .topLeading) { if Self.isUITesting { UITestingProbes() } }
             #endif
             .environment(store)
+            .environment(defaultBrowser)
             .task { await store.launch() }
-            .onOpenURL { store.handle(openURL: $0) }
+            .onOpenURL { url in
+                if ["http", "https"].contains(url.scheme?.lowercased()) { defaultBrowser.didReceiveWebURL() }
+                store.handle(openURL: url)
+            }
             #if DEBUG
             .preferredColorScheme(Self.forcedColorScheme)
             #endif
@@ -89,12 +96,12 @@ struct CormorantApp: App {
                 blocking: BlockingService(usesFilterLists: false),
                 settings: AppSettings(defaults: defaults),
                 favicons: FaviconStore(directory: run.appending(path: "Favicons")),
-                defaultBrowser: DefaultBrowserStatus(isLive: false),
                 browsingHistory: nil,
                 searchSuggestions: nil,
-                focusFilter: FocusFilterSettings(defaults: defaults, followsSystem: false),
+                focusFilter: FocusFilterSettings(defaults: defaults, systemFilterSpace: nil),
                 inbox: nil,
-                spacesSummary: nil
+                spacesSummary: nil,
+                platform: IOSBrowserPlatform()
             )
         }
         // `-uiTesting` launch argument (CormorantUITests): tabs, their history and icons are saved to
@@ -125,18 +132,25 @@ struct CormorantApp: App {
                 blocking: BlockingService(usesFilterLists: false),
                 settings: settings,
                 favicons: FaviconStore(directory: run.appending(path: "Favicons")),
-                defaultBrowser: DefaultBrowserStatus(isLive: false),
                 browsingHistory: BrowserStore.openBrowsingHistory(at: run.appending(path: "browsing-history.sqlite")),
                 searchSuggestions: ProcessInfo.processInfo.arguments.contains("-uiTestingSearchSuggestions") ? SearchSuggestionClient() : nil,
-                focusFilter: FocusFilterSettings(defaults: defaults, followsSystem: false),
+                focusFilter: FocusFilterSettings(defaults: defaults, systemFilterSpace: nil),
                 inbox: SharedInbox(fileURL: run.appending(path: "inbox.json")),
                 spacesSummary: SpacesSummaryFile(fileURL: run.appending(path: "spaces-summary.json")),
-                downloads: DownloadCenter(directory: run.appending(path: "Downloads"))
+                downloads: DownloadCenter(directory: run.appending(path: "Downloads")),
+                platform: IOSBrowserPlatform()
             )
         }
         #endif
         // Shares the app didn't live to finish, and files whose copies were good for the last launch only.
         PageFileShare.cache.pruneAtLaunch()
-        return BrowserStore()
+        return BrowserStore(focusFilter: .shared, platform: IOSBrowserPlatform())
+    }
+
+    private static func makeDefaultBrowser() -> DefaultBrowserStatus {
+        #if DEBUG
+        if isUITesting || isHostingTests { return DefaultBrowserStatus(isLive: false) }
+        #endif
+        return DefaultBrowserStatus()
     }
 }

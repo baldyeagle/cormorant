@@ -4,54 +4,10 @@ import Foundation
 import Observation
 import UIKit
 
-/// The Space a Focus filter sends links from other apps to, while a Focus with Cormorant's filter is
-/// on: set by the system through `SpaceFocusFilter`, read by `BrowserStore` whenever a link arrives,
-/// and by Edit Space. The app learns only that its filter is on and which Space it names, not which
-/// Focus turned it on. Kept in the app group's defaults (`FocusFilterSpace`), so it survives the app
-/// being killed; the system calls the filter again when the Focus ends.
-@MainActor
-@Observable
-final class FocusFilterSettings {
+extension FocusFilterSettings {
     /// The app's: in the app group's defaults, set by the system.
-    static let shared = FocusFilterSettings(defaults: AppGroupStorage.defaults, followsSystem: true)
-
-    /// The filter's Space; nil while no Focus with the filter is on. May name a Space since deleted or
-    /// archived: `BrowserState.destinationForLink` then falls back to the Space last used.
-    private(set) var spaceID: UUID?
-
-    @ObservationIgnored private let defaults: UserDefaults
-    /// Asks the system for the filter in force on `refresh()`. Off for UI tests, which set it themselves.
-    @ObservationIgnored private let followsSystem: Bool
-    /// Bumped by each `set`, so an answer to `refresh()` asked for before the system last set the
-    /// filter (a Focus starting meanwhile) is dropped rather than undoing it.
-    @ObservationIgnored private var generation = 0
-    @ObservationIgnored private var asking: Task<Void, Never>?
-
-    init(defaults: UserDefaults, followsSystem: Bool) {
-        self.defaults = defaults
-        self.followsSystem = followsSystem
-        spaceID = FocusFilterSpace.read(from: defaults)
-    }
-
-    func set(_ spaceID: UUID?) {
-        generation += 1
-        FocusFilterSpace.write(spaceID, to: defaults)
-        if self.spaceID != spaceID { self.spaceID = spaceID }
-    }
-
-    /// On launch and foreground: what was stored (the system may have called the filter in another
-    /// launch), then, once the system answers, the filter actually in force, in case a call was missed.
-    /// One question at a time; an answer the system has overtaken by setting the filter is dropped.
-    func refresh() {
-        let stored = FocusFilterSpace.read(from: defaults)
-        if spaceID != stored { spaceID = stored }
-        guard followsSystem else { return }
-        asking?.cancel()
-        let asked = generation
-        asking = Task {
-            guard let current = try? await SpaceFocusFilter.current, !Task.isCancelled, generation == asked else { return }
-            set(current.space?.id)
-        }
+    static let shared = FocusFilterSettings(defaults: AppGroupStorage.defaults) {
+        (try? await SpaceFocusFilter.current).map { $0.space?.id }
     }
 }
 

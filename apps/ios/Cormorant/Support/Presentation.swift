@@ -1,9 +1,4 @@
-import OSLog
 import UIKit
-
-extension Logger {
-    nonisolated static let app = Logger(subsystem: "dev.baldyeagle.cormorant", category: "app")
-}
 
 extension UIView {
     /// The frontmost view controller in this view's window scene that can present an alert, or nil

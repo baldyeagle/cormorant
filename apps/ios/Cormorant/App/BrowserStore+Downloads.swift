@@ -54,7 +54,7 @@ extension BrowserStore {
         defer { downloads.discard(item) }
         switch item.handoff {
         case .walletPass:
-            if PKAddPassesViewController.canAddPasses(), let data = try? Data(contentsOf: item.fileURL) {
+            if platform.canAddPasses, let data = try? Data(contentsOf: item.fileURL) {
                 do {
                     walletPassRequest = WalletPassRequest(pass: try PKPass(data: data))
                     return

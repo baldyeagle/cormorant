@@ -19,12 +19,14 @@ extension AppTests {
                 UIColor.systemPurple.setFill()
                 context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
             }
-            // Without the cookie, everything but `/login` goes to `/login`.
+            // Without the cookie, everything but `/login` goes to `/login`. The default profile's cookies
+            // outlast the test, so each run signs in with a value of its own.
+            let session = "session=\(UUID().uuidString)"
             let server = try FixtureServer(html: """
                 <!doctype html>
                 <link rel="icon" href="/favicon.ico">
                 <script>document.title = 'Page ' + location.pathname</script>
-                """, files: ["/favicon.ico": .init(contentType: "image/png", body: icon)], signIn: "session=ok")
+                """, files: ["/favicon.ico": .init(contentType: "image/png", body: icon)], signIn: session)
             let browser = try await TestBrowser()
             defer { browser.close() }
             let app = server.url.appending(path: "app")
@@ -38,7 +40,7 @@ extension AppTests {
             #expect(browser.store.favicons.icon(for: app) == nil)
 
             // Signed in, the next load gets it.
-            _ = try await browser.evaluate("document.cookie = 'session=ok; path=/', 1")
+            _ = try await browser.evaluate("document.cookie = '\(session); path=/', 1")
             try await browser.open(app)
             try await browser.until("the icon to arrive (\(server.requestLog))") {
                 browser.store.favicons.icon(for: app) != nil

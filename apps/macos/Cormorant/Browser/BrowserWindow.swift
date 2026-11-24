@@ -20,6 +20,10 @@ struct BrowserWindow: View {
     @State private var peekHasButtons = false
     /// Whether the docked sidebar is out and the page beside it: the two slide together.
     @State private var isDocked: Bool
+    /// The docked sidebar is out and done sliding.
+    @State private var dockIsSettled: Bool
+    /// The last Archive or Delete Space confirmation's title, kept while it closes.
+    @State private var removalTitle = ""
     /// Where the command bar was dragged from its place, while it's up.
     @State private var barMove: CGSize = .zero
     @GestureState private var barDrag: CGSize = .zero
@@ -32,6 +36,7 @@ struct BrowserWindow: View {
         self.commands = commands
         self.platform = platform
         _isDocked = State(initialValue: commands.showsSidebar)
+        _dockIsSettled = State(initialValue: commands.showsSidebar)
     }
 
     private static let slide = Animation.easeOut(duration: sidebarSlideDuration)
@@ -54,7 +59,7 @@ struct BrowserWindow: View {
                         .position(x: pageLeading + (proxy.size.width - pageLeading - 8) / 2, y: 4)
                         .transition(.opacity)
                 }
-                Sidebar(store: store, commands: commands, titleBarHeight: titleBar)
+                Sidebar(store: store, commands: commands, titleBarHeight: titleBar, presentsSpaceEditor: dockIsSettled)
                     .frame(width: commands.sidebarWidth)
                     .background(spaceTint)
                     .overlay(alignment: .trailing) { SidebarResizer(commands: commands).allowsHitTesting(isDocked) }
@@ -62,7 +67,8 @@ struct BrowserWindow: View {
                     .offset(x: isDocked ? 0 : 8 - commands.sidebarWidth)
                     .accessibilityHidden(!commands.showsSidebar)
                 if peekIsOut {
-                    Sidebar(store: store, commands: commands, titleBarHeight: max(titleBar - 8, 28))
+                    Sidebar(store: store, commands: commands, titleBarHeight: max(titleBar - 8, 28),
+                            presentsSpaceEditor: peekHasButtons && !commands.showsSidebar)
                         .frame(width: commands.sidebarWidth)
                         .background(spaceTint, in: .rect(cornerRadius: 12))
                         .clipShape(.rect(cornerRadius: 12))
@@ -106,7 +112,8 @@ struct BrowserWindow: View {
             .background(WindowChrome(showsButtons: commands.showsSidebar || peekHasButtons) { x in
                 // From the pointer, not hover on views that move under it: out near the left edge,
                 // away only well clear of it.
-                guard !commands.showsSidebar else { return }
+                // Not while a Space editor hangs off it.
+                guard !commands.showsSidebar, commands.spaceEditor == nil else { return }
                 if x <= 16 {
                     peeksSidebar = true
                 } else if x > commands.sidebarWidth + 32 {
@@ -121,9 +128,14 @@ struct BrowserWindow: View {
         }
         .onChange(of: commands.showsSidebar) { _, shows in
             peeksSidebar = false
-            withAnimation(Self.slide) { isDocked = shows }
+            dockIsSettled = false
+            if !shows { commands.spaceEditor = nil }
+            withAnimation(Self.slide) { isDocked = shows } completion: {
+                dockIsSettled = isDocked
+            }
         }
         .onChange(of: barMode) { barMove = .zero }
+        .onChange(of: commands.spaceRemoval?.title) { _, title in if let title { removalTitle = title } }
         .onChange(of: store.state.activeTabID) {
             commands.isFinding = false
             commands.isEditingAddress = false
@@ -149,6 +161,17 @@ struct BrowserWindow: View {
                 NSWorkspace.shared.activateFileViewerSelecting([newest.fileURL])
             }
             store.showsDownloads = false
+        }
+        .alert(commands.spaceRemoval?.title ?? removalTitle,
+               isPresented: Binding(get: { commands.spaceRemoval != nil }, set: { if !$0 { commands.spaceRemoval = nil } }),
+               presenting: commands.spaceRemoval) { removal in
+            switch removal.kind {
+            case .archive: Button("Archive") { store.archiveSpace(removal.spaceID) }
+            case .delete: Button("Delete", role: .destructive) { store.deleteSpace(removal.spaceID) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { removal in
+            Text(removal.message)
         }
         .alert("Couldn't read saved tabs.", isPresented: Binding(get: { store.loadFailure != nil }, set: { _ in })) {
             Button("Start Fresh") { store.startFresh() }

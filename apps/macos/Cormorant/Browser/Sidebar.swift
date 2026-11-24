@@ -11,6 +11,8 @@ struct Sidebar: View {
     let commands: WindowCommands
     /// The top row shares the title bar's height, so its buttons line up with the window's.
     let titleBarHeight: CGFloat
+    /// On screen and still, so a Space editor can hang off its bottom row.
+    let presentsSpaceEditor: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -56,15 +58,18 @@ struct Sidebar: View {
 
     private var footer: some View {
         HStack(spacing: 2) {
-            LibraryButton(downloads: store.downloads)
+            LibraryButton(store: store)
             Spacer()
             if store.hasSpacesToSwitch {
                 HStack(spacing: 6) {
-                    ForEach(store.state.shownSpaces) { SpaceButton(space: $0, store: store) }
+                    ForEach(Array(store.state.shownSpaces.enumerated()), id: \.element.id) { index, space in
+                        SpaceButton(space: space, index: index, store: store, commands: commands,
+                                    presentsEditor: presentsSpaceEditor)
+                    }
                 }
             }
             Spacer()
-            Color.clear.frame(width: 28, height: 28)
+            NewSpaceButton(store: store, commands: commands, presentsEditor: presentsSpaceEditor)
         }
         .frame(height: 32)
     }
@@ -188,7 +193,13 @@ private struct TabRow: View {
             if !destinations.isEmpty {
                 Menu("Move to Space") {
                     ForEach(destinations) { destination in
-                        Button(destination.space.name) { store.moveTab(tab.id, toSpace: destination.space.id) }
+                        Button {
+                            store.moveTab(tab.id, toSpace: destination.space.id)
+                        } label: {
+                            Image(nsImage: SpaceBadge.menuImage(for: destination.space))
+                            Text(destination.space.name)
+                            Text(destination.subtitle)
+                        }
                     }
                 }
             }
@@ -222,42 +233,32 @@ private struct Favicon: View {
     }
 }
 
-private struct SpaceButton: View {
-    let space: Space
+/// Downloads and archived Spaces until the Library has its own panel.
+private struct LibraryButton: View {
     let store: BrowserStore
 
     var body: some View {
-        Button {
-            store.switchToSpace(space.id)
-        } label: {
-            Group {
-                if space.id == store.state.activeSpaceID {
-                    SpaceBadge(space: space, side: 20)
-                } else {
-                    Image(systemName: space.icon.rawValue)
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
+        Menu {
+            Section("Downloads") {
+                if store.downloads.listed.isEmpty { Text("No Downloads") }
+                ForEach(store.downloads.listed) { item in
+                    Button(item.filename) { NSWorkspace.shared.activateFileViewerSelecting([item.fileURL]) }
+                        .disabled(item.status != .finished)
                 }
             }
-            .frame(width: 26, height: 26)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .help(space.name)
-        .accessibilityLabel(space.name)
-    }
-}
-
-/// Downloads until the Library has its own panel.
-private struct LibraryButton: View {
-    let downloads: DownloadCenter
-
-    var body: some View {
-        Menu {
-            if downloads.listed.isEmpty { Text("No Downloads") }
-            ForEach(downloads.listed) { item in
-                Button(item.filename) { NSWorkspace.shared.activateFileViewerSelecting([item.fileURL]) }
-                    .disabled(item.status != .finished)
+            if !store.state.archivedSpaces.isEmpty {
+                Section("Archived Spaces") {
+                    ForEach(store.state.archivedSpaces) { space in
+                        Button {
+                            store.restoreSpace(space.id)
+                            store.switchToSpace(space.id)
+                        } label: {
+                            Image(nsImage: SpaceBadge.menuImage(for: space))
+                            Text(space.name)
+                            Text(Space.restoreSubtitle(tabCount: store.state.tabCount(inSpace: space.id)))
+                        }
+                    }
+                }
             }
         } label: {
             Image(systemName: "books.vertical")
@@ -272,14 +273,16 @@ private struct LibraryButton: View {
     }
 }
 
-private struct IconButton: View {
+struct IconButton: View {
     let title: String
     let systemImage: String
+    let help: String
     let action: () -> Void
 
-    init(_ title: String, systemImage: String, action: @escaping () -> Void) {
+    init(_ title: String, systemImage: String, help: String? = nil, action: @escaping () -> Void) {
         self.title = title
         self.systemImage = systemImage
+        self.help = help ?? title
         self.action = action
     }
 
@@ -289,7 +292,7 @@ private struct IconButton: View {
             .buttonStyle(.borderless)
             .font(.system(size: 14, weight: .medium))
             .frame(width: 28, height: 28)
-            .help(title)
+            .help(help)
     }
 }
 

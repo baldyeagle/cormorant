@@ -88,6 +88,23 @@ struct BrowserStoreTests {
         withExtendedLifetime(server) {}
     }
 
+    @Test func aNewSpaceTakesTheArchiveTimeItWasMadeWithAndIsShown() async throws {
+        let (store, _, files) = try Self.makeStore()
+        defer { Self.end(store, files: files) }
+        await store.launch()
+
+        let reading = try #require(store.createSpace(name: " Reading ", icon: .book, color: .orange,
+                                                     archivePolicy: .sevenDays))
+        #expect(store.state.activeSpaceID == reading)
+        #expect(store.state.space(reading)?.name == "Reading")
+        #expect(store.state.space(reading)?.archivePolicy == .sevenDays)
+
+        let work = try #require(store.createSpace(name: "Work", icon: .briefcase, color: .indigo))
+        #expect(store.state.space(work)?.archivePolicy == .oneDay)
+        #expect(store.createSpace(name: "  ", icon: .house, color: .teal) == nil)
+        #expect(store.state.spaces.count == 3)
+    }
+
     @Test func anAddressAnOpenTabIsOnOffersThatTab() async throws {
         let server = try FixtureServer(html: "<!doctype html><title>Fixture page</title><p>Hello")
         let (store, _, files) = try Self.makeStore()

@@ -80,6 +80,23 @@ final class WindowCommands {
     var sidebarWidth = UserDefaults.standard.object(forKey: "sidebarWidth") as? Double ?? 264 {
         didSet { UserDefaults.standard.set(sidebarWidth, forKey: "sidebarWidth") }
     }
+    /// New Space or Edit Space, up over the sidebar's bottom row.
+    var spaceEditor: SpaceEditorTarget?
+    /// Archive or Delete Space, waiting on its confirmation.
+    var spaceRemoval: SpaceRemoval?
+
+    /// From the menu bar: the editor hangs off the sidebar, so it comes out first.
+    func showSpaceEditor(_ target: SpaceEditorTarget) {
+        showsSidebar = true
+        spaceEditor = target
+    }
+
+    /// The editor for one anchor: whichever `matches` takes, while `presents` (its sidebar is on screen);
+    /// cleared once it closes.
+    func spaceEditor(_ matches: @escaping (SpaceEditorTarget) -> Bool, presents: Bool) -> Binding<SpaceEditorTarget?> {
+        Binding(get: { presents ? self.spaceEditor.flatMap { matches($0) ? $0 : nil } : nil },
+                set: { if $0 == nil, let shown = self.spaceEditor, matches(shown) { self.spaceEditor = nil } })
+    }
 
     /// With no tab there's no address to edit: a new tab's instead.
     func editAddress(in store: BrowserStore) {
@@ -88,6 +105,37 @@ final class WindowCommands {
         } else {
             store.cancelComposing()
             isEditingAddress = true
+        }
+    }
+}
+
+enum SpaceEditorTarget: Hashable, Identifiable {
+    case new
+    case edit(UUID)
+
+    var id: Self { self }
+}
+
+/// Archive or Delete Space's confirmation, its words fixed when asked so they stay put as it closes.
+struct SpaceRemoval {
+    enum Kind { case archive, delete }
+
+    let spaceID: UUID
+    let kind: Kind
+    let title: String
+    let message: String
+
+    init(_ kind: Kind, _ space: Space, in state: BrowserState) {
+        let tabCount = state.tabCount(inSpace: space.id)
+        spaceID = space.id
+        self.kind = kind
+        switch kind {
+        case .archive:
+            title = "Archive \(space.name)?"
+            message = Space.archiveConfirmation(name: space.name, tabCount: tabCount, restoredFrom: "the Library")
+        case .delete:
+            title = "Delete \(space.name)?"
+            message = Space.deleteConfirmation(tabCount: tabCount)
         }
     }
 }
@@ -160,6 +208,18 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("r")
             Button("Reload Ignoring Cache") { shownSession?.reload(fromOrigin: true) }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
+        }
+        CommandMenu("Spaces") {
+            ForEach(Array(store.state.shownSpaces.enumerated()), id: \.element.id) { index, space in
+                Toggle(space.name, isOn: Binding(get: { space.id == store.state.activeSpaceID },
+                                                 set: { _ in store.switchToSpace(space.id) }))
+                    .keyboardShortcut(index < 9 ? KeyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .control) : nil)
+            }
+            Divider()
+            Button("New Space…") { commands.showSpaceEditor(.new) }
+                .keyboardShortcut("n", modifiers: [.control, .shift])
+            Button("Edit Space…") { commands.showSpaceEditor(.edit(store.state.activeSpaceID)) }
+                .disabled(store.state.activeSpace.isIncognito)
         }
     }
 

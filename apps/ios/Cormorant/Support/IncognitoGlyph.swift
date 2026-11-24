@@ -1,29 +1,9 @@
 import CoreGraphics
+import CormorantBrowser
 import SwiftUI
 import UIKit
 
-/// The sunglasses that stand for Incognito, in the style picked in Settings › Appearance. Drawn here
-/// rather than taken from SF Symbols, which has one pair: each style is a few paths on a 32 × 16 grid.
-enum IncognitoIcon: String, CaseIterable, Identifiable, Codable {
-    case wayfarer, aviator, round, catEye, shield, browline, classic, glint
-
-    static let `default` = IncognitoIcon.wayfarer
-
-    var id: String { rawValue }
-
-    var name: String {
-        switch self {
-        case .wayfarer: "Wayfarer"
-        case .aviator: "Aviator"
-        case .round: "Round"
-        case .catEye: "Cat-Eye"
-        case .shield: "Shield"
-        case .browline: "Browline"
-        case .classic: "Classic"
-        case .glint: "Glint"
-        }
-    }
-
+extension IncognitoIcon {
     /// Width over height of the grid every style is drawn on.
     static let aspectRatio: CGFloat = 2
 

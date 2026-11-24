@@ -3,6 +3,7 @@ import CormorantTestSupport
 import Foundation
 import Testing
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// Switching Spaces lands on the tab last viewed in the Space, not its newest, or on nothing in an

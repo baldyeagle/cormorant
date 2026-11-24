@@ -1,3 +1,4 @@
+import CormorantBrowser
 import SwiftUI
 
 /// Clearing the browsing history the search panel suggests from.

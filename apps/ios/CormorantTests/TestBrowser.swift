@@ -4,6 +4,7 @@ import Testing
 import UIKit
 import WebKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 /// The browser as the app builds it (`CormorantApp.makeStore` under `-uiTesting`), on files of its
 /// own, launched, with the tab on screen shown in a window of its own so pages lay out, paint and
@@ -169,13 +170,13 @@ final class TestBrowser {
             blocking: BlockingService(usesFilterLists: false),
             settings: AppSettings(defaults: defaults),
             favicons: FaviconStore(directory: directory.appending(path: "Favicons", directoryHint: .isDirectory)),
-            defaultBrowser: DefaultBrowserStatus(isLive: false),
             browsingHistory: BrowserStore.openBrowsingHistory(at: directory.appending(path: "browsing-history.sqlite")),
             searchSuggestions: searchSuggestions ? SearchSuggestionClient() : nil,
-            focusFilter: FocusFilterSettings(defaults: defaults, followsSystem: false),
+            focusFilter: FocusFilterSettings(defaults: defaults, systemFilterSpace: nil),
             inbox: inbox,
             spacesSummary: SpacesSummaryFile(fileURL: directory.appending(path: "spaces-summary.json")),
-            downloads: DownloadCenter(directory: directory.appending(path: "Downloads", directoryHint: .isDirectory))
+            downloads: DownloadCenter(directory: directory.appending(path: "Downloads", directoryHint: .isDirectory)),
+            platform: IOSBrowserPlatform()
         )
     }
 

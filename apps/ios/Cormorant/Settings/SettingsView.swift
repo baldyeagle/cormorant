@@ -1,13 +1,15 @@
+import CormorantBrowser
 import SwiftUI
 
 struct SettingsView: View {
     @Environment(BrowserStore.self) private var store
+    @Environment(DefaultBrowserStatus.self) private var defaultBrowser
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
-                DefaultBrowserSettings(status: store.defaultBrowser)
+                DefaultBrowserSettings(status: defaultBrowser)
                 SpacesSettings()
                 TabsSettings()
                 SearchEngineSettings(settings: store.settings)

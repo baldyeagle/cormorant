@@ -3,6 +3,7 @@ import Foundation
 import Testing
 import UIKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// Paste and Go / Paste and Search, as the search panel offers them (`SearchSheet.offerPaste`):

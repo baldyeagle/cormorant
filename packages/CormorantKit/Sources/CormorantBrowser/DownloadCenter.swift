@@ -15,50 +15,50 @@ import WebKit
 /// for. If that can't take them, the browser keeps them as ordinary downloads (`keep(_:)`).
 @MainActor
 @Observable
-final class DownloadCenter {
+public final class DownloadCenter {
     /// A file that opens in a system viewer rather than landing in Downloads.
-    typealias Handoff = DownloadHandoff
+    public typealias Handoff = DownloadHandoff
 
-    struct Item: Identifiable, Equatable {
-        enum Status: Equatable {
+    public struct Item: Identifiable, Equatable {
+        public enum Status: Equatable {
             case downloading
             case finished
             case failed(String)
         }
 
-        let id: UUID
-        var filename: String
+        public let id: UUID
+        public var filename: String
         /// Where the file is: in `directory` once finished; while it downloads, a hidden folder of its
         /// own there (`.incoming/<id>/`), so a half-written file never shows as a download, in the
         /// list or in Files. Until WebKit has asked where to write it (`hasFile` false), only where it
         /// would be.
-        var fileURL: URL
+        public var fileURL: URL
         /// The file at `fileURL` is this download's.
         var hasFile: Bool
-        var sourceURL: URL?
-        var status: Status
-        var receivedBytes: Int64
+        public var sourceURL: URL?
+        public var status: Status
+        public var receivedBytes: Int64
         /// -1 while the size isn't known.
-        var expectedBytes: Int64
+        public var expectedBytes: Int64
         let startedAt: Date
         /// Set once WebKit says what it is, for a file handed off rather than listed.
-        var handoff: Handoff?
+        public var handoff: Handoff?
         /// Whose website data it was downloaded with, to ask for it again with the same.
-        var profileID: UUID? = nil
+        public var profileID: UUID? = nil
 
         /// Try Again asks for the address again, which only means something for a web address.
-        var canRetry: Bool {
+        public var canRetry: Bool {
             guard case .failed = status else { return false }
             return ["http", "https"].contains(sourceURL?.scheme?.lowercased() ?? "")
         }
 
-        var fraction: Double? {
+        public var fraction: Double? {
             expectedBytes > 0 ? min(1, Double(receivedBytes) / Double(expectedBytes)) : nil
         }
     }
 
     /// What happened, for the browser's toasts.
-    enum Event {
+    public enum Event {
         case started(Item)
         case finished(Item)
         case failed(Item)
@@ -68,9 +68,9 @@ final class DownloadCenter {
     }
 
     /// Newest first, handed-off files among them while they download.
-    private(set) var items: [Item] = []
+    public private(set) var items: [Item] = []
     /// What the Downloads list shows: everything but files on their way to a system sheet.
-    var listed: [Item] { items.filter { $0.handoff == nil } }
+    public var listed: [Item] { items.filter { $0.handoff == nil } }
     let directory: URL
     @ObservationIgnored var onEvent: ((Event) -> Void)?
     /// A web view on a profile's website data (nil: the default profile's) to ask for a download
@@ -84,15 +84,15 @@ final class DownloadCenter {
     @ObservationIgnored private var retryWebViews: [UUID: WKWebView] = [:]
 
     /// The Files app's view of `directory`: `shareddocuments://` opens it there.
-    var filesAppURL: URL? { URL(string: "shareddocuments://" + directory.path(percentEncoded: true)) }
+    public var filesAppURL: URL? { URL(string: "shareddocuments://" + directory.path(percentEncoded: true)) }
 
-    var hasActiveDownloads: Bool { listed.contains { $0.status == .downloading } }
+    public var hasActiveDownloads: Bool { listed.contains { $0.status == .downloading } }
 
     private static let handoffDirectory = URL.temporaryDirectory.appending(path: "Handoffs")
     /// Downloads in progress, hidden from the list and from Files until they finish.
     private var incomingDirectory: URL { directory.appending(path: ".incoming", directoryHint: .isDirectory) }
 
-    init(directory: URL = URL.documentsDirectory) {
+    public init(directory: URL = URL.documentsDirectory) {
         self.directory = directory
         delegate.center = self
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -103,7 +103,7 @@ final class DownloadCenter {
 
     /// Reads the folder back: files someone added or removed in the Files app show up (or go) here.
     /// Downloads in progress and failed ones stay as they are.
-    func reload() {
+    public func reload() {
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .creationDateKey, .fileSizeKey]
         let files = (try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])) ?? []
@@ -128,7 +128,7 @@ final class DownloadCenter {
 
     /// Takes over a download WebKit started (from a page's navigation or `startDownload`).
     @discardableResult
-    func track(_ download: WKDownload) -> UUID {
+    public func track(_ download: WKDownload) -> UUID {
         download.delegate = delegate
         let id = UUID()
         active[id] = download
@@ -144,7 +144,7 @@ final class DownloadCenter {
     }
 
     /// Stops it, keeping it on the list to try again. No toast: the user asked for it.
-    func cancel(_ id: UUID) {
+    public func cancel(_ id: UUID) {
         // Off the active list first, so WebKit's own failure callback for it is ignored.
         guard let download = active.removeValue(forKey: id) else { return }
         update(id) { $0.status = .failed("Cancelled") }
@@ -160,7 +160,7 @@ final class DownloadCenter {
     /// Starts a failed download again from the start, as a GET of its address (a download a form
     /// posted for can't be asked for again this way). Not resumed: its partial file is gone, so it
     /// never shows in Files as if it were whole.
-    func retry(_ id: UUID) {
+    public func retry(_ id: UUID) {
         guard let item = items.first(where: { $0.id == id }), case .failed = item.status,
               let url = item.sourceURL, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               let webView = retryWebView?(item.profileID) else { return }
@@ -172,7 +172,7 @@ final class DownloadCenter {
     }
 
     /// Takes the download off the list and deletes its file (stopping it first if it's still going).
-    func delete(_ id: UUID) {
+    public func delete(_ id: UUID) {
         guard let download = active.removeValue(forKey: id) else { return remove(id, deletingFile: true) }
         let file = ownFile(id)
         remove(id, deletingFile: false)
@@ -310,7 +310,7 @@ final class DownloadCenter {
     /// A handed-off file the system sheet couldn't take, moved into Downloads like any other. Returns
     /// it as listed there.
     @discardableResult
-    func keep(_ item: Item) -> Item? {
+    public func keep(_ item: Item) -> Item? {
         let name = DownloadNaming.unique(item.filename) { FileManager.default.fileExists(atPath: directory.appending(path: $0).path) }
         let file = directory.appending(path: name)
         do {
@@ -326,7 +326,7 @@ final class DownloadCenter {
     }
 
     /// A handed-off file, done with.
-    func discard(_ item: Item) { discardHandoff(at: item.fileURL) }
+    public func discard(_ item: Item) { discardHandoff(at: item.fileURL) }
 
     /// The handed-off file at `file`, done with.
     func discardHandoff(at file: URL) {
@@ -386,7 +386,7 @@ final class DownloadCenter {
 
 extension DownloadCenter.Item {
     /// An SF Symbol for the file's kind.
-    var symbolName: String {
+    public var symbolName: String {
         let type = UTType(filenameExtension: (filename as NSString).pathExtension) ?? .data
         if type.conforms(to: .pdf) { return "doc.richtext" }
         if type.conforms(to: .image) { return "photo" }

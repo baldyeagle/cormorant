@@ -2,18 +2,17 @@ import CormorantBlocking
 import CormorantCore
 import Observation
 import OSLog
-import UIKit
 import WebKit
 
 /// Owns the persisted tab state and the live web views behind it.
 @MainActor
 @Observable
-final class BrowserStore {
+public final class BrowserStore {
     /// Saved tabs couldn't be loaded. Until the user chooses Start Fresh the app runs on an
     /// in-memory state and never saves, so the unreadable file is not overwritten.
-    struct LoadFailure: Equatable {
+    public struct LoadFailure: Equatable {
         /// File name of the copy kept aside, if one could be made.
-        let keptCopyName: String?
+        public let keptCopyName: String?
     }
 
     /// Web views are kept for this many most-recently-viewed tabs; older ones are rebuilt on demand.
@@ -26,73 +25,72 @@ final class BrowserStore {
     static let backgroundLoadTimeout: Duration = .seconds(20)
     private static let warnedStorageFallbackKey = "warnedAppGroupUnavailable"
 
-    private(set) var state = BrowserState.empty
-    private(set) var isLoaded = false
-    private(set) var loadFailure: LoadFailure?
+    public private(set) var state = BrowserState.empty
+    public private(set) var isLoaded = false
+    public private(set) var loadFailure: LoadFailure?
     /// The app group was unavailable and tabs are stored in Application Support instead. Shown once.
-    private(set) var showsStorageFallbackWarning = false
-    private(set) var activeSession: TabSession?
-    private(set) var snapshots: [UUID: PageSnapshot] = [:]
+    public private(set) var showsStorageFallbackWarning = false
+    public private(set) var activeSession: TabSession?
+    public private(set) var snapshots: [UUID: PageSnapshot] = [:]
     /// Bumped to ask the browser screen to open the search panel.
-    private(set) var addressFocusRequest = 0
+    public private(set) var addressFocusRequest = 0
     /// New Tab was chosen and the search panel is composing it. No tab exists until a submit;
     /// dismissing the panel, switching tabs or an external open drops the intent.
-    private(set) var isComposingNewTab = false
+    public private(set) var isComposingNewTab = false
     /// The search panel is open to search open tabs only (Search Tabs). Dropped with the panel.
-    private(set) var isSearchingTabs = false
+    public private(set) var isSearchingTabs = false
     /// The tab being composed opens in Incognito: the panel's Incognito button is on. Starts on when
     /// New Tab is chosen in Incognito; dropped with the composing.
-    private(set) var composesIncognito = false
+    public private(set) var composesIncognito = false
     /// Incognito had tabs at the last state change, so its last one closing can be told apart.
     @ObservationIgnored private var incognitoWasOpen = false
     /// Manage Spaces is up, or asked for. Set by `showManageSpaces()` / `dismissManageSpaces()`
     /// (BrowserStore+Spaces.swift).
-    var showsManageSpaces = false
+    public var showsManageSpaces = false
     /// Bumped by each `showManageSpaces()`, to ask the browser to close whatever else is up and present
     /// it. On an ask while it's meant to be up already, the browser presents it afresh, so one
     /// presentation that didn't take can't leave the way in dead (`BrowserView.presentManageSpaces`).
-    var manageSpacesRequest = 0
+    public var manageSpacesRequest = 0
     /// A Space whose Edit Space opens on top of Manage Spaces once it's up (a strip icon's Edit).
-    var spaceToEdit: UUID?
+    public var spaceToEdit: UUID?
     /// Manage Spaces is showing as a page in Settings. While it is, a change of active tab (from
     /// archiving, deleting or switching Spaces there) leaves the caret sheet and Settings up.
-    @ObservationIgnored var isManagingSpacesInSettings = false
+    @ObservationIgnored public var isManagingSpacesInSettings = false
     /// Bumped to ask the browser to close the search panel, the caret sheet and Settings on it, and the
     /// switcher: a Space just added (so you land in it) and a link from another app (straight to the page).
-    var closeSheetsRequest = 0
+    public var closeSheetsRequest = 0
     /// The toast on screen, if any (`showToast(_:)`).
-    private(set) var toast: Toast?
+    public private(set) var toast: Toast?
     /// Toasts put up since launch, for UI tests (`UITestingProbes`).
-    @ObservationIgnored private(set) var toastsShown = 0
+    @ObservationIgnored public private(set) var toastsShown = 0
     /// A tab the Move to Space sheet is asked up for, from a toast (BrowserStore+MoveTabs.swift).
-    var moveRequest: MoveRequest?
+    public var moveRequest: MoveRequest?
     /// The Downloads list is up (the caret sheet's row stacks its own; this is for a toast's Show).
-    var showsDownloads = false
+    public var showsDownloads = false
     /// A finished download a toast's Open shows in Quick Look.
-    var previewedDownload: URL?
+    public var previewedDownload: URL?
     /// An AR model a page handed over, up in Quick Look; the file goes once it's closed.
-    var previewedModel: URL? {
+    public var previewedModel: URL? {
         didSet {
             if let oldValue, oldValue != previewedModel { downloads.discardHandoff(at: oldValue) }
         }
     }
     /// A Wallet pass a page handed over, up in Add to Wallet.
-    var walletPassRequest: WalletPassRequest?
+    public var walletPassRequest: WalletPassRequest?
     /// A calendar file a page handed over, its events up to add.
-    var calendarImport: CalendarImport?
+    public var calendarImport: CalendarImport?
 
-    let blocking: BlockingService
-    let downloads: DownloadCenter
-    let settings: AppSettings
-    let favicons: FaviconStore
-    let defaultBrowser: DefaultBrowserStatus
+    public let blocking: BlockingService
+    public let downloads: DownloadCenter
+    public let settings: AppSettings
+    public let favicons: FaviconStore
     /// Pages visited, for the search panel. Nil if the database couldn't be opened; browsing goes on
     /// without it.
-    let browsingHistory: BrowsingHistory?
+    public let browsingHistory: BrowsingHistory?
     /// Asks the search engine for suggestions; nil never asks (UI tests).
-    let searchSuggestions: SearchSuggestionClient?
+    public let searchSuggestions: SearchSuggestionClient?
     /// The Space a Focus filter sends links from other apps to, while one is on.
-    let focusFilter: FocusFilterSettings
+    public let focusFilter: FocusFilterSettings
 
     @ObservationIgnored private let stateStore: any BrowserStateStore
     @ObservationIgnored private let historyStore: TabHistoryStore
@@ -128,11 +126,7 @@ final class BrowserStore {
     @ObservationIgnored private var stagedLoads: [UUID: Task<Void, Never>] = [:]
     /// Background tabs waiting for a stage slot, oldest first. They have no web view yet.
     @ObservationIgnored private var backgroundQueue: [UUID] = []
-    @ObservationIgnored private let backgroundStage = BackgroundPageStage()
-    /// Where background tabs load, and at what size: the window and layout of the tab they were opened
-    /// from, so they're ready to show as they are.
-    @ObservationIgnored private weak var stagingWindow: UIWindow?
-    @ObservationIgnored private var stagingLayout: PageLayout?
+    @ObservationIgnored let platform: any BrowserPlatform
     /// Links from other apps waiting for the tabs to load, each with the Space it was sent to, if any.
     @ObservationIgnored private var pendingURLs: [(url: URL, spaceID: UUID?)] = []
     @ObservationIgnored private var sceneIsActive = true
@@ -157,19 +151,19 @@ final class BrowserStore {
     @ObservationIgnored private var isTerminated = false
     #endif
 
-    init(
+    public init(
         stateStore: (any BrowserStateStore)? = nil,
         historyStore: TabHistoryStore = TabHistoryStore(),
         blocking: BlockingService = BlockingService(),
         settings: AppSettings = AppSettings(),
         favicons: FaviconStore = FaviconStore(),
-        defaultBrowser: DefaultBrowserStatus = DefaultBrowserStatus(),
         browsingHistory: BrowsingHistory? = BrowserStore.openBrowsingHistory(),
         searchSuggestions: SearchSuggestionClient? = SearchSuggestionClient(),
-        focusFilter: FocusFilterSettings = .shared,
+        focusFilter: FocusFilterSettings,
         inbox: SharedInbox? = SharedInbox(appGroup: AppGroup.identifier),
         spacesSummary: SpacesSummaryFile? = SpacesSummaryFile(appGroup: AppGroup.identifier),
-        downloads: DownloadCenter = DownloadCenter()
+        downloads: DownloadCenter = DownloadCenter(),
+        platform: any BrowserPlatform
     ) {
         var usesFallbackStorage = false
         if let stateStore {
@@ -195,10 +189,10 @@ final class BrowserStore {
         self.downloads = downloads
         self.settings = settings
         self.favicons = favicons
-        self.defaultBrowser = defaultBrowser
         self.browsingHistory = browsingHistory
         self.searchSuggestions = searchSuggestions
         self.focusFilter = focusFilter
+        self.platform = platform
         showsStorageFallbackWarning = usesFallbackStorage
             && !UserDefaults.standard.bool(forKey: Self.warnedStorageFallbackKey)
         blocking.onListsChanged = { [weak self] in self?.reapplyBlockingEverywhere() }
@@ -207,21 +201,21 @@ final class BrowserStore {
         downloads.retryWebView = { [weak self] profileID in
             let profileID = profileID ?? Profile.defaultID
             guard let self, state.profiles.contains(where: { $0.id == profileID }) else { return nil }
-            return WKWebView(frame: .zero, configuration: TabSession.makeConfiguration(profileID: profileID).0)
+            return WKWebView(frame: .zero, configuration: TabSession.makeConfiguration(profileID: profileID, platform: platform).0)
         }
     }
 
     /// Tabs in the active Space, most recently viewed first.
-    var tabs: [Tab] { state.activeSpaceTabs }
+    public var tabs: [Tab] { state.activeSpaceTabs }
 
-    var activeTab: Tab? {
+    public var activeTab: Tab? {
         guard let id = state.activeTabID else { return nil }
         return state.tabs.first { $0.id == id }
     }
 
     // MARK: Lifecycle
 
-    func launch() async {
+    public func launch() async {
         guard !isLoaded else { return }
         do {
             state = try await stateStore.load()
@@ -255,21 +249,20 @@ final class BrowserStore {
     }
 
     /// The user accepted losing the unreadable tabs; saving resumes with the current state.
-    func startFresh() {
+    public func startFresh() {
         loadFailure = nil
         saveNow()
         eraseDeletedProfiles()
     }
 
-    func dismissStorageFallbackWarning() {
+    public func dismissStorageFallbackWarning() {
         showsStorageFallbackWarning = false
         UserDefaults.standard.set(true, forKey: Self.warnedStorageFallbackKey)
     }
 
     /// Archives idle tabs, then opens anything handed to us while we were away.
-    func didBecomeActive() {
+    public func didBecomeActive() {
         sceneIsActive = true
-        defaultBrowser.didBecomeActive()
         focusFilter.refresh()
         // Files added or removed in the Files app while we were away.
         downloads.reload()
@@ -287,13 +280,13 @@ final class BrowserStore {
     }
 
     /// The scene can be killed from here without a background transition; flush now.
-    func didBecomeInactive() {
+    public func didBecomeInactive() {
         sceneIsActive = false
         saveNow()
         saveHistories()
     }
 
-    func didEnterBackground() {
+    public func didEnterBackground() {
         sceneIsActive = false
         stampActiveTab()
         if let activeSession { snapshot(activeSession) }
@@ -303,7 +296,7 @@ final class BrowserStore {
 
     /// `cormorant://open` drains the inbox (optionally with an http(s) `?url=`, and the `&space=` ID the
     /// share extension picked for it); plain web URLs open as tabs.
-    func handle(openURL url: URL) {
+    public func handle(openURL url: URL) {
         #if DEBUG
         if handleUITestingURL(url) { return }
         #endif
@@ -320,7 +313,6 @@ final class BrowserStore {
                 }
             }
         case "http", "https":
-            defaultBrowser.didReceiveWebURL()
             pendingURLs.append((url, nil))
         default:
             return
@@ -334,7 +326,7 @@ final class BrowserStore {
 
     /// Opens the search panel to compose a new tab. The tab is created by `submit(_:)`, so
     /// backing out leaves the tab count unchanged.
-    func newTab() {
+    public func newTab() {
         guard isLoaded else { return }
         isComposingNewTab = true
         composesIncognito = state.activeSpaceID == Space.incognitoID
@@ -343,19 +335,19 @@ final class BrowserStore {
 
     /// The search panel keeps to what's typed (no history, open or closed tabs, completions or the
     /// engine's suggestions): composing an Incognito tab, or in Incognito editing a tab's address.
-    var searchesPrivately: Bool {
+    public var searchesPrivately: Bool {
         isComposingNewTab || activeSession == nil ? composesIncognito : state.activeSpaceID == Space.incognitoID
     }
 
     /// The search panel's Incognito button: whether the tab being composed opens in Incognito.
-    func setComposesIncognito(_ incognito: Bool) {
+    public func setComposesIncognito(_ incognito: Bool) {
         guard isComposingNewTab || activeSession == nil else { return }
         isComposingNewTab = true
         composesIncognito = incognito
     }
 
     /// Opens the search panel to search open tabs only.
-    func searchTabs() {
+    public func searchTabs() {
         guard isLoaded else { return }
         isComposingNewTab = false
         composesIncognito = false
@@ -364,18 +356,18 @@ final class BrowserStore {
     }
 
     /// The search panel's Tabs token was removed: back to searching everything, editing this tab.
-    func stopSearchingTabs() {
+    public func stopSearchingTabs() {
         isSearchingTabs = false
     }
 
     /// The search panel closed without submitting.
-    func cancelComposing() {
+    public func cancelComposing() {
         isComposingNewTab = false
         composesIncognito = false
         isSearchingTabs = false
     }
 
-    func activate(_ tabID: UUID) {
+    public func activate(_ tabID: UUID) {
         isComposingNewTab = false
         composesIncognito = false
         isSearchingTabs = false
@@ -387,15 +379,15 @@ final class BrowserStore {
     // MARK: Spaces
 
     /// More than one Space to switch between. Until then nothing of Spaces shows.
-    var hasSpacesToSwitch: Bool { state.hasSpacesToSwitch }
+    public var hasSpacesToSwitch: Bool { state.hasSpacesToSwitch }
 
     /// The active Space, with its look and tab count, when there are Spaces to switch between; nil
     /// with only Home, where the bar and switcher look as they always have.
-    var shownSpace: Space? { hasSpacesToSwitch ? state.activeSpace : nil }
+    public var shownSpace: Space? { hasSpacesToSwitch ? state.activeSpace : nil }
 
     /// Shows the Space's most recently viewed tab, or the search panel when it has none. Web views of
     /// the Space left stay as they are (`liveWebViewLimit` spans Spaces).
-    func switchToSpace(_ spaceID: UUID) {
+    public func switchToSpace(_ spaceID: UUID) {
         guard isLoaded, spaceID != state.activeSpaceID else { return }
         isComposingNewTab = false
         composesIncognito = false
@@ -422,7 +414,7 @@ final class BrowserStore {
     /// Archives the tab (an Incognito one is deleted). Closing the last one leaves the Space empty (no
     /// active tab); Incognito's last ends Incognito, back in the Space before it. A pinned tab stays
     /// pinned: it goes back to its pinned page, its web view let go (`BrowserState.close(tabID:)`).
-    func close(_ tabID: UUID) {
+    public func close(_ tabID: UUID) {
         state.close(tabID: tabID)
         stateDidChange()
     }
@@ -432,33 +424,33 @@ final class BrowserStore {
 
     /// The last snapshot of the tab `close(_:)` would land on, to show under the page while it's
     /// swiped away.
-    func backSwipeSnapshot(for tabID: UUID) -> PageSnapshot? {
+    public func backSwipeSnapshot(for tabID: UUID) -> PageSnapshot? {
         let next = state.tabAfterArchiving(tabID)
             // Incognito's last tab: the tab Incognito goes back to.
             ?? (state.tab(tabID)?.isIncognito == true ? state.tabs(inSpace: state.spaceOutsideIncognito).first?.id : nil)
         return next.flatMap { snapshots[$0] }
     }
 
-    func restore(_ archivedID: UUID) {
+    public func restore(_ archivedID: UUID) {
         isComposingNewTab = false
         stampActiveTab()
         state.restore(archivedID: archivedID)
         stateDidChange()
     }
 
-    func deleteArchived(_ archivedID: UUID) {
+    public func deleteArchived(_ archivedID: UUID) {
         state.deleteArchived(archivedID)
         scheduleSave()
     }
 
-    func clearArchive() {
+    public func clearArchive() {
         state.clearArchive()
         scheduleSave()
         forgetFavicons()
     }
 
     /// Forgets pages visited since `date`, or all of them.
-    func clearHistory(since date: Date?) {
+    public func clearHistory(since date: Date?) {
         writeBrowsingHistory { history in
             if let date { await history.removePages(visitedSince: date) } else { await history.removeAll() }
         }
@@ -467,7 +459,7 @@ final class BrowserStore {
 
     /// Runs address-bar text through the resolver and loads the result: in a new tab when composing
     /// one, asked to, or when there is no tab at all; otherwise in the active tab.
-    func submit(_ input: String, inNewTab: Bool = false) {
+    public func submit(_ input: String, inNewTab: Bool = false) {
         guard isLoaded, let resolution = AddressResolver.resolve(input, engine: settings.searchEngine) else { return }
         // Search Tabs' Go opens a new tab: in Incognito, an Incognito one.
         if inNewTab, !isComposingNewTab {
@@ -481,14 +473,14 @@ final class BrowserStore {
     }
 
     /// Searches for `query` as written, even if it looks like an address (a search suggestion).
-    func search(_ query: String) {
+    public func search(_ query: String) {
         guard isLoaded, let url = settings.searchEngine.url(for: query) ?? SearchEngine.default.url(for: query)
         else { return }
         go(to: url, typed: false)
     }
 
     /// A page from the search panel's history rows, loaded as `submit(_:)` loads an address.
-    func open(historyPage url: URL) {
+    public func open(historyPage url: URL) {
         guard isLoaded, Self.isWeb(url) else { return }
         go(to: url, typed: true)
     }
@@ -529,7 +521,7 @@ final class BrowserStore {
 
     /// `openLinkInNewTab`, in `spaceID` rather than the opener's Space when it's given (Open in Space,
     /// always in the background). Returns the new tab's ID, or nil if none was opened.
-    func openLink(_ url: URL, inBackground: Bool, inSpace spaceID: UUID?, from opener: TabSession?,
+    public func openLink(_ url: URL, inBackground: Bool, inSpace spaceID: UUID?, from opener: TabSession?,
                   handoff: LinkPreviewHandoff?) -> UUID? {
         guard isLoaded, Self.isWeb(url) else { return nil }
         if !inBackground {
@@ -563,10 +555,7 @@ final class BrowserStore {
             pendingViewSettings[tab.id] = opener.viewSettings
         }
         if inBackground {
-            if let opener, let window = opener.webView.window {
-                stagingWindow = window
-                stagingLayout = PageLayout(of: opener.webView)
-            }
+            if let opener { platform.prepareStage(from: opener.webView) }
             loadInBackground(tab.id)
         }
         stateDidChange()
@@ -588,34 +577,32 @@ final class BrowserStore {
 
     // MARK: Toasts
 
-    /// How long a toast stays up: longer with VoiceOver, which reads it first, and not at all while
-    /// VoiceOver is on it (`holdToast`). UI tests keep it up until it's dismissed (no test can depend on
-    /// beating a timer), unless `-uiTestingToastSeconds`.
-    private static var toastLifetime: Duration? {
+    /// How long a toast stays up: the platform's (longer with VoiceOver, which reads it first), and not
+    /// at all while VoiceOver is on it (`holdToast`). UI tests keep it up until it's dismissed (no test
+    /// can depend on beating a timer), unless `-uiTestingToastSeconds`.
+    private var toastLifetime: Duration? {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-uiTesting") {
             let seconds = UserDefaults.standard.double(forKey: "uiTestingToastSeconds")
             return seconds > 0 ? .seconds(seconds) : nil
         }
         #endif
-        return UIAccessibility.isVoiceOverRunning ? .seconds(15) : .seconds(5)
+        return platform.toastLifetime
     }
 
     /// Puts up `toast` in place of any other, and announces it to VoiceOver (queued, so a menu or sheet
     /// closing doesn't cut it off).
-    func showToast(_ toast: Toast) {
+    public func showToast(_ toast: Toast) {
         self.toast = toast
         toastsShown += 1
         let actions = toast.allActions.map(\.title).joined(separator: ", ")
-        let announcement = NSAttributedString(string: actions.isEmpty ? toast.spokenMessage : "\(toast.spokenMessage). \(actions).",
-                                              attributes: [.accessibilitySpeechQueueAnnouncement: true])
-        UIAccessibility.post(notification: .announcement, argument: announcement)
+        platform.announce(actions.isEmpty ? toast.spokenMessage : "\(toast.spokenMessage). \(actions).")
         startToastExpiry()
     }
 
     /// Keeps the toast up while VoiceOver is on it, so it doesn't vanish from under the user; its time
     /// starts over when VoiceOver moves off.
-    func holdToast(_ held: Bool) {
+    public func holdToast(_ held: Bool) {
         if held {
             toastExpiry?.cancel()
             toastExpiry = nil
@@ -627,7 +614,7 @@ final class BrowserStore {
     private func startToastExpiry() {
         toastExpiry?.cancel()
         toastExpiry = nil
-        guard let toast, !toast.staysUp, let lifetime = Self.toastLifetime else { return }
+        guard let toast, !toast.staysUp, let lifetime = toastLifetime else { return }
         let id = toast.id
         toastExpiry = Task { [weak self] in
             try? await Task.sleep(for: lifetime)
@@ -647,7 +634,7 @@ final class BrowserStore {
     }
 
     /// Takes the toast down: the one with `id`, or any.
-    func dismissToast(_ id: UUID? = nil) {
+    public func dismissToast(_ id: UUID? = nil) {
         guard let toast, id == nil || toast.id == id else { return }
         self.toast = nil
         toastExpiry?.cancel()
@@ -678,7 +665,7 @@ final class BrowserStore {
 
     /// Flips blocking for the active page's host, re-applies rules in every tab on that site,
     /// and reloads the active one.
-    func toggleBlockingForActiveSite() {
+    public func toggleBlockingForActiveSite() {
         // The tab's URL covers a web view that hasn't loaded yet (rebuilt after eviction, failed first load).
         // Per-site choices are saved: none from Incognito.
         guard let activeSession, !activeSession.isIncognito,
@@ -695,7 +682,7 @@ final class BrowserStore {
     }
 
     /// Applies a preferences change and refreshes rules in every live web view (no reload).
-    func updateBlockingPreferences(_ change: (inout BlockingPreferences) -> Void) {
+    public func updateBlockingPreferences(_ change: (inout BlockingPreferences) -> Void) {
         blocking.update(change)
         reapplyBlockingEverywhere()
     }
@@ -706,7 +693,7 @@ final class BrowserStore {
 
     // MARK: Snapshots
 
-    func snapshotActiveTab() {
+    public func snapshotActiveTab() {
         if let activeSession { snapshot(activeSession) }
     }
 
@@ -720,9 +707,9 @@ final class BrowserStore {
         let height = session.webView.bounds.height
         let tabID = session.tabID
         return Task {
-            guard let image = try? await session.webView.takeSnapshot(configuration: configuration),
+            guard let snapshot = try? await session.webView.snapshotImage(configuration: configuration),
                   state.tabs.contains(where: { $0.id == tabID }) else { return }
-            snapshots[tabID] = PageSnapshot(image, band: band, of: height)
+            snapshots[tabID] = PageSnapshot(snapshot.image, scale: snapshot.scale, band: band, of: height)
         }
     }
 
@@ -743,7 +730,7 @@ final class BrowserStore {
 
     /// With nowhere to stage (no window seen yet), queued tabs wait to load until they're shown.
     private func startQueuedBackgroundLoads() {
-        guard stagingWindow != nil else { return }
+        guard platform.canStage else { return }
         while stagedLoads.count < Self.backgroundLoadLimit, !backgroundQueue.isEmpty {
             let tabID = backgroundQueue.removeFirst()
             // Shown, closed, or given a web view some other way meanwhile.
@@ -757,11 +744,11 @@ final class BrowserStore {
 
     /// Without a window to stage in, the page still loads but is snapshotted only once shown.
     private func stage(_ session: TabSession) {
-        guard let window = stagingWindow, let layout = stagingLayout else { return }
+        guard platform.canStage else { return }
         let tabID = session.tabID
         // Out of sight and earshot: no media until the tab is first shown.
         session.suspendMediaUntilShown()
-        backgroundStage.add(session.webView, layout: layout, in: window)
+        platform.stage(session.webView)
         stagedLoads[tabID] = Task { [weak self] in
             try? await Task.sleep(for: Self.backgroundLoadTimeout)
             if !Task.isCancelled { self?.finishBackgroundLoad(tabID) }
@@ -788,10 +775,10 @@ final class BrowserStore {
                 let webView = session.webView
                 Task { [weak self] in
                     await snapshotting.value
-                    self?.backgroundStage.remove(webView)
+                    self?.platform.unstage(webView)
                 }
             } else {
-                backgroundStage.remove(session.webView)
+                platform.unstage(session.webView)
             }
         }
         startQueuedBackgroundLoads()
@@ -803,7 +790,7 @@ final class BrowserStore {
         backgroundQueue.removeAll { $0 == tabID }
         guard let timer = stagedLoads.removeValue(forKey: tabID) else { return }
         timer.cancel()
-        if unstaging, let session = sessions[tabID] { backgroundStage.remove(session.webView) }
+        if unstaging, let session = sessions[tabID] { platform.unstage(session.webView) }
     }
 
     // MARK: Internals
@@ -859,7 +846,7 @@ final class BrowserStore {
         state.removeBlankTabs()
     }
 
-    /// `window.open` / `target=_blank`: a new active Today tab whose web view WebKit will navigate.
+    /// `window.open` / `target=_blank`: a new active tab whose web view WebKit will navigate.
     private func openChild(configuration: WKWebViewConfiguration, for action: WKNavigationAction,
                            from opener: TabSession?) -> WKWebView? {
         // In the opener's Space: the web view WebKit hands over runs on the opener's website data. An
@@ -968,7 +955,7 @@ final class BrowserStore {
         recentTabIDs.removeAll { $0 == tabID }
         cancelBackgroundLoad(tabID, unstaging: true)
         if let session = sessions.removeValue(forKey: tabID) {
-            backgroundStage.remove(session.webView)
+            platform.unstage(session.webView)
             // Still restoring, its web view's history is empty: keep the one waiting to go in.
             if let history = session.isRestoringHistory ? session.pendingHistory : session.webView.interactionState {
                 interactionStates[tabID] = history
@@ -1036,10 +1023,11 @@ final class BrowserStore {
     private func makeSession(for tab: Tab, configuration: WKWebViewConfiguration? = nil,
                              adopting handoff: LinkPreviewHandoff? = nil) -> TabSession {
         let profileID = state.profile(forSpace: tab.spaceID).id
-        let session = handoff.map { TabSession(tabID: tab.id, blocking: blocking, adopting: $0) }
-            ?? TabSession(tabID: tab.id, profileID: profileID, blocking: blocking, configuration: configuration)
+        let chrome = { [platform] (session: TabSession) in platform.makeChrome(for: session, in: self) }
+        let session = handoff.map { TabSession(tabID: tab.id, blocking: blocking, adopting: $0, chrome: chrome) }
+            ?? TabSession(tabID: tab.id, profileID: profileID, blocking: blocking, configuration: configuration,
+                          platform: platform, chrome: chrome)
         builtTabIDs.insert(tab.id)
-        session.activeStripColor = { [weak self] in self?.stripUIColor(for: $0) }
         let tabID = tab.id
         // History goes where the page was seen: the profile whose website data it loaded with.
         let visitProfile = session.profileID
@@ -1111,7 +1099,7 @@ final class BrowserStore {
         }
         // Whatever state a closed tab's web view was in, it doesn't stay on the stage.
         for (tabID, session) in sessions where !live.contains(tabID) {
-            backgroundStage.remove(session.webView)
+            platform.unstage(session.webView)
         }
         sessions = sessions.filter { live.contains($0.key) }
         interactionStates = interactionStates.filter { live.contains($0.key) }
@@ -1137,7 +1125,7 @@ final class BrowserStore {
 
     /// The default database, in Application Support (not the app group: see `BrowsingHistory`).
     /// Kept out of backups, like tab histories: it never leaves the device.
-    static func openBrowsingHistory(
+    public static func openBrowsingHistory(
         at file: URL = .applicationSupportDirectory.appending(path: "History/browsing-history.sqlite")
     ) -> BrowsingHistory? {
         do {
@@ -1186,7 +1174,7 @@ final class BrowserStore {
 
     /// Runs `work` on the history after the writes queued before it, and returns its result: nil
     /// without a history database.
-    func afterBrowsingHistoryWrites<Result: Sendable>(
+    public func afterBrowsingHistoryWrites<Result: Sendable>(
         _ work: @escaping @Sendable (BrowsingHistory) async -> Result
     ) async -> Result? {
         guard let browsingHistory else { return nil }
@@ -1223,7 +1211,7 @@ final class BrowserStore {
 
     /// Saving is off until the state is loaded, and while a load failure is unacknowledged.
     /// Erasing a deleted profile's data is too (`eraseDeletedProfiles`).
-    var canSave: Bool {
+    public var canSave: Bool {
         #if DEBUG
         if isTerminated { return false }
         #endif
@@ -1275,12 +1263,7 @@ final class BrowserStore {
 
     /// Asks for background time until `task` finishes, so a write isn't cut off by suspension.
     private func keepRunning(until task: Task<Void, Never>, named name: String) {
-        let application = UIApplication.shared
-        let backgroundTask = application.beginBackgroundTask(withName: name, expirationHandler: nil)
-        Task {
-            await task.value
-            application.endBackgroundTask(backgroundTask)
-        }
+        platform.keepRunning(until: task, named: name)
     }
 
     /// Writes each tab's back/forward history that changed since the last save, so it survives a
@@ -1435,7 +1418,7 @@ final class BrowserStore {
     /// For UI tests (`UITestingProbes`): whether something the app writes while browsing isn't on
     /// disk yet: a debounced save still waiting, a write queued or running, a tab whose new page's
     /// history hasn't been queued, or a page still loading (its history is saved once it has).
-    var hasUnsavedWork: Bool {
+    public var hasUnsavedWork: Bool {
         debouncedSave != nil || writesInFlight > 0 || !navigatedTabIDs.isEmpty
             || sessions.values.contains { $0.isLoading }
     }

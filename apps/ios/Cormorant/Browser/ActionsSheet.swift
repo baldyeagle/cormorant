@@ -1,4 +1,5 @@
 import CormorantBlocking
+import CormorantBrowser
 import CormorantCore
 import SwiftUI
 import UIKit
@@ -8,7 +9,7 @@ import WebKit
 /// Share, Back to Pinned Page (a pinned tab away from it), Move to Space (with more than one Space), page zoom, desktop site, per-site blockers, and
 /// Settings.
 ///
-/// The presenter must call `session.runPendingAction()` from the sheet's `onDismiss`: Find on
+/// The presenter must call `session.ui.runPendingAction()` from the sheet's `onDismiss`: Find on
 /// Page needs first responder, which it can only take once the sheet is gone. `showSearch` is the
 /// presenter's and dismisses the sheet itself.
 ///
@@ -75,7 +76,7 @@ struct ActionsSheet: View {
     private func tiles(session: TabSession, url: URL) -> some View {
         TileRow {
             Button {
-                session.pendingAction = .findOnPage
+                session.ui.pendingAction = .findOnPage
                 dismiss()
             } label: {
                 TileLabel(title: "Find on Page", systemImage: "doc.text.magnifyingglass")

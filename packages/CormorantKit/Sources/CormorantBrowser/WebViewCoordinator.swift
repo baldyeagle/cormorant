@@ -1,9 +1,29 @@
-import UIKit
+import Foundation
 import WebKit
 
-/// Navigation and UI delegate for one tab's web view. Forwards decisions to its `TabSession`.
+/// Navigation and UI delegate for one tab's web view. Forwards decisions to its `TabSession`, and UI
+/// delegate methods it doesn't implement to the tab's chrome, if that's a UI delegate.
 final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
-    weak var session: TabSession?
+    weak let session: TabSession?
+    let chrome: any TabChrome
+    private nonisolated(unsafe) let chromeDelegate: (any WKUIDelegate)?
+
+    init(session: TabSession, chrome: any TabChrome) {
+        self.session = session
+        self.chrome = chrome
+        chromeDelegate = chrome as? any WKUIDelegate
+    }
+
+    nonisolated override func responds(to selector: Selector!) -> Bool {
+        super.responds(to: selector) || forwardingTarget(for: selector) != nil
+    }
+
+    nonisolated override func forwardingTarget(for selector: Selector!) -> Any? {
+        guard let chromeDelegate, chromeDelegate.responds(to: selector),
+              protocol_getMethodDescription(WKUIDelegate.self, selector, false, true).name != nil
+        else { return super.forwardingTarget(for: selector) }
+        return chromeDelegate
+    }
 
     // MARK: Navigation
 
@@ -72,27 +92,6 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         session?.pageDidRequestClose()
     }
 
-    // MARK: Link menu
-    // Implementing these keeps WebKit from falling back to the system's link menu, whose Open Link
-    // and preview tap send the URL to the default browser instead of this tab.
-
-    func webView(_ webView: WKWebView, contextMenuConfigurationFor elementInfo: WKContextMenuElementInfo) async -> UIContextMenuConfiguration? {
-        guard let url = elementInfo.linkURL else { return nil }
-        return session?.linkMenuConfiguration(for: url)
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        contextMenuForElement elementInfo: WKContextMenuElementInfo,
-        willCommitWithAnimator animator: any UIContextMenuInteractionCommitAnimating
-    ) {
-        session?.commitLinkPreview(elementInfo.linkURL, animator: animator)
-    }
-
-    func webView(_ webView: WKWebView, contextMenuDidEndForElement elementInfo: WKContextMenuElementInfo) {
-        session?.linkMenuDidEnd(for: elementInfo.linkURL)
-    }
-
     // MARK: JavaScript dialogs
     // Each handler must be called exactly once, so every path that can't show an alert calls it directly.
 
@@ -102,9 +101,8 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor @Sendable () -> Void
     ) {
-        let alert = UIAlertController(title: Self.title(for: frame), message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler() })
-        if !present(alert, over: webView) { completionHandler() }
+        let dialog = PageDialog.alert(title: Self.title(for: frame), message: message, done: completionHandler)
+        if session?.present(dialog) != true { completionHandler() }
     }
 
     func webView(
@@ -113,10 +111,8 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor @Sendable (Bool) -> Void
     ) {
-        let alert = UIAlertController(title: Self.title(for: frame), message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in completionHandler(false) })
-        alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler(true) })
-        if !present(alert, over: webView) { completionHandler(false) }
+        let dialog = PageDialog.confirm(title: Self.title(for: frame), message: message, done: completionHandler)
+        if session?.present(dialog) != true { completionHandler(false) }
     }
 
     func webView(
@@ -126,21 +122,9 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor @Sendable (String?) -> Void
     ) {
-        let alert = UIAlertController(title: Self.title(for: frame), message: prompt, preferredStyle: .alert)
-        alert.addTextField { $0.text = defaultText }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in completionHandler(nil) })
-        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak alert] _ in
-            completionHandler(alert?.textFields?.first?.text ?? "")
-        })
-        if !present(alert, over: webView) { completionHandler(nil) }
-    }
-
-    /// Presents from the web view's window scene. Returns false if the tab isn't the one on screen (a
-    /// background tab loading on the stage is in the window, but its dialogs mustn't appear).
-    private func present(_ alert: UIAlertController, over webView: WKWebView) -> Bool {
-        guard session?.isActiveTab == true, let presenter = webView.alertPresenter else { return false }
-        presenter.present(alert, animated: true)
-        return true
+        let dialog = PageDialog.prompt(title: Self.title(for: frame), message: prompt, defaultText: defaultText,
+                                       done: completionHandler)
+        if session?.present(dialog) != true { completionHandler(nil) }
     }
 
     private static func title(for frame: WKFrameInfo) -> String? {

@@ -8,11 +8,11 @@ import WebKit
 /// `releaseSessionsOnOtherProfiles`); these only change the state and the stores.
 extension BrowserStore {
     /// The active Space's profile, whose history the search panel suggests from.
-    var activeProfileID: UUID { state.activeProfile.id }
+    public var activeProfileID: UUID { state.activeProfile.id }
 
     /// Adds a profile no Space uses yet. A blank name (after trimming) adds nothing.
     @discardableResult
-    func createProfile(name: String, color: Swatch) -> Profile? {
+    public func createProfile(name: String, color: Swatch) -> Profile? {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isLoaded, !name.isEmpty else { return nil }
         var profile: Profile?
@@ -21,7 +21,7 @@ extension BrowserStore {
     }
 
     /// Edit Profile's fields. A blank name (after trimming) keeps the old one.
-    func updateProfile(_ profileID: UUID, name: String, color: Swatch) {
+    public func updateProfile(_ profileID: UUID, name: String, color: Swatch) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         changeState { state in
             state.updateProfile(profileID) { profile in
@@ -33,7 +33,7 @@ extension BrowserStore {
 
     /// Deletes the profile: its Spaces switch to the default profile, their tabs reloading there, and
     /// its website data and history are erased. Not the default profile.
-    func deleteProfile(_ profileID: UUID) {
+    public func deleteProfile(_ profileID: UUID) {
         // Its tabs' web views go with the change (`releaseSessionsOnOtherProfiles`), so nothing holds
         // its data store by the time it's erased.
         changeState { $0.deleteProfile(profileID) }
@@ -44,7 +44,7 @@ extension BrowserStore {
 
     /// How many sites keep data (cookies, storage, caches) in the profile; nil for a profile that's
     /// gone. WebKit doesn't say how much they hold.
-    func websiteDataSiteCount(of profileID: UUID) async -> Int? {
+    public func websiteDataSiteCount(of profileID: UUID) async -> Int? {
         guard state.profile(profileID) != nil else { return nil }
         return await TabSession.dataStore(for: profileID)
             .dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes()).count
@@ -53,7 +53,7 @@ extension BrowserStore {
     /// Erases the profile's cookies and website data, signing it out of every site. Its tabs' web views
     /// go first, so no page writes anything back meanwhile, and are rebuilt after (as for a change of
     /// profile), so none goes on as if signed in. History stays.
-    func clearWebsiteData(of profileID: UUID) async {
+    public func clearWebsiteData(of profileID: UUID) async {
         guard state.profile(profileID) != nil else { return }
         releaseSessions { session, _ in session.profileID == profileID }
         await TabSession.dataStore(for: profileID)

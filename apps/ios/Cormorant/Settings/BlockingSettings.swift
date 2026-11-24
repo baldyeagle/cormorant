@@ -1,4 +1,5 @@
 import CormorantBlocking
+import CormorantBrowser
 import SwiftUI
 
 /// Global toggle, filter lists, status, manual update, and per-site exceptions.

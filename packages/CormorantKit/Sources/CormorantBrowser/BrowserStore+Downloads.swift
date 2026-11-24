@@ -4,16 +4,16 @@ import OSLog
 import PassKit
 
 /// A Wallet pass a page handed over, for the Add to Wallet sheet.
-struct WalletPassRequest: Identifiable {
-    let id = UUID()
-    let pass: PKPass
+public struct WalletPassRequest: Identifiable {
+    public let id = UUID()
+    public let pass: PKPass
 }
 
 /// The events of a calendar file a page handed over, for the New Event editor.
-struct CalendarImport: Identifiable {
-    let id = UUID()
-    let filename: String
-    let events: [CalendarEvent]
+public struct CalendarImport: Identifiable {
+    public let id = UUID()
+    public let filename: String
+    public let events: [CalendarEvent]
 }
 
 extension BrowserStore {
@@ -54,7 +54,7 @@ extension BrowserStore {
         defer { downloads.discard(item) }
         switch item.handoff {
         case .walletPass:
-            if PKAddPassesViewController.canAddPasses(), let data = try? Data(contentsOf: item.fileURL) {
+            if platform.canAddPasses, let data = try? Data(contentsOf: item.fileURL) {
                 do {
                     walletPassRequest = WalletPassRequest(pass: try PKPass(data: data))
                     return

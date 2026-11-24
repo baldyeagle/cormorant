@@ -3,7 +3,6 @@ import Foundation
 import ImageIO
 import Observation
 import OSLog
-import UIKit
 import UniformTypeIdentifiers
 import WebKit
 
@@ -12,7 +11,7 @@ import WebKit
 /// main actor, and every failure just leaves the site without an icon.
 @MainActor
 @Observable
-final class FaviconStore {
+public final class FaviconStore {
     /// A cached icon older than this is fetched again on the next visit, so a site's new icon shows up.
     static let refreshInterval: TimeInterval = 24 * 60 * 60
     /// After a fetch where nothing usable came back, the host isn't tried again for this long.
@@ -51,7 +50,7 @@ final class FaviconStore {
         return { links, userAgent: navigator.userAgent };
         """
 
-    init(directory: URL = .cachesDirectory.appending(path: "Favicons", directoryHint: .isDirectory)) {
+    public init(directory: URL = .cachesDirectory.appending(path: "Favicons", directoryHint: .isDirectory)) {
         self.directory = directory
         // Ephemeral with no cookies or cache: an icon fetch must not carry or set the user's session.
         // Only where that met a sign-in does the page itself fetch its own icon (`downloadThroughPage`).
@@ -67,7 +66,7 @@ final class FaviconStore {
 
     /// The icon for `url`'s site, if one is known. Read from a view body: the first ask for a host
     /// starts a disk lookup, and the view re-renders when it (or a later fetch) lands.
-    func icon(for url: URL?) -> UIImage? {
+    public func icon(for url: URL?) -> CGImage? {
         guard let url, let key = FaviconSelector.hostKey(for: url) else { return nil }
         if diskChecked.insert(key).inserted {
             Task { await loadFromDisk(key) }
@@ -150,7 +149,7 @@ final class FaviconStore {
         return cached.modified
     }
 
-    private func store(_ image: UIImage, for key: String) {
+    private func store(_ image: CGImage, for key: String) {
         slot(for: key).image = image
     }
 
@@ -220,7 +219,7 @@ final class FaviconStore {
     /// one). The bytes are decoded here, as `download`'s are. Nil if none of them gives an icon, the
     /// tab has gone, or the page has moved to another site meanwhile. The web view is looked up again
     /// for each URL, so a closed tab's is held at most for one fetch.
-    private func downloadThroughPage(_ urls: [URL], in webView: () -> WKWebView?, key: String) async -> UIImage? {
+    private func downloadThroughPage(_ urls: [URL], in webView: () -> WKWebView?, key: String) async -> CGImage? {
         for url in urls {
             guard let webView = webView(), let pageURL = webView.url,
                   FaviconSelector.hostKey(for: pageURL) == key else { return nil }
@@ -294,7 +293,7 @@ final class FaviconStore {
     private static let fileNameAllowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-.")
 
     private struct CachedIcon: Sendable {
-        let image: UIImage
+        let image: CGImage
         let modified: Date
     }
 
@@ -309,7 +308,8 @@ final class FaviconStore {
     @concurrent
     nonisolated private static func readCached(_ file: URL) async -> CachedIcon? {
         guard let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
-              let image = UIImage(contentsOfFile: file.path)?.preparingForDisplay()
+              let source = CGImageSourceCreateWithURL(file as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
         else { return nil }
         return CachedIcon(image: image, modified: modified)
     }
@@ -321,7 +321,7 @@ final class FaviconStore {
     /// `signInURLs` are the ones that met a sign-in instead: a 401 or 403, or a redirect to an HTML page.
     nonisolated private static func download(
         _ urls: [URL], session: URLSession, request: Request, to file: URL
-    ) async -> (image: UIImage?, signInURLs: [URL]) {
+    ) async -> (image: CGImage?, signInURLs: [URL]) {
         var signInURLs: [URL] = []
         for url in urls {
             guard !Task.isCancelled else { break }
@@ -334,14 +334,14 @@ final class FaviconStore {
     }
 
     @concurrent
-    nonisolated private static func keep(base64: String, as file: URL) async -> UIImage? {
+    nonisolated private static func keep(base64: String, as file: URL) async -> CGImage? {
         guard let data = Data(base64Encoded: base64) else { return nil }
         return await keep(data, as: file)
     }
 
     /// Decodes `data` as an icon (`thumbnail`), writes it to `file` and returns it; nil if it isn't one.
     @concurrent
-    nonisolated private static func keep(_ data: Data, as file: URL) async -> UIImage? {
+    nonisolated private static func keep(_ data: Data, as file: URL) async -> CGImage? {
         guard let icon = thumbnail(from: data) else { return nil }
         if let png = pngData(icon) {
             do {
@@ -351,7 +351,7 @@ final class FaviconStore {
                 log.debug("Caching icon failed: \(error.localizedDescription, privacy: .public)")
             }
         }
-        return UIImage(cgImage: icon)
+        return icon
     }
 
     /// The body of a 2xx response no larger than `maxResponseBytes`, else nil; `metSignIn` when the
@@ -430,7 +430,7 @@ final class FaviconStore {
 
     @Observable
     fileprivate final class Slot {
-        var image: UIImage?
+        var image: CGImage?
     }
 
     private struct Request: Sendable {

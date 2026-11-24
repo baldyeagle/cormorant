@@ -1,5 +1,6 @@
 import Testing
 @testable import Cormorant
+@testable import CormorantBrowser
 
 /// Every in-process test, one at a time. They share the app's main actor, WebKit's processes and its
 /// website data stores, so two at once would see each other's pages and profiles. Each file adds its

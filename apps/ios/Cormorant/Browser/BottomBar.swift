@@ -1,3 +1,4 @@
+import CormorantBrowser
 import CormorantCore
 import SwiftUI
 
@@ -21,7 +22,7 @@ struct BottomBar: View {
     /// Arc Search's proportions: a short pill, not a field-width one.
     @ScaledMetric(relativeTo: .body) private var newTabWidth: CGFloat = 88
 
-    private var isCollapsed: Bool { (session?.isBarCollapsed ?? false) && !isSearching }
+    private var isCollapsed: Bool { (session?.ui.isBarCollapsed ?? false) && !isSearching }
     private var isLoading: Bool { session?.isLoading == true }
     private var progress: Double { session?.progress ?? 0 }
 
@@ -63,7 +64,7 @@ struct BottomBar: View {
 
     private var collapsedStrip: some View {
         Button {
-            session?.isBarCollapsed = false
+            session?.ui.isBarCollapsed = false
         } label: {
             HStack(spacing: 6) {
                 // So the Space is never fully out of sight.

@@ -1,4 +1,5 @@
 #if DEBUG
+import CormorantBrowser
 import CormorantCore
 import SwiftUI
 import UIKit

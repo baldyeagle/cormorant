@@ -56,6 +56,11 @@ public struct RGBColor: Equatable, Hashable, Sendable {
     }
 }
 
+public enum Appearance: Sendable {
+    case light
+    case dark
+}
+
 /// The page's own color behind the status bar, and the status-bar style that reads on it.
 ///
 /// The page runs up under the status bar, so what's behind the clock is the page: above its top, the

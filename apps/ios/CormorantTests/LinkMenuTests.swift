@@ -5,6 +5,7 @@ import Testing
 import UIKit
 import WebKit
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// The long-press link menu's actions, run as the menu runs them: its preview is the one UIKit asks
@@ -123,7 +124,8 @@ extension AppTests {
             #expect(server.requestCount(for: "/next") == 1, "the page was loaded again; \(server.requestLog)")
         }
 
-        /// The preview has the page: the new tab takes it over, with no second request.
+        /// The preview has the page: the new tab takes it over, with no second request, and the tab's link
+        /// menu is the app's, as the opener's is.
         @Test func openInNewTabAdoptsLoadedPreview() async throws {
             let server = try FixtureServer(html: Self.page)
             let browser = try await TestBrowser()
@@ -132,12 +134,15 @@ extension AppTests {
             let opener = try #require(browser.store.activeSession)
             let next = server.url.appending(path: "next")
 
+            #expect(Self.takesLinkMenu(opener), "a typed tab's link menu is the system's")
             let preview = try await loadedPreview(of: next, in: opener, browser: browser)
             try choose("Open in New Tab", for: next, in: opener)
 
             #expect(browser.store.tabs.count == 2, "no new tab")
-            #expect(browser.store.activeSession !== opener, "didn't switch to the new tab")
-            #expect(browser.store.activeSession?.webView === preview.webView, "the new tab didn't take the preview's page")
+            let tab = try #require(browser.store.activeSession)
+            #expect(tab !== opener, "didn't switch to the new tab")
+            #expect(tab.webView === preview.webView, "the new tab didn't take the preview's page")
+            #expect(Self.takesLinkMenu(tab), "an adopted tab's link menu is the system's")
             try await browser.waitForPage("/next")
             #expect(server.requestCount(for: "/next") == 1, "the page was loaded again; \(server.requestLog)")
         }
@@ -252,6 +257,17 @@ extension AppTests {
                 preview.webView.url?.path() == url.path() && !preview.webView.isLoading
             }
             return preview
+        }
+
+        /// The tab's chrome implements these and its web view's UI delegate passes them on. Without them
+        /// WebKit shows the system's menu, which sends a link to the default browser.
+        private static func takesLinkMenu(_ session: TabSession) -> Bool {
+            let delegate = session.webView.uiDelegate as? NSObject
+            return [
+                #selector(WKUIDelegate.webView(_:contextMenuConfigurationForElement:completionHandler:)),
+                #selector(WKUIDelegate.webView(_:contextMenuForElement:willCommitWithAnimator:)),
+                #selector(WKUIDelegate.webView(_:contextMenuDidEndForElement:)),
+            ].allSatisfy { delegate?.responds(to: $0) == true }
         }
 
         /// The web view loading on the background stage: in `window` but not under its root view.

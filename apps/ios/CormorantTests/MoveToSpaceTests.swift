@@ -3,6 +3,7 @@ import CormorantTestSupport
 import Foundation
 import Testing
 @testable import Cormorant
+@testable import CormorantBrowser
 
 extension AppTests {
     /// Moving a tab to another Space (what the caret sheet's Move to Space sheet calls), opening a link in
@@ -123,9 +124,9 @@ extension AppTests {
 
             // As the menu item does: no preview was made, so the tab loads the link itself, and the bar
             // comes back so the new tab's count can be seen.
-            session.setBarCollapsed(true)
+            session.ui.setBarCollapsed(true)
             session.openInSpace(server.url.appending(path: "next"), option: projects)
-            #expect(!session.isBarCollapsed, "the bar stayed collapsed")
+            #expect(!session.ui.isBarCollapsed, "the bar stayed collapsed")
             let toast = try #require(browser.store.toast, "no toast after Open in Space")
             #expect(toast.message == "Opened in Projects")
             #expect(toast.allActions.map(\.title) == ["Show"])

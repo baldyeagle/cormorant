@@ -149,17 +149,22 @@ jobs:
       - name: Default-browser plist checklist (built app)
         if: ${{ !cancelled() && matrix.shard == 1 && steps.build.outcome == 'success' }}
         run: scripts/check-default-browser-plist.sh build/DerivedData/Build/Products/Debug-iphonesimulator/Cormorant.app
-      - name: Fail on warnings in app code
+      - name: Fail on warnings in app and package code
         if: ${{ !cancelled() && matrix.shard == 1 && steps.build.outcome == 'success' }}
         run: |
-          if grep -E "apps/ios/.*warning:" build/xcodebuild.log; then
-            echo "Compiler warnings in apps/ios"; exit 1
+          if grep -E "(apps/ios|packages)/.*warning:" build/xcodebuild.log; then
+            echo "Compiler warnings in apps/ios or packages"; exit 1
           fi
       - name: CormorantKit (swift test)
         if: ${{ !cancelled() && matrix.shard == 1 }}
         # Live filter-list download is opt-in (CORMORANT_LIVE_TESTS=1) and stays off in CI.
         run: |
-          swift build --package-path packages/CormorantKit
+          set -o pipefail
+          mkdir -p build
+          swift build --package-path packages/CormorantKit 2>&1 | tee build/swift-build.log
+          if grep -E "packages/.*warning:" build/swift-build.log; then
+            echo "Compiler warnings in packages (macOS)"; exit 1
+          fi
           swift test --package-path packages/CormorantKit
       - name: Boot a simulator
         id: boot

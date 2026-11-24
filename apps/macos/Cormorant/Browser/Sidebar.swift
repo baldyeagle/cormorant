@@ -13,29 +13,20 @@ struct Sidebar: View {
     let titleBarHeight: CGFloat
     /// On screen and still, so a Space editor can hang off its bottom row.
     let presentsSpaceEditor: Bool
+    /// How far a two-finger swipe has carried the Space's address and tabs, the next Space's
+    /// following them in (left, negative: the next Space).
+    let swipe: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             controls
                 .frame(height: titleBarHeight)
-            HostField(store: store, commands: commands)
+                .padding(.horizontal, 10)
+            SpacePages(store: store, commands: commands, swipe: swipe)
                 .padding(.top, 6)
-            ScrollView {
-                VStack(spacing: 2) {
-                    NewTabRow(store: store)
-                    ForEach(store.listedTabs) { tab in
-                        TabRow(tab: tab, store: store,
-                               isActive: tab.id == store.state.activeTabID && !store.isComposingNewTab)
-                            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
-                    }
-                }
-                .padding(.top, 12)
-                .animation(.snappy(duration: 0.2), value: store.listedTabs.map(\.id))
-            }
-            .scrollIndicators(.never)
             footer
+                .padding(.horizontal, 10)
         }
-        .padding(.horizontal, 10)
         .padding(.bottom, 10)
     }
 
@@ -60,12 +51,10 @@ struct Sidebar: View {
         HStack(spacing: 2) {
             LibraryButton(store: store)
             Spacer()
-            if store.hasSpacesToSwitch {
-                HStack(spacing: 6) {
-                    ForEach(Array(store.state.shownSpaces.enumerated()), id: \.element.id) { index, space in
-                        SpaceButton(space: space, index: index, store: store, commands: commands,
-                                    presentsEditor: presentsSpaceEditor)
-                    }
+            HStack(spacing: 6) {
+                ForEach(Array(store.state.shownSpaces.enumerated()), id: \.element.id) { index, space in
+                    SpaceButton(space: space, index: index, store: store, commands: commands,
+                                presentsEditor: presentsSpaceEditor)
                 }
             }
             Spacer()
@@ -75,10 +64,75 @@ struct Sidebar: View {
     }
 }
 
+/// The active Space's address and tabs, with its neighbours' beside it for a swipe to bring in.
+private struct SpacePages: View {
+    let store: BrowserStore
+    let commands: WindowCommands
+    let swipe: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            let spaces = store.state.shownSpaces
+            let index = spaces.firstIndex { $0.id == store.state.activeSpaceID }
+            ZStack(alignment: .topLeading) {
+                // By Space, so a page keeps its own scroll position as it becomes the active one.
+                ForEach(neighbours(of: index, in: spaces), id: \.space.id) { step, space in
+                    SpacePage(spaceID: space.id, store: store, commands: commands)
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .offset(x: CGFloat(step) * proxy.size.width + swipe)
+                }
+                if index == nil {
+                    SpacePage(spaceID: store.state.activeSpaceID, store: store, commands: commands)
+                }
+            }
+        }
+        .clipped()
+    }
+}
+
+private func neighbours(of index: Int?, in spaces: [Space]) -> [(step: Int, space: Space)] {
+    guard let index else { return [] }
+    return (-1...1).compactMap { step in spaces.indices.contains(index + step) ? (step, spaces[index + step]) : nil }
+}
+
+/// A Space's address and tabs, as switching to it would show them; only the active Space's respond.
+private struct SpacePage: View {
+    let spaceID: UUID
+    let store: BrowserStore
+    let commands: WindowCommands
+
+    var body: some View {
+        let isActive = spaceID == store.state.activeSpaceID
+        let front = isActive ? store.activeTab : store.state.tabs(inSpace: spaceID).first
+        let tabs = store.state.listedTabs(inSpace: spaceID)
+        VStack(alignment: .leading, spacing: 0) {
+            HostField(store: store, commands: commands, tab: front, isActive: isActive)
+            ScrollView {
+                VStack(spacing: 2) {
+                    NewTabRow(store: store, isComposing: isActive && store.isComposingNewTab)
+                    ForEach(tabs) { tab in
+                        TabRow(tab: tab, store: store,
+                               isActive: tab.id == front?.id && !(isActive && store.isComposingNewTab))
+                            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+                    }
+                }
+                .padding(.top, 12)
+                .animation(.snappy(duration: 0.2), value: tabs.map(\.id))
+            }
+            .scrollIndicators(.never)
+        }
+        .padding(.horizontal, 10)
+        .allowsHitTesting(isActive)
+        .accessibilityHidden(!isActive)
+    }
+}
+
 /// The page's host; a click edits the whole address in the command bar.
 private struct HostField: View {
     let store: BrowserStore
     let commands: WindowCommands
+    let tab: CormorantCore.Tab?
+    let isActive: Bool
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -87,7 +141,7 @@ private struct HostField: View {
                 .foregroundStyle(host == nil ? .secondary : .primary)
                 .lineLimit(1)
             Spacer(minLength: 0)
-            if let host { PageMenu(store: store, host: host) }
+            if isActive, let host { PageMenu(store: store, host: host) }
         }
         .font(.system(size: 13.5))
         .padding(.leading, 11)
@@ -103,7 +157,7 @@ private struct HostField: View {
     }
 
     private var host: String? {
-        store.activeTab?.url?.host().map { $0.hasPrefix("www.") ? String($0.dropFirst(4)) : $0 }
+        tab?.url?.host().map { $0.hasPrefix("www.") ? String($0.dropFirst(4)) : $0 }
     }
 }
 
@@ -142,6 +196,7 @@ private struct PageMenu: View {
 
 private struct NewTabRow: View {
     let store: BrowserStore
+    let isComposing: Bool
     @State private var hovering = false
 
     var body: some View {
@@ -153,8 +208,8 @@ private struct NewTabRow: View {
             Text("⌘T")
                 .font(.system(size: 11.5))
         }
-        .foregroundStyle(store.isComposingNewTab ? .primary : .secondary)
-        .rowStyle(isActive: store.isComposingNewTab, hovering: hovering)
+        .foregroundStyle(isComposing ? .primary : .secondary)
+        .rowStyle(isActive: isComposing, hovering: hovering)
         .onHover { hovering = $0 }
         .onTapGesture { store.newTab() }
         .accessibilityElement(children: .combine)

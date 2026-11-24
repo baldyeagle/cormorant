@@ -107,17 +107,24 @@ struct SpaceEditor: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(trimmedName.isEmpty)
             }
-        } else if draft.id != Space.defaultID {
+        } else {
             Divider()
             HStack {
-                Button("Archive Space…", systemImage: "archivebox") { remove(.archive) }
+                Button("Archive", systemImage: "archivebox") { remove(.archive) }
+                    .accessibilityLabel("Archive Space")
                 Spacer()
-                Button("Delete Space…", systemImage: "trash") { remove(.delete) }
-                    .foregroundStyle(.red)
+                Button("Delete", systemImage: "trash", role: .destructive) { remove(.delete) }
+                    .foregroundStyle(isHome ? Color.secondary : .red)
+                    .accessibilityLabel("Delete Space")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.bordered)
+            // Home is where tabs go when nowhere else will have them: it stays.
+            .disabled(isHome)
+            .help(isHome ? "Home can't be archived or deleted" : "")
         }
     }
+
+    private var isHome: Bool { draft.id == Space.defaultID }
 
     private var pendingWarning: String? {
         pendingProfile.flatMap { store.state.profileSwitchWarning(spaceID: draft.id, to: $0.id) }

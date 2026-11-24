@@ -51,27 +51,26 @@ struct SpaceButton: View {
         }
         Button("Edit Space…") { commands.spaceEditor = .edit(space.id) }
         // Home can be neither.
-        if space.id != Space.defaultID {
+        Group {
             Button("Archive Space…") { commands.spaceRemoval = SpaceRemoval(.archive, space, in: store.state) }
             Button("Delete Space…") { commands.spaceRemoval = SpaceRemoval(.delete, space, in: store.state) }
         }
+        .disabled(space.id == Space.defaultID)
         Divider()
         Button("New Space…") { commands.spaceEditor = .new }
             .keyboardShortcut("n", modifiers: [.control, .shift])
     }
 }
 
-/// The bottom row's +. New Space hangs off it, and so does Edit Space while there are no Space icons
-/// (only Home).
+/// The bottom row's +, which New Space hangs off.
 struct NewSpaceButton: View {
     let store: BrowserStore
     let commands: WindowCommands
     let presentsEditor: Bool
 
     var body: some View {
-        let hasIcons = store.hasSpacesToSwitch
         IconButton("New Space", systemImage: "plus", help: "New Space ⌃⇧N") { commands.spaceEditor = .new }
-            .popover(item: commands.spaceEditor({ $0 == .new || !hasIcons }, presents: presentsEditor), arrowEdge: .top) { target in
+            .popover(item: commands.spaceEditor({ $0 == .new }, presents: presentsEditor), arrowEdge: .top) { target in
                 SpaceEditor(target: target, store: store, commands: commands)
             }
     }

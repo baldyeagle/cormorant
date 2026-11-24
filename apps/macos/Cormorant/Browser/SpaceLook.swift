@@ -7,12 +7,9 @@ extension Swatch {
 
     /// The window behind the sidebar and page: 15% of the Space's color on light grey, 22% on near
     /// black.
-    func windowTint(dark: Bool) -> Color {
-        let base = dark ? RGBColor(hex: 0x0B0F19) : RGBColor(hex: 0xECEEF1)
-        let amount = dark ? 0.22 : 0.15
-        return Color(red: base.red + (rgb.red - base.red) * amount,
-                     green: base.green + (rgb.green - base.green) * amount,
-                     blue: base.blue + (rgb.blue - base.blue) * amount)
+    func windowTint(dark: Bool) -> CormorantCore.RGBColor {
+        let base = dark ? CormorantCore.RGBColor(hex: 0x0B0F19) : CormorantCore.RGBColor(hex: 0xECEEF1)
+        return base.mixed(with: rgb, amount: dark ? 0.22 : 0.15)
     }
 
     /// The loading bar: the Space's color, deeper on the light frame, paler on the dark one.
@@ -20,6 +17,15 @@ extension Swatch {
         dark ? Color(red: rgb.red + (1 - rgb.red) * 0.45, green: rgb.green + (1 - rgb.green) * 0.45,
                      blue: rgb.blue + (1 - rgb.blue) * 0.45)
             : Color(red: rgb.red * 0.7, green: rgb.green * 0.7, blue: rgb.blue * 0.7)
+    }
+}
+
+extension CormorantCore.RGBColor {
+    var color: Color { Color(red: red, green: green, blue: blue, opacity: alpha) }
+
+    func mixed(with other: CormorantCore.RGBColor, amount: Double) -> CormorantCore.RGBColor {
+        CormorantCore.RGBColor(red: red + (other.red - red) * amount, green: green + (other.green - green) * amount,
+                 blue: blue + (other.blue - blue) * amount)
     }
 }
 

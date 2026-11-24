@@ -20,6 +20,11 @@ struct BrowserWindow: View {
     @State private var peekHasButtons = false
     /// Whether the docked sidebar is out and the page beside it: the two slide together.
     @State private var isDocked: Bool
+    /// How far a two-finger swipe over the sidebar has carried it toward a neighbouring Space.
+    @State private var swipe: CGFloat = 0
+    /// A swipe let go to switch, sliding the rest of the way: switched to at once if anything else
+    /// happens first.
+    @State private var pendingSwitch: (to: UUID, from: UUID)?
     /// The docked sidebar is out and done sliding.
     @State private var dockIsSettled: Bool
     /// The last Archive or Delete Space confirmation's title, kept while it closes.
@@ -59,7 +64,8 @@ struct BrowserWindow: View {
                         .position(x: pageLeading + (proxy.size.width - pageLeading - 8) / 2, y: 4)
                         .transition(.opacity)
                 }
-                Sidebar(store: store, commands: commands, titleBarHeight: titleBar, presentsSpaceEditor: dockIsSettled)
+                Sidebar(store: store, commands: commands, titleBarHeight: titleBar, presentsSpaceEditor: dockIsSettled,
+                        swipe: swipe)
                     .frame(width: commands.sidebarWidth)
                     .background(spaceTint)
                     .overlay(alignment: .trailing) { SidebarResizer(commands: commands).allowsHitTesting(isDocked) }
@@ -68,7 +74,7 @@ struct BrowserWindow: View {
                     .accessibilityHidden(!commands.showsSidebar)
                 if peekIsOut {
                     Sidebar(store: store, commands: commands, titleBarHeight: max(titleBar - 8, 28),
-                            presentsSpaceEditor: peekHasButtons && !commands.showsSidebar)
+                            presentsSpaceEditor: peekHasButtons && !commands.showsSidebar, swipe: swipe)
                         .frame(width: commands.sidebarWidth)
                         .background(spaceTint, in: .rect(cornerRadius: 12))
                         .clipShape(.rect(cornerRadius: 12))
@@ -123,6 +129,12 @@ struct BrowserWindow: View {
                 // Nothing covers the page while the bar is up, so it still scrolls; a click outside the
                 // bar puts it away and goes on to what was clicked.
                 if barMode != nil, !barFrame.contains(point) { dismissBar() }
+            } sidebarReach: {
+                // Not under the ⌘T/⌘L bar, which a swipe would otherwise switch away from.
+                guard barMode == nil else { return nil }
+                return commands.showsSidebar ? commands.sidebarWidth : peekIsOut ? commands.sidebarWidth + 8 : nil
+            } swipedSidebar: { swiped in
+                followSwipe(swiped)
             })
             .ignoresSafeArea()
         }
@@ -203,17 +215,68 @@ struct BrowserWindow: View {
         !commands.showsSidebar && peeksSidebar
     }
 
+    /// The active Space's tint, blending toward the neighbour's as a swipe brings it in.
     private var spaceTint: Color {
-        store.state.activeSpace.color.windowTint(dark: colorScheme == .dark)
+        let dark = colorScheme == .dark
+        let tint = store.state.activeSpace.color.windowTint(dark: dark)
+        guard swipe != 0, let neighbour = swipeTarget(towardNext: swipe < 0) else { return tint.color }
+        let progress = min(abs(swipe) / commands.sidebarWidth, 1)
+        return tint.mixed(with: neighbour.color.windowTint(dark: dark), amount: progress).color
+    }
+
+    private func swipeTarget(towardNext: Bool) -> Space? {
+        let spaces = store.state.shownSpaces
+        guard let index = spaces.firstIndex(where: { $0.id == store.state.activeSpaceID }) else { return nil }
+        let target = index + (towardNext ? 1 : -1)
+        return spaces.indices.contains(target) ? spaces[target] : nil
+    }
+
+    /// The sidebar follows the fingers; let go far enough (or quickly enough) and the Space switches,
+    /// once its neighbour has slid all the way in. Past the first or last Space it only gives a little.
+    private func followSwipe(_ swiped: SidebarSwipe) {
+        let width = commands.sidebarWidth
+        switch swiped {
+        case .moved(let across):
+            finishPendingSwitch()
+            swipe = swipeTarget(towardNext: across < 0) == nil ? across / 6 : min(max(across, -width), width)
+        case .ended(let across, let speed):
+            // A flick needs some distance, and a fast move back the other way calls it off.
+            let flicked = abs(across) > 40 && abs(speed) > 700 && (speed < 0) == (across < 0)
+            let flickedBack = abs(speed) > 700 && (speed < 0) != (across < 0)
+            guard let target = swipeTarget(towardNext: across < 0), !flickedBack,
+                  abs(across) > width / 3 || flicked else {
+                withAnimation(.snappy(duration: 0.2)) { swipe = 0 }
+                return
+            }
+            let end = across < 0 ? -width : width
+            pendingSwitch = (target.id, store.state.activeSpaceID)
+            guard swipe != end else { return finishPendingSwitch() }
+            withAnimation(.easeOut(duration: 0.18)) { swipe = end } completion: { finishPendingSwitch() }
+        }
+    }
+
+    private func finishPendingSwitch() {
+        guard let pending = pendingSwitch else { return }
+        pendingSwitch = nil
+        var settle = Transaction()
+        settle.disablesAnimations = true
+        withTransaction(settle) {
+            if store.state.activeSpaceID == pending.from { store.switchToSpace(pending.to) }
+            swipe = 0
+        }
     }
 }
 
-/// The window's own buttons, shown only with the sidebar; the window dragged by its background; and where
-/// the pointer is and is pressed across the window (top-left origin), page included.
+/// The window's own buttons, shown only with the sidebar; the window dragged by its background; where
+/// the pointer is and is pressed across the window (top-left origin), page included; and two-finger
+/// swipes over the sidebar.
 private struct WindowChrome: NSViewRepresentable {
     let showsButtons: Bool
     let pointerMoved: (CGFloat) -> Void
     let pointerPressed: (CGPoint) -> Void
+    /// Where the sidebar on screen ends, nil with none: two fingers swiped sideways over it switch Space.
+    let sidebarReach: () -> CGFloat?
+    let swipedSidebar: (SidebarSwipe) -> Void
 
     func makeNSView(context: Context) -> ChromeView { ChromeView() }
 
@@ -221,6 +284,8 @@ private struct WindowChrome: NSViewRepresentable {
         view.showsButtons = showsButtons
         view.pointerMoved = pointerMoved
         view.pointerPressed = pointerPressed
+        view.sidebarReach = sidebarReach
+        view.swipedSidebar = swipedSidebar
     }
 
     final class ChromeView: NSView {
@@ -229,6 +294,14 @@ private struct WindowChrome: NSViewRepresentable {
         }
         var pointerMoved: ((CGFloat) -> Void)?
         var pointerPressed: ((CGPoint) -> Void)?
+        var sidebarReach: (() -> CGFloat?)?
+        var swipedSidebar: ((SidebarSwipe) -> Void)?
+        /// The swipe under way over the sidebar: how far the fingers went across and up or down, which
+        /// way it was settled to be, its last moves (for its speed when the fingers lift), and the
+        /// sidebar's width.
+        private var swipe: (across: CGFloat, upDown: CGFloat, sideways: Bool?, recent: [(CFTimeInterval, CGFloat)], width: CGFloat)?
+        /// After a sideways swipe, until the next gesture: its momentum isn't the list's to scroll.
+        private var swallowsMomentum = false
         private var monitor: Any?
 
         override func viewDidMoveToWindow() {
@@ -238,11 +311,13 @@ private struct WindowChrome: NSViewRepresentable {
             guard let window else { return }
             window.isMovableByWindowBackground = true
             window.acceptsMouseMovedEvents = true
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .leftMouseDown]) {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .leftMouseDown, .scrollWheel]) {
                 [weak self] event in
                 guard let self, event.window === self.window else { return event }
                 let location = event.locationInWindow
-                if event.type == .leftMouseDown {
+                if event.type == .scrollWheel {
+                    return swiped(event) ? nil : event
+                } else if event.type == .leftMouseDown {
                     let height = self.window?.contentView?.bounds.height ?? 0
                     pointerPressed?(CGPoint(x: location.x, y: height - location.y))
                 } else {
@@ -251,6 +326,48 @@ private struct WindowChrome: NSViewRepresentable {
                 return event
             }
             apply()
+        }
+
+        /// Follows a trackpad swipe over the sidebar; true once it's settled as sideways, so the
+        /// sidebar's list doesn't scroll with it (or drift with its momentum after).
+        private func swiped(_ event: NSEvent) -> Bool {
+            if event.phase.isEmpty, event.momentumPhase.isEmpty {
+                // A mouse wheel: no gesture to follow, and one cut off mid-way is over.
+                if swipe?.sideways == true { swipedSidebar?(.ended(0, speed: 0)) }
+                swipe = nil
+                return false
+            }
+            if !event.momentumPhase.isEmpty { return swallowsMomentum }
+            if event.phase == .began {
+                swipe = nil
+                swallowsMomentum = false
+                if let reach = sidebarReach?(), event.locationInWindow.x <= reach { swipe = (0, 0, nil, [], reach) }
+            }
+            guard var current = swipe else { return false }
+            if event.phase == .ended || event.phase == .cancelled {
+                swipe = nil
+                guard current.sideways == true else { return false }
+                swallowsMomentum = true
+                let now = event.timestamp
+                let recent = current.recent.filter { now - $0.0 < 0.1 }
+                swipedSidebar?(.ended(current.across, speed: recent.map(\.1).reduce(0, +) / 0.1))
+                // On to the list too, which saw the gesture begin and should see it end.
+                return false
+            }
+            // With natural scrolling the deltas go the fingers' way; without, the other way.
+            let move = event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX
+            // No further than a page either way, so coming back answers at once.
+            current.across = min(max(current.across + move, -current.width), current.width)
+            current.upDown += abs(event.scrollingDeltaY)
+            current.recent.append((event.timestamp, move))
+            if current.recent.count > 12 { current.recent.removeFirst() }
+            if current.sideways == nil, abs(current.across) + current.upDown > 6 {
+                current.sideways = abs(current.across) > current.upDown * 2
+            }
+            swipe = current
+            guard current.sideways == true else { return false }
+            swipedSidebar?(.moved(current.across))
+            return true
         }
 
         private func apply() {
@@ -266,6 +383,13 @@ private final class StageView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func isAccessibilityElement() -> Bool { false }
     override func accessibilityChildren() -> [Any]? { [] }
+}
+
+fileprivate enum SidebarSwipe {
+    /// How far the fingers have gone, right positive.
+    case moved(CGFloat)
+    /// Lifted, with their speed (points a second) just before.
+    case ended(CGFloat, speed: CGFloat)
 }
 
 /// The sidebar's trailing edge, dragged to make it wider or narrower.

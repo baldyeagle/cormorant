@@ -17,16 +17,20 @@ extension BrowserStore {
     /// Whether the tab can be pinned: a web page, not Incognito, not pinned already.
     public func canPin(_ tabID: UUID) -> Bool { state.canPin(tabID) }
 
-    /// Pins the tab on the page it's on. A toast says so, with Undo.
-    public func pin(_ tabID: UUID) {
+    /// Pins the tab on the page it's on, as a tile or a row of the pinned list. A toast says so, with Undo.
+    public func pin(_ tabID: UUID, place: PinPlace = .tile) {
+        let folder = state.tab(tabID)?.folderID.flatMap(state.folder)
         var pinned = false
-        changeState { pinned = $0.pin(tabID: tabID) }
+        changeState { pinned = $0.pin(tabID: tabID, place: place) }
         guard pinned, let tab = state.tab(tabID) else { return }
         let space = state.space(tab.spaceID)
         let message = hasSpacesToSwitch ? "Pinned to \(space?.name ?? "Home")" : "Pinned"
         showToast(Toast(icon: .symbol("pin.fill"), message: message, actions: [
             Toast.Action("Undo") { [weak self] in
-                self?.changeState { _ = $0.unpin(tabID: tabID) }
+                self?.changeState { state in
+                    guard state.unpin(tabID: tabID) != nil else { return }
+                    if let folder { state.rejoinFolder(tabID, folder) }
+                }
             },
         ], tabID: tabID))
     }
@@ -45,6 +49,16 @@ extension BrowserStore {
 
     public func renamePin(_ tabID: UUID, to name: String) {
         changeState { $0.renamePin(tabID, to: name) }
+    }
+
+    /// Gives any tab a name of its own; an empty name goes back to its page's title.
+    public func rename(_ tabID: UUID, to name: String) {
+        changeState { $0.rename(tabID, to: name) }
+    }
+
+    /// Moves a pin between the tiles and the pinned list.
+    public func movePin(_ tabID: UUID, to place: PinPlace) {
+        changeState { $0.movePin(tabID, to: place) }
     }
 
     /// Moves the pin to just before `before`, or last with nil.

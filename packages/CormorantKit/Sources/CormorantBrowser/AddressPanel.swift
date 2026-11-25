@@ -64,8 +64,10 @@ public enum AddressPanel {
         guard let query else {
             // Most recently closed first.
             let recentlyClosed = closed.sorted { $0.archivedAt > $1.archivedAt }
-            // A new tab's panel starts with the Space's pins, which then aren't listed again as open tabs.
-            let pins = store.isComposingNewTab || store.activeTab == nil ? store.pinnedTabs : []
+            // A new tab's panel starts with the Space's pins (tiles, then the pinned list's loose pins),
+            // which then aren't listed again as open tabs. A pinned folder's tabs are listed as open tabs.
+            let pins: [Tab] = store.isComposingNewTab || store.activeTab == nil
+                ? store.pinRow.compactMap { item -> Tab? in if case .tab(let tab) = item { tab } else { nil } } : []
             let openTabs = candidates.filter { tab in !pins.contains { $0.id == tab.id } }
             return Shown(pins: pins, openTabs: Array(openTabs.prefix(rowLimit)), closed: Array(recentlyClosed.prefix(rowLimit)))
         }

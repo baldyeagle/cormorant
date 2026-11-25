@@ -4,8 +4,8 @@ import CormorantBrowser
 import CormorantCore
 import SwiftUI
 
-/// The window's controls, the address, New Tab and the Space's tabs newest first, then the Library
-/// and the Spaces along the bottom.
+/// The window's controls, the address, the Space's tiles and pinned list, New Tab and its other tabs
+/// newest first, then the Library and the Spaces along the bottom.
 struct Sidebar: View {
     let store: BrowserStore
     let commands: WindowCommands
@@ -95,35 +95,69 @@ private func neighbours(of index: Int?, in spaces: [Space]) -> [(step: Int, spac
     return (-1...1).compactMap { step in spaces.indices.contains(index + step) ? (step, spaces[index + step]) : nil }
 }
 
-/// A Space's address and tabs, as switching to it would show them; only the active Space's respond.
+/// A Space's address, tiles, pinned list and tabs, as switching to it would show them; only the
+/// active Space's respond. A line under the tiles starts the pinned list, and one above New Tab ends it.
 private struct SpacePage: View {
     let spaceID: UUID
     let store: BrowserStore
     let commands: WindowCommands
+    @State private var editor = SidebarEditor()
 
     var body: some View {
         let isActive = spaceID == store.state.activeSpaceID
         let front = isActive ? store.activeTab : store.state.tabs(inSpace: spaceID).first
-        let tabs = store.state.listedTabs(inSpace: spaceID)
+        let composing = isActive && store.isComposingNewTab
+        let context = SidebarContext(store: store, editor: editor, shownTabID: composing ? nil : front?.id)
+        let tiles = store.state.tilePins(inSpace: spaceID)
+        let pinned = store.state.pinnedList(inSpace: spaceID)
+        let listed = store.state.listedItems(inSpace: spaceID)
         VStack(alignment: .leading, spacing: 0) {
             HostField(store: store, commands: commands, tab: front, isActive: isActive)
             ScrollView {
                 VStack(spacing: 2) {
-                    NewTabRow(store: store, isComposing: isActive && store.isComposingNewTab)
-                    ForEach(tabs) { tab in
-                        TabRow(tab: tab, store: store,
-                               isActive: tab.id == front?.id && !(isActive && store.isComposingNewTab))
+                    if !tiles.isEmpty {
+                        TileGrid(tiles: tiles, context: context)
+                            .padding(.bottom, pinned.isEmpty ? 0 : 4)
+                        if !pinned.isEmpty { SidebarLine() }
+                    }
+                    ForEach(pinned) { item in
+                        SidebarItemRows(item: item, context: context)
+                    }
+                    if !tiles.isEmpty || !pinned.isEmpty { SidebarLine() }
+                    NewTabRow(store: store, isComposing: composing)
+                    ForEach(listed) { item in
+                        SidebarItemRows(item: item, context: context)
                             .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                     }
                 }
                 .padding(.top, 12)
-                .animation(.snappy(duration: 0.2), value: tabs.map(\.id))
+                .animation(.snappy(duration: 0.2), value: rowKey(tiles: tiles, pinned: pinned, listed: listed))
             }
             .scrollIndicators(.never)
         }
         .padding(.horizontal, 10)
+        .environment(\.spaceTint, (store.state.space(spaceID)?.color ?? .teal).color)
         .allowsHitTesting(isActive)
         .accessibilityHidden(!isActive)
+    }
+
+    /// Changes when a row comes, goes or moves, or a folder opens or closes.
+    private func rowKey(tiles: [CormorantCore.Tab], pinned: [SidebarItem], listed: [SidebarItem]) -> [UUID] {
+        tiles.map(\.id) + (pinned + listed).flatMap { item -> [UUID] in
+            guard case .folder(let folder, let tabs) = item else { return [item.id] }
+            return [folder.id] + (folder.isOpen ? tabs.map(\.id) : [])
+        }
+    }
+}
+
+/// Divides the tiles, the pinned list and the other tabs.
+private struct SidebarLine: View {
+    var body: some View {
+        Rectangle()
+            .fill(.primary.opacity(0.1))
+            .frame(height: 1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
     }
 }
 
@@ -217,20 +251,31 @@ private struct NewTabRow: View {
     }
 }
 
-private struct TabRow: View {
+/// A tab: one of the pinned list's (named as its pin, a "/" before the name once it has left its page)
+/// or one of the others; in a folder, set in under it.
+struct TabRow: View {
     let tab: CormorantCore.Tab
-    let store: BrowserStore
-    let isActive: Bool
+    let context: SidebarContext
+    let indented: Bool
     @State private var hovering = false
 
     var body: some View {
+        let store = context.store
+        let isActive = tab.id == context.shownTabID
         HStack(spacing: 9) {
             Favicon(url: tab.url, store: store)
-            Text(title)
+            if context.editor.renaming == tab.id {
+                NameField(name: title) { store.rename(tab.id, to: $0) } done: { context.editor.renaming = nil }
+            } else {
+                HStack(spacing: 4) {
+                    if tab.isAwayFromPin { Text("/").foregroundStyle(.tertiary) }
+                    Text(title)
+                }
                 .lineLimit(1)
                 .fontWeight(isActive ? .medium : .regular)
+            }
             Spacer(minLength: 0)
-            if hovering {
+            if hovering, context.editor.renaming != tab.id {
                 Button("Close Tab", systemImage: "xmark") { store.close(tab.id) }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.plain)
@@ -239,52 +284,38 @@ private struct TabRow: View {
             }
         }
         .rowStyle(isActive: isActive, hovering: hovering)
+        .padding(.leading, indented ? 22 : 0)
         .onHover { hovering = $0 }
-        .onTapGesture { store.activate(tab.id) }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
-        .contextMenu {
-            let destinations = store.moveDestinations(for: tab.id).filter { !$0.isCurrent }
-            if !destinations.isEmpty {
-                Menu("Move to Space") {
-                    ForEach(destinations) { destination in
-                        Button {
-                            store.moveTab(tab.id, toSpace: destination.space.id)
-                        } label: {
-                            Image(nsImage: SpaceBadge.menuImage(for: destination.space))
-                            Text(destination.space.name)
-                            Text(destination.subtitle)
-                        }
-                    }
-                }
-            }
-            Divider()
-            Button("Close Tab") { store.close(tab.id) }
+        .onTapGesture {
+            guard context.editor.renaming != tab.id else { return }
+            store.activate(tab.id)
         }
+        .accessibilityElement(children: context.editor.renaming == tab.id ? .contain : .combine)
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+        .contextMenu { TabMenu(tab: tab, context: context) }
     }
 
-    private var title: String {
-        tab.customTitle ?? (tab.title.isEmpty ? tab.url?.host() ?? "New Tab" : tab.title)
-    }
+    private var title: String { tab.isPinned ? tab.pinName : tab.displayTitle }
 }
 
-private struct Favicon: View {
+struct Favicon: View {
     let url: URL?
     let store: BrowserStore
+    var size: CGFloat = 16
     @Environment(\.displayScale) private var displayScale
 
     var body: some View {
-        if let icon = store.favicons.icon(for: url, pixels: Int((16 * displayScale).rounded())) {
+        if let icon = store.favicons.icon(for: url, pixels: Int((size * displayScale).rounded())) {
             Image(decorative: icon, scale: displayScale)
                 .resizable()
-                .frame(width: 16, height: 16)
-                .clipShape(.rect(cornerRadius: 4))
+                .frame(width: size, height: size)
+                .clipShape(.rect(cornerRadius: size / 4))
         } else {
             Text(url?.host()?.replacing(/^www\./, with: "").first.map { String($0).uppercased() } ?? "")
-                .font(.system(size: 10, weight: .heavy))
+                .font(.system(size: size * 0.62, weight: .heavy))
                 .foregroundStyle(.white)
-                .frame(width: 16, height: 16)
-                .background(.gray, in: .rect(cornerRadius: 4))
+                .frame(width: size, height: size)
+                .background(.gray, in: .rect(cornerRadius: size / 4))
         }
     }
 }
@@ -352,7 +383,7 @@ struct IconButton: View {
     }
 }
 
-private extension View {
+extension View {
     func rowStyle(isActive: Bool, hovering: Bool) -> some View {
         modifier(RowStyle(isActive: isActive, hovering: hovering))
     }

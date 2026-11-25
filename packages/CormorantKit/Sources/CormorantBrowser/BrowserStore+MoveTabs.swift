@@ -73,6 +73,7 @@ extension BrowserStore {
               let destination = state.space(spaceID), !destination.isIncognito else { return }
         let from = tab.spaceID, wasActive = state.activeTabID == tabID, viewedAt = tab.lastViewedAt
         let pinnedBefore = state.pinAfter(tabID)
+        let folder = tab.folderID.flatMap(state.folder)
         let left = state.activeSpace
         guard applyMove(of: tabID, { $0.moveTabAndFollow(tabID, toSpace: spaceID) }) != nil else { return }
         let back = left.id == spaceID ? nil : Toast.Action("Back to \(left.name)", space: left) { [weak self] in
@@ -82,8 +83,10 @@ extension BrowserStore {
                         leadingAction: back, actions: [
             Toast.Action("Undo") { [weak self] in
                 self?.applyMove(of: tabID) {
-                    $0.moveTabBack(tabID, toSpace: from, wasActive: wasActive, lastViewedAt: viewedAt,
-                                   returningTo: left.id, pinnedBefore: pinnedBefore)
+                    let moved = $0.moveTabBack(tabID, toSpace: from, wasActive: wasActive, lastViewedAt: viewedAt,
+                                               returningTo: left.id, pinnedBefore: pinnedBefore)
+                    if moved != nil, let folder { $0.rejoinFolder(tabID, folder) }
+                    return moved
                 }
             },
         ]))

@@ -257,6 +257,7 @@ public final class BrowserStore {
     public func startFresh() {
         loadFailure = nil
         saveNow()
+        saveHistories(onlyNavigated: true)
         eraseDeletedProfiles()
     }
 
@@ -272,6 +273,8 @@ public final class BrowserStore {
         // Files added or removed in the Files app while we were away.
         downloads.reload()
         guard isLoaded else { return }
+        // A history whose write failed while the app was away is tried again.
+        saveHistories(onlyNavigated: true)
         stampActiveTab()
         state.runArchive()
         openInboxAndPending()
@@ -998,6 +1001,9 @@ public final class BrowserStore {
             if let history = session.isRestoringHistory ? session.pendingHistory : session.webView.interactionState {
                 interactionStates[tabID] = history
                 navigatedTabIDs.insert(tabID)
+                // Now: a save may not follow. None does when the state is unchanged (clearing a profile's
+                // data), and one made while the scene isn't active writes only the state.
+                saveHistories(onlyNavigated: true)
             }
             pendingViewSettings[tabID] = session.viewSettings
             session.detach()
@@ -1153,10 +1159,15 @@ public final class BrowserStore {
 
     private func pageDidChange(tabID: UUID, url: URL?, title: String) {
         guard let index = state.tabs.firstIndex(where: { $0.id == tabID }) else { return }
-        if let url, url != state.tabs[index].url { navigatedTabIDs.insert(tabID) }
+        let navigated = url.map { $0 != state.tabs[index].url } ?? false
+        if navigated { navigatedTabIDs.insert(tabID) }
         state.update(tabID: tabID, url: url ?? state.tabs[index].url, title: title)
         if tabID == state.activeTabID { state.markViewed(tabID: tabID) }
         scheduleSave()
+        // The debounced save writes the tab's history after it. None is coming when the scene isn't
+        // active (a link that became a download can put the address back then), or for a change the
+        // state doesn't save (Incognito).
+        if navigated, debouncedSave == nil { saveHistories(onlyNavigated: true) }
     }
 
     // MARK: Browsing history
@@ -1457,7 +1468,7 @@ public final class BrowserStore {
     /// disk yet: a debounced save still waiting, a write queued or running, a tab whose new page's
     /// history hasn't been queued, or a page still loading (its history is saved once it has).
     public var hasUnsavedWork: Bool {
-        debouncedSave != nil || writesInFlight > 0 || !navigatedTabIDs.isEmpty
+        debouncedSave != nil || writesInFlight > 0 || (canSave && !navigatedTabIDs.isEmpty)
             || sessions.values.contains { $0.isLoading }
     }
     #endif

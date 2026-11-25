@@ -4,9 +4,12 @@ import SwiftUI
 /// `SpaceWashPainter`'s wash, live, in `color`: from its first frame each time it appears (at launch,
 /// the launch screen's picture). A new color is eased into from wherever the last one had got to: the
 /// launch color into the Space's at launch, one Space's into the next's. With Reduce Motion it holds
-/// its first frame (colors still ease).
+/// its first frame (colors still ease). Holding still (`holdsStill`), it stays on its first frame in
+/// `color`, a new color drawn at once: UI tests ask for that, as CI's runners draw without a GPU, and thirty blurred frames a
+/// second took the cores a loading page needed.
 public struct SpaceWash: View {
     let color: SpaceWashPainter.RGB
+    let holdsStill: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var clock = Clock()
@@ -25,26 +28,29 @@ public struct SpaceWash: View {
     /// looks the same.
     private static let resolution = 0.25
 
-    public init(color: SpaceWashPainter.RGB) {
+    public init(color: SpaceWashPainter.RGB, holdsStill: Bool = false) {
         self.color = color
+        self.holdsStill = holdsStill
     }
 
     public var body: some View {
-        TimelineView(.animation(minimumInterval: Self.frameInterval, paused: reduceMotion && shift == nil)) { timeline in
-            GeometryReader { proxy in
-                Canvas { context, size in
-                    let time = clock.time(at: timeline.date)
-                    SpaceWashPainter.draw(in: context, size: size, time: reduceMotion ? 0 : time,
-                                          color: shownColor(at: time), dark: colorScheme == .dark)
+        Group {
+            if holdsStill {
+                canvas { (0, color) }
+            } else {
+                TimelineView(.animation(minimumInterval: Self.frameInterval, paused: reduceMotion && shift == nil)) { timeline in
+                    canvas {
+                        let time = clock.time(at: timeline.date)
+                        return (reduceMotion ? 0 : time, shownColor(at: time))
+                    }
                 }
-                .frame(width: proxy.size.width * Self.resolution, height: proxy.size.height * Self.resolution)
-                .scaleEffect(1 / Self.resolution, anchor: .topLeading)
             }
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .onChange(of: color) { old, _ in
+            guard !holdsStill else { return }
             shift = Shift(from: shownColor(at: clock.time, easingTo: old), began: clock.time)
         }
         .task(id: shift) {
@@ -53,6 +59,18 @@ public struct SpaceWash: View {
                 try? await Task.sleep(for: .seconds(Self.shiftDuration))
                 if clock.time - shift.began >= Self.shiftDuration { self.shift = nil }
             }
+        }
+    }
+
+    /// The wash at a quarter of its size, scaled up, at the time and in the color `frame` gives when drawn.
+    private func canvas(_ frame: @escaping () -> (time: Double, color: SpaceWashPainter.RGB)) -> some View {
+        GeometryReader { proxy in
+            Canvas { context, size in
+                let frame = frame()
+                SpaceWashPainter.draw(in: context, size: size, time: frame.time, color: frame.color, dark: colorScheme == .dark)
+            }
+            .frame(width: proxy.size.width * Self.resolution, height: proxy.size.height * Self.resolution)
+            .scaleEffect(1 / Self.resolution, anchor: .topLeading)
         }
     }
 

@@ -20,6 +20,11 @@ final class BackForwardPictures {
         self.webView = webView
     }
 
+    #if DEBUG
+    /// Every picture kept, oldest first, for the dev bridge.
+    var all: [(item: WKBackForwardListItem?, image: NSImage)] { pictures.map { ($0.item.item, $0.image) } }
+    #endif
+
     func picture(for item: WKBackForwardListItem?) -> NSImage? {
         guard let item else { return nil }
         return pictures.last { $0.item.item === item }?.image

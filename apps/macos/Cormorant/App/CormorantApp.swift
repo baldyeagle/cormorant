@@ -6,23 +6,29 @@ import SwiftUI
 @main
 struct CormorantApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
-    @State private var commands = WindowCommands()
 
     var body: some Scene {
         Window("Cormorant", id: "browser") {
-            BrowserWindow(store: delegate.store, commands: commands, platform: delegate.platform)
+            BrowserWindow(store: delegate.store, commands: delegate.commands, platform: delegate.platform)
                 .task { await delegate.store.launch() }
                 .onOpenURL { delegate.store.handle(openURL: $0) }
         }
         .defaultSize(width: 1280, height: 820)
         .windowStyle(.hiddenTitleBar)
-        .commands { BrowserCommands(store: delegate.store, commands: commands) }
+        .commands { BrowserCommands(store: delegate.store, commands: delegate.commands) }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let platform = MacBrowserPlatform()
+    let commands = WindowCommands()
     private(set) lazy var store = makeStore()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        DevBridge.startIfAsked(app: self)
+        #endif
+    }
 
     /// The store isn't told when the app goes inactive: a Mac app keeps running behind others, and
     /// the store saves on its own until it quits.

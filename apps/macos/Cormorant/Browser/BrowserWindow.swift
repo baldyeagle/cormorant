@@ -148,6 +148,9 @@ struct BrowserWindow: View {
             }
         }
         .onChange(of: barMode) { barMove = .zero }
+        #if DEBUG
+        .onChange(of: peekIsOut) { _, out in DevBridge.sidebarPeeks = out }
+        #endif
         .onChange(of: commands.spaceRemoval?.title) { _, title in if let title { removalTitle = title } }
         .onChange(of: store.state.activeTabID) {
             commands.isFinding = false
@@ -739,3 +742,11 @@ private struct PageArea: NSViewRepresentable {
         }
     }
 }
+
+#if DEBUG
+extension PageArea.PageAreaView: DevBridgePageArea {
+    var shownWebView: WKWebView? { webView }
+    var pageView: NSView { page }
+    var isSwiping: Bool { swipe.isSwiping }
+}
+#endif

@@ -8,7 +8,7 @@
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <scenes>
-        <!--Launch Screen: SpaceWashPainter's wash at time zero (LaunchWash, aspect-filled as the app draws it) under the bird, centered on the whole screen where the blank tab draws it.-->
+        <!--Launch Screen: SpaceWashPainter's wash at time zero (LaunchWash, an image for each shape of screen: iPhone portrait, iPhone landscape by compact height, iPad; aspect-filled, as the app's wash scales with its view) under the bird, centered on the whole screen where the blank tab draws it.-->
         <scene sceneID="Lnc-Sc-001">
             <objects>
                 <viewController id="Lnc-Vc-001" sceneMemberID="viewController">

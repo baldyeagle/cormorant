@@ -15,6 +15,40 @@
       "filename" : "LaunchWash-Dark.png",
       "idiom" : "universal",
       "scale" : "2x"
+    },
+    {
+      "filename" : "LaunchWash-Landscape.png",
+      "idiom" : "universal",
+      "height-class" : "compact",
+      "scale" : "2x"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "dark"
+        }
+      ],
+      "filename" : "LaunchWash-Landscape-Dark.png",
+      "idiom" : "universal",
+      "height-class" : "compact",
+      "scale" : "2x"
+    },
+    {
+      "filename" : "LaunchWash-iPad.png",
+      "idiom" : "ipad",
+      "scale" : "2x"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "dark"
+        }
+      ],
+      "filename" : "LaunchWash-iPad-Dark.png",
+      "idiom" : "ipad",
+      "scale" : "2x"
     }
   ],
   "info" : {

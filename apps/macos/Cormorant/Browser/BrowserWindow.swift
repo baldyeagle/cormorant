@@ -52,7 +52,7 @@ struct BrowserWindow: View {
             let titleBar = max(proxy.safeAreaInsets.top, 28)
             let pageLeading = isDocked ? commands.sidebarWidth : 8
             ZStack(alignment: .topLeading) {
-                PageArea(webView: store.activeSession?.webView, leading: pageLeading, platform: platform,
+                PageArea(store: store, webView: store.activeSession?.webView, leading: pageLeading, platform: platform,
                          swipeTarget: pageSwipeTarget)
                 PageOverlays(store: store)
                     .padding(8)
@@ -542,13 +542,14 @@ private struct ToastView: View {
 /// and an animated frame would stretch a picture of the page. When its edge slides with the
 /// sidebar, it's resized on every display frame, its right edge staying put.
 private struct PageArea: NSViewRepresentable {
+    let store: BrowserStore
     let webView: WKWebView?
     let leading: CGFloat
     let platform: MacBrowserPlatform
     let swipeTarget: () -> PageSwipe.Target?
 
     func makeNSView(context: Context) -> PageAreaView {
-        let view = PageAreaView()
+        let view = PageAreaView(cover: PageCoverView(rootView: PageCover(store: store)))
         platform.backgroundStage = view
         return view
     }
@@ -564,6 +565,8 @@ private struct PageArea: NSViewRepresentable {
     /// pointer reaches (a tracking area only counts what's visible) and nothing shows.
     final class PageAreaView: NSView, BackgroundTabStage {
         private let page = NSView()
+        /// Over the web view, in the page so it slides and rounds with it: the wash and the bird.
+        private let cover: PageCoverView
         private let stage = StageView()
         private var webView: WKWebView?
         private var leading: CGFloat = 8
@@ -578,8 +581,12 @@ private struct PageArea: NSViewRepresentable {
         private var monitor: Any?
         private var focusObservers: [NSObjectProtocol] = []
 
-        override init(frame: NSRect) {
-            super.init(frame: frame)
+        init(cover: PageCoverView) {
+            self.cover = cover
+            super.init(frame: .zero)
+            cover.sizingOptions = []
+            cover.autoresizingMask = [.width, .height]
+            page.addSubview(cover)
             page.wantsLayer = true
             page.layer?.cornerRadius = 10
             page.layer?.cornerCurve = .continuous
@@ -601,7 +608,7 @@ private struct PageArea: NSViewRepresentable {
             webView = newWebView
             if let newWebView {
                 newWebView.frame = page.bounds
-                page.addSubview(newWebView)
+                page.addSubview(newWebView, positioned: .below, relativeTo: cover)
             }
         }
 
@@ -696,6 +703,7 @@ private struct PageArea: NSViewRepresentable {
             if !swipe.isSwiping { page.frame = restingPageFrame }
             swipe.placeCover()
             webView?.frame = page.bounds
+            cover.frame = page.bounds
             // The size the page will have once the sidebar's slide is done, not on its way.
             let size = NSSize(width: max(bounds.width - leading - 8, 0), height: page.frame.height)
             if stage.frame.size != size || stage.frame.minX != bounds.width + 64 {

@@ -13,11 +13,12 @@ struct FaviconView: View {
     var backsDarkIcons = false
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         Group {
-            if let image = favicons.icon(for: url) {
-                Image(decorative: image, scale: 1)
+            if let image = favicons.icon(for: url, pixels: Int((side * displayScale).rounded())) {
+                Image(decorative: image, scale: displayScale)
                     .resizable()
                     .scaledToFit()
                     .background(backsDarkIcons && colorScheme == .dark ? Color.white.opacity(0.92) : .clear)

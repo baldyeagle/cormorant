@@ -74,6 +74,31 @@ public final class FaviconStore {
         return slot(for: key).image
     }
 
+    /// `icon(for:)` shrunk to `pixels` on its longer side, for a view to draw at its own size. Left
+    /// to the screen, a 96 px icon drawn at 16 skips most of its pixels and comes out broken up.
+    public func icon(for url: URL?, pixels: Int) -> CGImage? {
+        guard let image = icon(for: url), let key = url.flatMap(FaviconSelector.hostKey(for:)) else { return nil }
+        let slot = slot(for: key)
+        if let sized = slot.sized[pixels] { return sized }
+        let sized = Self.shrunk(image, to: pixels) ?? image
+        slot.sized[pixels] = sized
+        return sized
+    }
+
+    nonisolated static func shrunk(_ image: CGImage, to pixels: Int) -> CGImage? {
+        let longer = max(image.width, image.height)
+        guard pixels > 0, longer > pixels,
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: max(1, image.width * pixels / longer),
+                                      height: max(1, image.height * pixels / longer), bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: context.width, height: context.height))
+        return context.makeImage()
+    }
+
     /// Whether `url`'s site's icon is being fetched now (for tests to wait on).
     func isFetching(_ url: URL) -> Bool {
         FaviconSelector.hostKey(for: url).map(fetching.contains) ?? false
@@ -430,7 +455,10 @@ public final class FaviconStore {
 
     @Observable
     fileprivate final class Slot {
-        var image: CGImage?
+        var image: CGImage? {
+            didSet { sized = [:] }
+        }
+        @ObservationIgnored var sized: [Int: CGImage] = [:]
     }
 
     private struct Request: Sendable {

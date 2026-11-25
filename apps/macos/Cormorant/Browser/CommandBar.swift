@@ -26,6 +26,7 @@ struct CommandBar: View {
     @State private var selectedIndex = 0
     @FocusState private var fieldFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         let sections = self.sections
@@ -264,8 +265,8 @@ struct CommandBar: View {
 
     @ViewBuilder
     private func favicon(_ url: URL?) -> some View {
-        if let image = store.favicons.icon(for: url) {
-            Image(decorative: image, scale: 2).resizable().frame(width: 18, height: 18).clipShape(.rect(cornerRadius: 4))
+        if let image = store.favicons.icon(for: url, pixels: Int((18 * displayScale).rounded())) {
+            Image(decorative: image, scale: displayScale).resizable().frame(width: 18, height: 18).clipShape(.rect(cornerRadius: 4))
         } else {
             Image(systemName: "globe").foregroundStyle(.secondary)
         }

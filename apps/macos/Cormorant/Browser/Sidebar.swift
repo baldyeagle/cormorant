@@ -271,10 +271,11 @@ private struct TabRow: View {
 private struct Favicon: View {
     let url: URL?
     let store: BrowserStore
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
-        if let icon = store.favicons.icon(for: url) {
-            Image(decorative: icon, scale: 2)
+        if let icon = store.favicons.icon(for: url, pixels: Int((16 * displayScale).rounded())) {
+            Image(decorative: icon, scale: displayScale)
                 .resizable()
                 .frame(width: 16, height: 16)
                 .clipShape(.rect(cornerRadius: 4))

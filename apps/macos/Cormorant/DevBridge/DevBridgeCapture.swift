@@ -15,33 +15,38 @@ enum DevBridgeCapture {
         return cgImage
     }
 
-    /// The window as drawn, the page's snapshot in the page's place, `scale` pixels to a point.
-    static func window(_ window: NSWindow, pageArea: DevBridgePageArea, scale: CGFloat) async throws -> CGImage {
-        let webView = pageArea.shownWebView
-        let pageImage: CGImage? = if let webView, webView.window != nil { try? await page(webView) } else { nil }
+    /// The window as drawn, each web view's snapshot in its place, `scale` pixels to a point. `webViews`
+    /// gives the web views on show; it's asked again after their pictures are taken, and one no longer
+    /// on show (the tab changed meanwhile) isn't pasted.
+    static func window(_ window: NSWindow, webViews: () -> [WKWebView], scale: CGFloat) async throws -> CGImage {
+        var pictures: [(webView: WKWebView, image: CGImage)] = []
+        for webView in webViews() where webView.window === window {
+            if let image = try? await page(webView) { pictures.append((webView, image)) }
+        }
         guard let content = window.contentView, let root = (content.superview ?? content).layer else {
             throw DevBridgeFailure("The window has no layer to draw")
         }
         // The pasted page goes in the page's own view, so whatever is over the page (the peeking sidebar,
         // the bar, a toast) is drawn over it as on screen. It's added and taken out before the screen
         // next draws.
-        var pasted: CALayer?
-        // Not if the tab changed while its picture was taken.
-        if let pageImage, let webView, webView === pageArea.shownWebView, let host = webView.superview?.layer {
+        let shown = webViews()
+        var pasted: [CALayer] = []
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (webView, image) in pictures where shown.contains(where: { $0 === webView }) && webView.window === window {
+            guard let host = webView.superview?.layer else { continue }
             let layer = CALayer()
             layer.frame = webView.frame
-            layer.contents = pageImage
+            layer.contents = image
             layer.contentsGravity = .resize
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
             host.addSublayer(layer)
-            CATransaction.commit()
-            pasted = layer
+            pasted.append(layer)
         }
+        CATransaction.commit()
         defer {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            pasted?.removeFromSuperlayer()
+            pasted.forEach { $0.removeFromSuperlayer() }
             CATransaction.commit()
         }
         let size = root.bounds.size
@@ -56,6 +61,43 @@ enum DevBridgeCapture {
         root.render(in: context)
         guard let image = context.makeImage() else { throw DevBridgeFailure("Couldn't draw the window") }
         return image
+    }
+
+    /// Any of the app's windows, with a note when it isn't as on screen. A window whose layers draw
+    /// nothing (a menu) is drawn again through its views' own drawing.
+    static func anyWindow(_ window: NSWindow, scale: CGFloat) async throws -> (image: CGImage, note: String?) {
+        let image = try await self.window(window, webViews: { DevBridgeWindows.webViews(in: window) }, scale: scale)
+        guard isBlank(image) else { return (image, nil) }
+        if let root = window.contentView?.superview ?? window.contentView,
+           let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) {
+            root.cacheDisplay(in: root.bounds, to: rep)
+            if let drawn = rep.cgImage, drawn.width > 0, !isBlank(drawn) {
+                return (scaled(drawn, by: scale * root.bounds.width / CGFloat(drawn.width)),
+                        "Its layers drew nothing, so this is its views' own drawing: materials and effects are left out.")
+            }
+        }
+        return (image, "It came out blank: what it shows is drawn by another process or by the system.")
+    }
+
+    /// All one color (the centre's) away from the edges, where a panel's rounded corners are.
+    private static func isBlank(_ image: CGImage) -> Bool {
+        guard image.bitsPerPixel == 32, image.width > 0, image.height > 0,
+              let data = image.dataProvider?.data, let bytes = CFDataGetBytePtr(data) else { return false }
+        let base = UnsafeRawPointer(bytes)
+        func pixel(_ column: Int, _ row: Int) -> UInt32 {
+            base.loadUnaligned(fromByteOffset: row * image.bytesPerRow + column * 4, as: UInt32.self)
+        }
+        let centre = pixel(image.width / 2, image.height / 2)
+        let insetX = image.width / 8, insetY = image.height / 8
+        var others = 0
+        let allowed = image.width * image.height / 500
+        for row in insetY..<(image.height - insetY) {
+            for column in insetX..<(image.width - insetX) where pixel(column, row) != centre {
+                others += 1
+                if others > allowed { return false }
+            }
+        }
+        return true
     }
 
     /// `image` at `scale` of its size, for a smaller picture.

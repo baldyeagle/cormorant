@@ -1,4 +1,3 @@
-import CormorantBrowser
 import CormorantCore
 import SwiftUI
 
@@ -6,7 +5,7 @@ import SwiftUI
 /// the launch screen's picture). A new color is eased into from wherever the last one had got to: the
 /// launch color into the Space's at launch, one Space's into the next's. With Reduce Motion it holds
 /// its first frame (colors still ease).
-struct SpaceWash: View {
+public struct SpaceWash: View {
     let color: SpaceWashPainter.RGB
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -26,7 +25,11 @@ struct SpaceWash: View {
     /// looks the same.
     private static let resolution = 0.25
 
-    var body: some View {
+    public init(color: SpaceWashPainter.RGB) {
+        self.color = color
+    }
+
+    public var body: some View {
         TimelineView(.animation(minimumInterval: Self.frameInterval, paused: reduceMotion && shift == nil)) { timeline in
             GeometryReader { proxy in
                 Canvas { context, size in
@@ -79,7 +82,7 @@ struct SpaceWash: View {
 }
 
 extension SpaceWashPainter.RGB {
-    init(_ color: RGBColor) {
+    public init(_ color: CormorantCore.RGBColor) {
         self.init(red: color.red, green: color.green, blue: color.blue)
     }
 }
@@ -87,7 +90,7 @@ extension SpaceWashPainter.RGB {
 extension BrowserStore {
     /// The wash is up: behind the bird at launch and on a blank tab, and over a new tab's page until
     /// it has drawn (`TabSession.isAwaitingFirstPaint`), but not over a load error.
-    var showsWash: Bool {
+    public var showsWash: Bool {
         guard isLoaded, activeTab?.url != nil, let session = activeSession else { return true }
         return session.isAwaitingFirstPaint && session.loadError == nil
     }

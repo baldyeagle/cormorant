@@ -3,19 +3,40 @@ import CormorantBrowser
 import CormorantCore
 import WebKit
 
-/// A tab's Mac side: the page's dialogs as sheets on its window, and the file picker.
+/// A tab's Mac side: the page's dialogs as sheets on its window, the file picker, and what the
+/// back/forward swipe (`PageSwipe`) needs of it.
 final class MacTabChrome: NSObject, TabChrome, WKUIDelegate {
+    let pictures: BackForwardPictures
+    let swipeScript = PageSwipeScript()
     private weak var session: TabSession?
     private let webView: WKWebView
-    private var appearanceObservation: NSKeyValueObservation?
+    private var observations: [NSKeyValueObservation] = []
 
     init(session: TabSession) {
         self.session = session
         webView = session.webView
+        pictures = BackForwardPictures(webView: webView)
         super.init()
-        appearanceObservation = webView.observe(\.effectiveAppearance) { [weak session] _, _ in
-            MainActor.assumeIsolated { session?.pageBackgroundDidChange() }
-        }
+        // `PageSwipe` instead: WebKit's own swipe showed the page it went to blank.
+        webView.allowsBackForwardNavigationGestures = false
+        let contentController = webView.configuration.userContentController
+        contentController.addUserScript(PageSwipeScript.script)
+        contentController.add(swipeScript, contentWorld: .defaultClient, name: PageSwipeScript.messageName)
+        observations = [
+            webView.observe(\.effectiveAppearance) { [weak session] _, _ in
+                MainActor.assumeIsolated { session?.pageBackgroundDidChange() }
+            },
+            // Pictures for the swipe: a page once it's loaded and had a moment to draw, and one whose
+            // address changed without a load (a site moving between its views itself).
+            webView.observe(\.isLoading) { [weak self] webView, _ in
+                MainActor.assumeIsolated {
+                    if !webView.isLoading { self?.pictures.takePicture(after: .milliseconds(300)) }
+                }
+            },
+            webView.observe(\.url) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.pictures.takePicture(after: .milliseconds(800)) }
+            },
+        ]
     }
 
     /// False when the tab isn't in a window or a sheet is up on it already.
@@ -72,7 +93,9 @@ final class MacTabChrome: NSObject, TabChrome, WKUIDelegate {
     }
 
     func tabDidBecomeActive() {}
-    func tabDidResignActive() {}
+    func tabDidResignActive() {
+        pictures.keepNeighboursOnly()
+    }
     func sessionDidDetach() {}
 
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,

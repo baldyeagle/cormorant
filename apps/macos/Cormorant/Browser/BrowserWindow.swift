@@ -52,7 +52,8 @@ struct BrowserWindow: View {
             let titleBar = max(proxy.safeAreaInsets.top, 28)
             let pageLeading = isDocked ? commands.sidebarWidth : 8
             ZStack(alignment: .topLeading) {
-                PageArea(webView: store.activeSession?.webView, leading: pageLeading, platform: platform)
+                PageArea(webView: store.activeSession?.webView, leading: pageLeading, platform: platform,
+                         swipeTarget: pageSwipeTarget)
                 PageOverlays(store: store)
                     .padding(8)
                     .padding(.leading, pageLeading - 8)
@@ -222,6 +223,17 @@ struct BrowserWindow: View {
         guard swipe != 0, let neighbour = swipeTarget(towardNext: swipe < 0) else { return tint.color }
         let progress = min(abs(swipe) / commands.sidebarWidth, 1)
         return tint.mixed(with: neighbour.color.windowTint(dark: dark), amount: progress).color
+    }
+
+    /// The tab on screen, for the back/forward swipe over the page.
+    private func pageSwipeTarget() -> PageSwipe.Target? {
+        guard barMode == nil, let session = store.activeSession, let chrome = session.chrome as? MacTabChrome
+        else { return nil }
+        let tabID = session.tabID
+        return PageSwipe.Target(
+            webView: session.webView, pictures: chrome.pictures, script: chrome.swipeScript,
+            landing: { store.backSwipeSnapshot(for: tabID).map { NSImage(cgImage: $0.content, size: .zero) } },
+            close: { store.close(tabID) })
     }
 
     private func swipeTarget(towardNext: Bool) -> Space? {
@@ -533,6 +545,7 @@ private struct PageArea: NSViewRepresentable {
     let webView: WKWebView?
     let leading: CGFloat
     let platform: MacBrowserPlatform
+    let swipeTarget: () -> PageSwipe.Target?
 
     func makeNSView(context: Context) -> PageAreaView {
         let view = PageAreaView()
@@ -541,6 +554,7 @@ private struct PageArea: NSViewRepresentable {
     }
 
     func updateNSView(_ view: PageAreaView, context: Context) {
+        view.swipeTarget = swipeTarget
         view.show(webView)
         view.setLeading(leading, animated: context.transaction.animation != nil)
     }
@@ -557,6 +571,12 @@ private struct PageArea: NSViewRepresentable {
         private var shownLeading: CGFloat = 8
         private var slide: (from: CGFloat, start: CFTimeInterval)?
         private var displayLink: CADisplayLink?
+        var swipeTarget: () -> PageSwipe.Target? = { nil }
+        private lazy var swipe = PageSwipe(host: self, page: page, target: { [unowned self] in swipeTarget() },
+                                           restingFrame: { [unowned self] in restingPageFrame },
+                                           isOverPage: { [unowned self] in isOverPage($0) })
+        private var monitor: Any?
+        private var focusObservers: [NSObjectProtocol] = []
 
         override init(frame: NSRect) {
             super.init(frame: frame)
@@ -628,7 +648,38 @@ private struct PageArea: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if window == nil { stopSliding() }
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            focusObservers.forEach(NotificationCenter.default.removeObserver)
+            focusObservers = []
+            guard let window else { return stopSliding() }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown]) { [weak self] event in
+                guard let self, event.window === window else { return event }
+                if event.type == .leftMouseDown {
+                    // Picture the page now, in case the click is on a link and it goes.
+                    if isOverPage(event) { swipeTarget()?.pictures.takePicture() }
+                    return event
+                }
+                if swipe.handle(event) { return nil }
+                if event.phase == .ended || event.momentumPhase == .ended, isOverPage(event) {
+                    swipeTarget()?.pictures.takePicture(after: .milliseconds(300))
+                }
+                return event
+            }
+            // A swipe that loses its fingers' events puts the page back.
+            focusObservers = [NSWindow.didResignKeyNotification, NSApplication.didResignActiveNotification].map {
+                NotificationCenter.default.addObserver(forName: $0, object: $0 == NSWindow.didResignKeyNotification ? window : nil,
+                                                       queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.swipe.cancel() }
+                }
+            }
+        }
+
+        /// The event is over the page itself, not something drawn over it (the sidebar, a bar, a toast).
+        private func isOverPage(_ event: NSEvent) -> Bool {
+            guard let webView, let content = window?.contentView else { return false }
+            let point = content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
+            return content.hitTest(point)?.isDescendant(of: webView) == true
         }
 
         override func layout() {
@@ -637,9 +688,13 @@ private struct PageArea: NSViewRepresentable {
             placePage()
         }
 
+        private var restingPageFrame: NSRect {
+            NSRect(x: shownLeading, y: 8, width: max(bounds.width - shownLeading - 8, 0), height: max(bounds.height - 16, 0))
+        }
+
         private func placePage() {
-            page.frame = NSRect(x: shownLeading, y: 8, width: max(bounds.width - shownLeading - 8, 0),
-                                height: max(bounds.height - 16, 0))
+            if !swipe.isSwiping { page.frame = restingPageFrame }
+            swipe.placeCover()
             webView?.frame = page.bounds
             // The size the page will have once the sidebar's slide is done, not on its way.
             let size = NSSize(width: max(bounds.width - leading - 8, 0), height: page.frame.height)

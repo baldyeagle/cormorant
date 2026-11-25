@@ -272,17 +272,30 @@ extension BrowserState {
     /// Space is showing), or the active Space when that's nil, unknown or archived. A tab opened outside
     /// the active Space never becomes active. Incognito, named or active, opens it there
     /// (`openIncognitoTab`), active only if Incognito is the active Space.
-    public mutating func openTab(url: URL?, title: String = "", inSpace spaceID: UUID? = nil,
+    /// - Parameter openerID: a listed tab of the same Space to list the new one under (`listedTabs`);
+    ///   otherwise (none, a pin) it's listed first.
+    public mutating func openTab(url: URL?, title: String = "", inSpace spaceID: UUID? = nil, under openerID: UUID? = nil,
                                  activate: Bool = true, now: Date = .now) -> Tab {
         if (spaceID ?? activeSpaceID) == Space.incognitoID {
-            return openIncognitoTab(url: url, title: title, activate: activate && activeSpaceID == Space.incognitoID, now: now)
+            return openIncognitoTab(url: url, title: title, under: openerID,
+                                    activate: activate && activeSpaceID == Space.incognitoID, now: now)
         }
         var target = activeSpaceID
         if let spaceID, space(spaceID)?.isArchived == false { target = spaceID }
         let tab = Tab(spaceID: target, url: url, title: title, kind: .today, createdAt: now)
-        tabs.append(tab)
+        insert(tab, under: openerID)
         if activate, target == activeSpaceID { activeTabID = tab.id }
         return tab
+    }
+
+    /// Just before `openerID` in `tabs`, so it's listed right under it, if that's a listed tab of its
+    /// Space; otherwise last, listed first.
+    mutating func insert(_ tab: Tab, under openerID: UUID?) {
+        if let openerID, let index = tabs.firstIndex(where: { $0.id == openerID && $0.spaceID == tab.spaceID && !$0.isPinned }) {
+            tabs.insert(tab, at: index)
+        } else {
+            tabs.append(tab)
+        }
     }
 
     /// The tab archiving this one makes active if it's active: the most recently viewed other tab in

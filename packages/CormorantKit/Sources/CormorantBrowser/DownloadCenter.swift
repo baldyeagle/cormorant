@@ -92,8 +92,12 @@ public final class DownloadCenter {
     /// Downloads in progress, hidden from the list and from Files until they finish.
     private var incomingDirectory: URL { directory.appending(path: ".incoming", directoryHint: .isDirectory) }
 
-    public init(directory: URL = URL.documentsDirectory) {
+    /// The kinds of file handed to a system viewer rather than listed; others are downloads like any.
+    private let handoffs: Set<Handoff>
+
+    public init(directory: URL = URL.documentsDirectory, handoffs: Set<Handoff> = [.walletPass, .calendar, .arModel]) {
         self.directory = directory
+        self.handoffs = handoffs
         delegate.center = self
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         // Left by downloads the app was killed during: they won't finish now.
@@ -217,7 +221,7 @@ public final class DownloadCenter {
         let unique = DownloadNaming.unique(name) { candidate in
             reserved.contains(candidate) || FileManager.default.fileExists(atPath: directory.appending(path: candidate).path)
         }
-        let handoff = Handoff(mimeType: response.mimeType, filename: unique)
+        let handoff = Handoff(mimeType: response.mimeType, filename: unique).flatMap { handoffs.contains($0) ? $0 : nil }
         // A folder of its own, so nothing else (a cancelled download's cleanup) touches the file. A
         // listed download moves into `directory` once it's whole (`finish`).
         let folder = (handoff == nil ? incomingDirectory : Self.handoffDirectory).appending(path: id.uuidString)

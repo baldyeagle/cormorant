@@ -128,6 +128,8 @@ let dark = (0x03/255.0, 0x07/255.0, 0x12/255.0)
 tile(1024, bg: light, scale: 0.78, name: "AppIcon.png")
 tile(1024, bg: dark,  scale: 0.78, name: "AppIcon-dark.png")
 tile(1024, bg: nil,   scale: 0.78, grayscale: true, name: "AppIcon-tinted.png")
+// The Mac icon (apps/macos/Cormorant/AppIcon.icon) is this bird alone: its light and dark fills live in the .icon.
+tile(1024, bg: nil,   scale: 0.78, name: "MacIcon-bird.png")
 tile(180, bg: light, scale: 0.82, name: "apple-touch-icon.png")
 tile(64,  bg: nil,  scale: 0.96, name: "favicon-64.png")
 tile(32,  bg: nil,  scale: 1.0,  name: "favicon-32.png")

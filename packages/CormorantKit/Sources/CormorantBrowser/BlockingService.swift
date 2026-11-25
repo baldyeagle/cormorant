@@ -24,12 +24,17 @@ public final class BlockingService {
     @ObservationIgnored private var lastAppliedVersion = 0
     @ObservationIgnored private let usesFilterLists: Bool
 
+    @ObservationIgnored private let defaults: UserDefaults
+
     /// - Parameter usesFilterLists: false for UI tests: nothing is fetched, compiled or installed, so
     ///   no launch waits on the network or competes with a multi-second compile, and pages load unblocked.
-    public init(usesFilterLists: Bool = true) {
+    /// - Parameter cacheDirectory: where filter lists are downloaded to; nil for the app group's.
+    /// - Parameter defaults: where the preferences are kept; the app group's by default.
+    public init(usesFilterLists: Bool = true, cacheDirectory: URL? = nil, defaults: UserDefaults = AppGroupStorage.defaults) {
         self.usesFilterLists = usesFilterLists
-        let preferences = AppGroupStorage.load(BlockingPreferences.self, key: Self.preferencesKey) ?? .default
-        let cacheDirectory = AppGroupStorage.blockingCacheDirectory
+        self.defaults = defaults
+        let preferences = AppGroupStorage.load(BlockingPreferences.self, key: Self.preferencesKey, from: defaults) ?? .default
+        let cacheDirectory = cacheDirectory ?? AppGroupStorage.blockingCacheDirectory
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         engine = ContentBlockingEngine(cacheDirectory: cacheDirectory, store: .default(), preferences: preferences)
         self.preferences = preferences
@@ -89,7 +94,7 @@ public final class BlockingService {
     func update(_ change: (inout BlockingPreferences) -> Void) {
         change(&preferences)
         engine.preferences = preferences
-        AppGroupStorage.save(preferences, key: Self.preferencesKey)
+        AppGroupStorage.save(preferences, key: Self.preferencesKey, to: defaults)
     }
 
     public func syncStatus() {

@@ -35,14 +35,14 @@ extension BrowserState {
 
 extension Space {
     /// Edit Space's Archive confirmation: what archiving the Space named `name`, with `tabCount` open
-    /// tabs, does with it and them, and how it comes back.
-    public static func archiveConfirmation(name: String, tabCount: Int) -> String {
+    /// tabs, does with it and them, and how it comes back: restored from `restoredFrom`.
+    public static func archiveConfirmation(name: String, tabCount: Int, restoredFrom: String = "Archived in Spaces") -> String {
         let kept = switch tabCount {
         case 0: "It has no open tabs."
         case 1: "Its tab is kept, and doesn't archive while the Space is away."
         default: "Its \(tabCount) tabs are kept, and don't archive while the Space is away."
         }
-        return "\(kept) \(name) leaves the Spaces you switch between until you restore it from Archived in Spaces."
+        return "\(kept) \(name) leaves the Spaces you switch between until you restore it from \(restoredFrom)."
     }
 
     /// The Delete confirmation, in Edit Space and for an archived Space in Manage Spaces: where a Space's
@@ -74,5 +74,72 @@ extension BrowserState {
     /// Profiles in the order Manage Spaces lists them: the default first, then by when they were made.
     public var profilesInOrder: [Profile] {
         profiles.filter(\.isDefault) + profiles.filter { !$0.isDefault }.sorted { $0.createdAt < $1.createdAt }
+    }
+}
+
+// MARK: - The Mac's Space icons and Edit Space
+
+extension BrowserState {
+    /// A Space's name, then its profile's where that isn't the default: "Work · Vialumi".
+    public func nameWithProfile(of space: Space) -> String {
+        let profile = profile(forSpace: space.id)
+        return profile.isDefault || profile.isIncognito ? space.name : "\(space.name) · \(profile.name)"
+    }
+
+    /// What moving the Space to `profileID` does to its open tabs, said before it's done; nil when it
+    /// changes nothing (the same profile, or no tabs to reload).
+    public func profileSwitchWarning(spaceID: UUID, to profileID: UUID) -> String? {
+        guard let space = space(spaceID), let new = profile(profileID), new.id != space.profileID else { return nil }
+        let count = tabCount(inSpace: spaceID)
+        guard count > 0 else { return nil }
+        let tabs = count == 1 ? "\(space.name)'s tab reloads" : "\(space.name)'s \(count) tabs reload"
+        let old = profile(space.profileID)?.name ?? "the old profile"
+        return "\(tabs) with \(new.name)'s logins and cookies. Nothing in \(old) is deleted."
+    }
+
+    /// How many tabs the Space's archive time will take the next time the app comes to the front, when
+    /// that's more than `earlier` would have taken; nil otherwise.
+    public func idleTabsNote(inSpace spaceID: UUID, comparedWith earlier: ArchivePolicy, now: Date = .now) -> String? {
+        let due = tabsDue(inSpace: spaceID, now: now).count
+        guard due > tabsDue(inSpace: spaceID, policy: earlier, now: now).count else { return nil }
+        let tabs = due == 1 ? "1 tab here has" : "\(due) tabs here have"
+        return "\(tabs) been idle longer than that, and will move to the tab archive the next time you come back to Cormorant."
+    }
+}
+
+extension Space {
+    /// What restoring an archived Space with `tabCount` open tabs brings back, under its name in the
+    /// Mac's Library menu.
+    public static func restoreSubtitle(tabCount: Int) -> String {
+        switch tabCount {
+        case 0: "Restore"
+        case 1: "Restore with its tab"
+        default: "Restore with its \(tabCount) tabs"
+        }
+    }
+}
+
+extension Swatch {
+    /// For VoiceOver.
+    public var name: String { rawValue.capitalized }
+}
+
+extension SpaceIcon {
+    /// For VoiceOver.
+    public var name: String {
+        switch self {
+        case .house: "House"
+        case .briefcase: "Briefcase"
+        case .hammer: "Hammer"
+        case .airplane: "Airplane"
+        case .book: "Book"
+        case .cart: "Cart"
+        case .heart: "Heart"
+        case .leaf: "Leaf"
+        case .gameController: "Game Controller"
+        case .musicNote: "Music Note"
+        case .graduationCap: "Graduation Cap"
+        case .camera: "Camera"
+        }
     }
 }

@@ -32,6 +32,8 @@ final class TestChrome: NSObject, TabChrome, WKUIDelegate {
     }
 
     var answer = Answer.ok(nil)
+    /// What every link click asks for: a new tab, or (nil) to be followed here.
+    var newTabForClicks: NewTabRequest?
     private(set) var dialogs: [String] = []
 
     func present(_ dialog: PageDialog) -> Bool {
@@ -52,6 +54,7 @@ final class TestChrome: NSObject, TabChrome, WKUIDelegate {
     }
 
     func pageBackground() -> PageBackground? { nil }
+    func newTab(for click: WKNavigationAction) -> NewTabRequest? { newTabForClicks }
     func tabDidBecomeActive() {}
     func tabDidResignActive() {}
     func sessionDidDetach() {}

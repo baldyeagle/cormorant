@@ -59,18 +59,10 @@ struct SearchSheet: View {
     @ScaledMetric(relativeTo: .body) private var fieldHeight: CGFloat = 48
     @ScaledMetric(relativeTo: .body) private var iconSide: CGFloat = 18
 
-    private static let rowLimit = 6
     private static let dismissDistance: CGFloat = 70
-    /// Typing pauses this long before the engine is asked, so a quick word is one request, not five.
-    private static let engineDelay: Duration = .milliseconds(150)
 
-    /// History and engine results for some typed text (`text`).
-    struct Lookup: Equatable {
-        var text = ""
-        var pages: [HistoryEntry] = []
-        var pastSearches: [String] = []
-        var engineSuggestions: [String] = []
-    }
+    typealias Lookup = AddressPanel.Lookup
+    typealias Shown = AddressPanel.Shown
 
     /// What a lookup depends on; a change starts a new one.
     private struct LookupKey: Equatable {
@@ -316,26 +308,6 @@ struct SearchSheet: View {
 
     // MARK: Results
 
-    /// The rows to show, by section.
-    struct Shown {
-        /// Search Tabs only: how many tabs, and how many match.
-        var tabsHeader = ""
-        /// Composing a new tab, before anything is typed: the Space's pinned tabs, as tiles.
-        var pins: [CormorantCore.Tab] = []
-        var openTabs: [CormorantCore.Tab] = []
-        var pages: [HistoryEntry] = []
-        var closed: [ArchivedTab] = []
-        var searches: [SearchSuggestion] = []
-        /// Incognito before anything is typed: says what it keeps (nothing).
-        var incognitoNote = false
-
-        /// Nothing to list. Search Tabs always has its line, "0 matches" included.
-        var isEmpty: Bool {
-            tabsHeader.isEmpty && pins.isEmpty && openTabs.isEmpty && pages.isEmpty && closed.isEmpty && searches.isEmpty
-                && !incognitoNote
-        }
-    }
-
     @ViewBuilder
     private func results(_ shown: Shown) -> some View {
         if !shown.isEmpty {
@@ -396,55 +368,8 @@ struct SearchSheet: View {
         .accessibilityIdentifier("IncognitoNote")
     }
 
-    /// What the panel lists for `query` (the typed text; nil for none), with `lookup` the latest
-    /// history and engine results.
     static func shown(for query: String?, lookup: Lookup, in store: BrowserStore) -> Shown {
-        if store.isSearchingTabs {
-            let search = TabSearch(tabs: store.tabs, query: query)
-            return Shown(tabsHeader: search.header, openTabs: search.tabs)
-        }
-        // Only the typed text, searched for: no history, tabs or suggestions.
-        if store.searchesPrivately {
-            guard let query else { return Shown(incognitoNote: true) }
-            return Shown(searches: AddressSuggestions(text: query, engine: store.settings.searchEngine, openTabs: [], archived: [],
-                                                 pages: [], pastSearches: [], engineSuggestions: []).searches)
-        }
-        let candidates = AddressSuggestions.openTabCandidates(store.tabs, activeTabID: store.state.activeTabID,
-                                                              composingNewTab: store.isComposingNewTab)
-        let closed = closedHere(in: store)
-        guard let query else {
-            // Most recently closed first.
-            let recentlyClosed = closed.sorted { $0.archivedAt > $1.archivedAt }
-            // A new tab's panel starts with the Space's pins, which then aren't listed again as open tabs.
-            let pins = store.isComposingNewTab || store.activeTab == nil ? store.pinnedTabs : []
-            let openTabs = pins.isEmpty ? candidates : candidates.filter { !$0.isPinned }
-            return Shown(pins: pins, openTabs: Array(openTabs.prefix(Self.rowLimit)),
-                         closed: Array(recentlyClosed.prefix(Self.rowLimit)))
-        }
-        // Until this query's own results arrive, the last ones that still fit it stand in, so rows
-        // don't blink out and back on every key.
-        let current = lookup.text == query
-        let words = query.lowercased().split(whereSeparator: \.isWhitespace)
-        let suggestions = AddressSuggestions(
-            text: query,
-            engine: store.settings.searchEngine,
-            openTabs: candidates,
-            archived: closed,
-            pages: current ? lookup.pages
-                : lookup.pages.filter { AddressSuggestions.matches(query, title: $0.title, url: $0.url) },
-            pastSearches: current ? lookup.pastSearches
-                : lookup.pastSearches.filter { search in words.allSatisfy { search.lowercased().contains($0) } },
-            engineSuggestions: current ? lookup.engineSuggestions
-                : lookup.engineSuggestions.filter { $0.lowercased().hasPrefix(query.lowercased()) }
-        )
-        return Shown(openTabs: suggestions.openTabs, pages: suggestions.pages,
-                     closed: suggestions.closed, searches: suggestions.searches)
-    }
-
-    /// Closed tabs that reopen in this Space: like the open tabs, none from another Space, which
-    /// choosing would switch to.
-    private static func closedHere(in store: BrowserStore) -> [ArchivedTab] {
-        store.state.archived(reopeningIn: store.state.activeSpaceID)
+        AddressPanel.shown(for: query, lookup: lookup, in: store)
     }
 
     /// The typed text, without any completion, once the user has typed; nil for the untouched URL.
@@ -580,31 +505,7 @@ struct SearchSheet: View {
             lookup = Lookup()
             return
         }
-        var found = await Self.historyLookup(for: query, in: store)
-        guard !Task.isCancelled else { return }
-        found.engineSuggestions = lookup.engineSuggestions.filter { $0.lowercased().hasPrefix(query.lowercased()) }
-        lookup = found
-
-        let engine = store.settings.searchEngine
-        guard store.settings.searchSuggestions, let client = store.searchSuggestions, engine.offersSuggestions,
-              SearchSuggestionClient.mayAsk(about: query, engine: engine) else {
-            lookup.engineSuggestions = []
-            return
-        }
-        try? await Task.sleep(for: Self.engineDelay)
-        guard !Task.isCancelled else { return }
-        let suggestions = await client.suggestions(for: query, from: engine)
-        guard !Task.isCancelled, lookup.text == query else { return }
-        lookup.engineSuggestions = suggestions
-    }
-
-    /// History's pages and earlier searches matching `query`, in the active Space's profile: a lookup
-    /// without the engine's suggestions.
-    static func historyLookup(for query: String, in store: BrowserStore) async -> Lookup {
-        let history = store.browsingHistory, profile = store.activeProfileID
-        let pages = await history?.pages(matching: query, profile: profile) ?? []
-        let pastSearches = await history?.searches(matching: query, profile: profile) ?? []
-        return Lookup(text: query, pages: pages, pastSearches: pastSearches)
+        await AddressPanel.lookUp(query, after: lookup, in: store) { lookup = $0 }
     }
 
     /// Completes the field to a visited site while the user types at its end; never on a deletion,
@@ -672,18 +573,8 @@ struct SearchSheet: View {
         onDismiss()
     }
 
-    /// Return with `text` in the field, the panel listing `shown`.
     static func submit(_ text: String, shown: Shown, in store: BrowserStore) {
-        if store.isSearchingTabs {
-            // The best match; with none, the text is searched for in a new tab instead.
-            if let tab = shown.openTabs.first {
-                if tab.id != store.state.activeTabID { store.activate(tab.id) }
-            } else {
-                store.submit(text, inNewTab: true)
-            }
-        } else {
-            store.submit(text)
-        }
+        AddressPanel.submit(text, shown: shown, in: store)
     }
 
     /// Offers Paste and Go (or Search) in the field's edit menu, submitting as the field does, except

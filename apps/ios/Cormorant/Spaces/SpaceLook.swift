@@ -1,31 +1,6 @@
 import CormorantCore
 import SwiftUI
 
-extension Swatch {
-    /// For VoiceOver.
-    var name: String { rawValue.capitalized }
-}
-
-extension SpaceIcon {
-    /// For VoiceOver.
-    var name: String {
-        switch self {
-        case .house: "House"
-        case .briefcase: "Briefcase"
-        case .hammer: "Hammer"
-        case .airplane: "Airplane"
-        case .book: "Book"
-        case .cart: "Cart"
-        case .heart: "Heart"
-        case .leaf: "Leaf"
-        case .gameController: "Game Controller"
-        case .musicNote: "Music Note"
-        case .graduationCap: "Graduation Cap"
-        case .camera: "Camera"
-        }
-    }
-}
-
 /// A Space's icon, white on a rounded square of its color. Takes the icon and color rather than a
 /// Space, so New and Edit Space can show a look before it's saved; `SpaceBadge` draws a saved one.
 struct SpaceIconBadge: View {

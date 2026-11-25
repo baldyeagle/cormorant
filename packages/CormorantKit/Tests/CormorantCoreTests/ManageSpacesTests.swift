@@ -86,6 +86,60 @@ import Testing
             == "Its 3 tabs are kept, and don't archive while the Space is away. Trip \(back)")
     }
 
+    @Test func archiveConfirmationNamesWhereItsRestoredFrom() {
+        #expect(Space.archiveConfirmation(name: "Work", tabCount: 0, restoredFrom: "the Library")
+            == "It has no open tabs. Work leaves the Spaces you switch between until you restore it from the Library.")
+    }
+
+    @Test func aSpacesNameCarriesItsProfileWhereThatIsntTheDefault() {
+        var state = BrowserState()
+        let vialumi = state.addProfile(name: "Vialumi", color: .gold)
+        let work = state.addSpace(name: "Work", profileID: vialumi.id)
+        #expect(state.nameWithProfile(of: work) == "Work · Vialumi")
+        #expect(state.nameWithProfile(of: state.activeSpace) == "Home")
+        #expect(state.nameWithProfile(of: .incognito) == "Incognito")
+    }
+
+    @Test func switchingProfilesWarnsOnlyWhenTabsReload() throws {
+        var state = BrowserState()
+        let vialumi = state.addProfile(name: "Vialumi", color: .gold)
+        let work = state.addSpace(name: "Work")
+        #expect(state.profileSwitchWarning(spaceID: work.id, to: vialumi.id) == nil)
+
+        _ = state.openTab(url: url("https://a.com"), inSpace: work.id)
+        #expect(state.profileSwitchWarning(spaceID: work.id, to: vialumi.id)
+            == "Work's tab reloads with Vialumi's logins and cookies. Nothing in Default is deleted.")
+        _ = state.openTab(url: url("https://b.com"), inSpace: work.id)
+        #expect(state.profileSwitchWarning(spaceID: work.id, to: vialumi.id)
+            == "Work's 2 tabs reload with Vialumi's logins and cookies. Nothing in Default is deleted.")
+        #expect(state.profileSwitchWarning(spaceID: work.id, to: Profile.defaultID) == nil)
+        #expect(state.profileSwitchWarning(spaceID: work.id, to: UUID()) == nil)
+    }
+
+    @Test func aShorterArchiveTimeSaysWhichTabsItWillTake() {
+        var state = BrowserState()
+        let now = t0 + 100 * hour
+        _ = state.openTab(url: url("https://day-old.com"), now: now - 30 * hour)
+        _ = state.openTab(url: url("https://fresh.com"), now: now - hour)
+        _ = state.openTab(url: url("https://active.com"), now: now)
+        #expect(state.idleTabsNote(inSpace: Space.defaultID, comparedWith: .oneDay, now: now) == nil)
+
+        state.updateSpace(Space.defaultID) { $0.archivePolicy = .twelveHours }
+        // The day-old tab went at 24 hours too; nothing new to say.
+        #expect(state.idleTabsNote(inSpace: Space.defaultID, comparedWith: .oneDay, now: now) == nil)
+        #expect(state.idleTabsNote(inSpace: Space.defaultID, comparedWith: .sevenDays, now: now)
+            == "1 tab here has been idle longer than that, and will move to the tab archive the next time you come back to Cormorant.")
+
+        state.updateSpace(Space.defaultID) { $0.archivePolicy = ArchivePolicy(interval: 30 * 60) }
+        #expect(state.idleTabsNote(inSpace: Space.defaultID, comparedWith: .sevenDays, now: now)?.hasPrefix("2 tabs here have") == true)
+    }
+
+    @Test func restoringSaysWhatComesBack() {
+        #expect(Space.restoreSubtitle(tabCount: 0) == "Restore")
+        #expect(Space.restoreSubtitle(tabCount: 1) == "Restore with its tab")
+        #expect(Space.restoreSubtitle(tabCount: 4) == "Restore with its 4 tabs")
+    }
+
     @Test func deleteConfirmationSaysWhereTheTabsGo() {
         #expect(Space.deleteConfirmation(tabCount: 0) == "It has no open tabs. The Space and its settings are gone.")
         #expect(Space.deleteConfirmation(tabCount: 1)

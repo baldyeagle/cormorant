@@ -5,6 +5,9 @@
       location = "group:apps/ios/Cormorant.xcodeproj">
    </FileRef>
    <FileRef
+      location = "group:apps/macos/CormorantMac.xcodeproj">
+   </FileRef>
+   <FileRef
       location = "group:packages/CormorantKit">
    </FileRef>
 </Workspace>

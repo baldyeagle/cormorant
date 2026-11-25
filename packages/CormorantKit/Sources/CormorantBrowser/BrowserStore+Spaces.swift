@@ -24,16 +24,24 @@ extension BrowserStore {
 
     /// Adds a Space at the end of the list and switches to it, then closes Manage Spaces: the Space is
     /// empty, so the browser brings up the search panel. A blank name (after trimming) adds nothing.
-    public func createSpace(name: String, icon: SpaceIcon, color: Swatch, profileID: UUID = Profile.defaultID) {
+    /// `archivePolicy` replaces the one a new Space gets, as Edit Space would set it. Returns the new
+    /// Space's ID.
+    @discardableResult
+    public func createSpace(name: String, icon: SpaceIcon, color: Swatch, profileID: UUID = Profile.defaultID,
+                            archivePolicy: ArchivePolicy? = nil) -> UUID? {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isLoaded, !name.isEmpty else { return }
+        guard isLoaded, !name.isEmpty else { return nil }
+        var spaceID: UUID?
         changeState { state in
             let space = state.addSpace(name: name, icon: icon, color: color, profileID: profileID)
+            if let archivePolicy { state.updateSpace(space.id) { $0.archivePolicy = archivePolicy } }
             state.switchToSpace(space.id)
+            spaceID = space.id
         }
         dismissManageSpaces()
         // From Settings' page: into the new Space, past Settings and the caret sheet.
         if isManagingSpacesInSettings { closeSheetsRequest += 1 }
+        return spaceID
     }
 
     /// Saves Edit Space's fields. A blank name (after trimming) keeps the old one. A new profile

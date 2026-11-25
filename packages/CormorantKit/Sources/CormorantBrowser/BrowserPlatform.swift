@@ -40,9 +40,22 @@ public protocol TabChrome: AnyObject {
     /// it without WebKit's under-page color changing.
     func pageBackground() -> PageBackground?
 
+    /// Whether this click on a link opens it in a new tab rather than here (on a Mac, ⌘-click),
+    /// and how; nil to follow it in this tab.
+    func newTab(for click: WKNavigationAction) -> NewTabRequest?
+
     func tabDidBecomeActive()
     func tabDidResignActive()
     func sessionDidDetach()
+}
+
+/// A link click to open in a new tab instead of here.
+public struct NewTabRequest: Equatable, Sendable {
+    public let inBackground: Bool
+
+    public init(inBackground: Bool) {
+        self.inBackground = inBackground
+    }
 }
 
 public struct PageBackground: Equatable {

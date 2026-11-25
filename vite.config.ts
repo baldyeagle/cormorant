@@ -62,6 +62,13 @@ export default defineConfig({
         command: xcodebuild('test', `\${IOS_TEST_DESTINATION:-${IOS_TEST_DESTINATION}}`),
         cache: false,
       },
+      'mac:build': {
+        command: [
+          `xcodebuild -workspace ${WORKSPACE} -scheme CormorantMac`,
+          '-destination "platform=macOS,arch=arm64" -configuration Debug CODE_SIGNING_ALLOWED=NO build',
+        ].join(' '),
+        cache: false,
+      },
       // TestFlight upload: Release archive, then export straight to App Store Connect.
       // Needs Xcode signed into the Apple ID and a registered device. Outward-facing: run on request.
       'ios:testflight': {

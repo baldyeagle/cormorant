@@ -459,6 +459,11 @@ public final class TabSession {
         }
         // `<a download>`: saved, whatever the response would have been.
         if action.shouldPerformDownload { return .download }
+        // In any frame, a `target=_blank` link's (no target frame) too: cancelled here, it opens no window.
+        if action.navigationType == .linkActivated, let request = chrome.newTab(for: action),
+           onOpenInNewTab?(url, request.inBackground, nil) == true {
+            return .cancel
+        }
         guard action.targetFrame?.isMainFrame == true else { return .allow }
         let host = url.host()?.lowercased()
         // A re-apply may be in flight (toggle, list change) and may have been started with the
@@ -618,13 +623,15 @@ public final class TabSession {
         reload()
     }
 
-    public func reload() {
+    /// - Parameter fromOrigin: everything fetched again from the server, nothing from the cache
+    ///   (a hard reload).
+    public func reload(fromOrigin: Bool = false) {
         // The first page again after it failed or was stopped: covered as it was the first time.
         awaitFirstPaint()
         // After a content-process crash `url` is nil but the history survives: reloading its current
         // item keeps the tab where it was, where loading `lastRequestedURL` would add an entry.
         if webView.url != nil || webView.backForwardList.currentItem != nil {
-            webView.reload()
+            if fromOrigin { webView.reloadFromOrigin() } else { webView.reload() }
         } else if let lastRequestedURL {
             load(lastRequestedURL)
         }

@@ -607,7 +607,7 @@ final class DevBridgeTools {
     private func prepare(_ window: NSWindow, activate: Bool, makeKey: Bool) async throws {
         guard window.isVisible else { throw DevBridgeFailure("Window \(window.windowNumber) isn't on screen") }
         if activate, !NSApp.isActive {
-            NSApp.activate()
+            NSApp.activate(ignoringOtherApps: true)
             let deadline = ContinuousClock.now + .seconds(1)
             while !NSApp.isActive, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(25)) }
         }
@@ -616,7 +616,7 @@ final class DevBridgeTools {
 
     private static let activateSchema: [String: Any] = [
         "type": "boolean",
-        "description": "Ask to bring the app forward first (default false); the system may refuse while another app is in front",
+        "description": "Bring the app forward first, in front of whatever app is (default false)",
     ]
 
     private static let modifiersSchema: [String: Any] = [

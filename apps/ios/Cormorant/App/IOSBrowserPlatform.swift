@@ -9,9 +9,19 @@ final class IOSBrowserPlatform: BrowserPlatform {
     /// from, so they're ready to show as they are.
     private weak var stagingWindow: UIWindow?
     private var stagingLayout: PageLayout?
+    private let checksSafeBrowsing: Bool
+
+    /// - Parameter checksSafeBrowsing: WebKit's fraudulent-website check, which asks the system's Safe
+    ///   Browsing service about every page. Tests turn it off: while the service is slow (as on a
+    ///   simulator soon after boot), WebKit holds a page's commit for a while and a download until it
+    ///   answers, however long.
+    init(checksSafeBrowsing: Bool = true) {
+        self.checksSafeBrowsing = checksSafeBrowsing
+    }
 
     func configure(_ configuration: WKWebViewConfiguration) {
         configuration.allowsInlineMediaPlayback = true
+        configuration.preferences.isFraudulentWebsiteWarningEnabled = checksSafeBrowsing
     }
 
     func makeChrome(for session: TabSession, in store: BrowserStore) -> any TabChrome {

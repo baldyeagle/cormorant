@@ -6,7 +6,10 @@ import WebKit
 final class TestPlatform: BrowserPlatform {
     private(set) var chromes: [TestChrome] = []
 
-    func configure(_ configuration: WKWebViewConfiguration) {}
+    /// No Safe Browsing: a slow service holds a load back, and a download until it answers.
+    func configure(_ configuration: WKWebViewConfiguration) {
+        configuration.preferences.isFraudulentWebsiteWarningEnabled = false
+    }
 
     func makeChrome(for session: TabSession, in store: BrowserStore) -> any TabChrome {
         let chrome = TestChrome()

@@ -176,7 +176,8 @@ final class TestBrowser {
             inbox: inbox,
             spacesSummary: SpacesSummaryFile(fileURL: directory.appending(path: "spaces-summary.json")),
             downloads: DownloadCenter(directory: directory.appending(path: "Downloads", directoryHint: .isDirectory)),
-            platform: IOSBrowserPlatform()
+            // No Safe Browsing: a slow service holds a load back, and a download until it answers.
+            platform: IOSBrowserPlatform(checksSafeBrowsing: false)
         )
     }
 

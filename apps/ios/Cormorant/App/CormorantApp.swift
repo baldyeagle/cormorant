@@ -102,7 +102,7 @@ struct CormorantApp: App {
                 focusFilter: FocusFilterSettings(defaults: defaults, systemFilterSpace: nil),
                 inbox: nil,
                 spacesSummary: nil,
-                platform: IOSBrowserPlatform()
+                platform: IOSBrowserPlatform(checksSafeBrowsing: false)
             )
         }
         // `-uiTesting` launch argument (CormorantUITests): tabs, their history and icons are saved to
@@ -110,8 +110,9 @@ struct CormorantApp: App {
         // tests set themselves) to a throwaway defaults suite, the share extension's inbox and Spaces
         // summary are the run's own, no filter lists are downloaded, compiled or installed, downloads
         // go to the run's own folder, the default-browser status never asks the system (it answers
-        // only a few times a year), and search engines aren't asked for suggestions unless
-        // `-uiTestingSearchSuggestions` says to.
+        // only a few times a year), search engines aren't asked for suggestions unless
+        // `-uiTestingSearchSuggestions` says to, and pages aren't checked with Safe Browsing (a slow
+        // service holds a load back, and a download until it answers: `IOSBrowserPlatform`).
         // Each launch starts with no tabs, no icons and default settings, unless
         // `CORMORANT_UI_TESTING_SESSION=<name>` in the environment names files to reuse (relaunch tests).
         if isUITesting {
@@ -139,7 +140,7 @@ struct CormorantApp: App {
                 inbox: SharedInbox(fileURL: run.appending(path: "inbox.json")),
                 spacesSummary: SpacesSummaryFile(fileURL: run.appending(path: "spaces-summary.json")),
                 downloads: DownloadCenter(directory: run.appending(path: "Downloads")),
-                platform: IOSBrowserPlatform()
+                platform: IOSBrowserPlatform(checksSafeBrowsing: false)
             )
         }
         #endif

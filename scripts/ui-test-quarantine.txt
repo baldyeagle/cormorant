@@ -8,4 +8,3 @@
 # in runs started by hand, so a fix shows. CI fails once an entry is 14 days old; by then
 # fix the test, move what it checks to a lower-level test, or delete it. Every entry must name a test
 # that exists, and dates are YYYY-MM-DD.
-2026-11-25 CormorantUITests/DownloadsTests/testCalendarFileListsItsEventsAndOpensTheEditor  failed in 4 runs on unrelated branches in 14 days: the event list never comes up and the server logs no request

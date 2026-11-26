@@ -51,7 +51,7 @@ struct BrowserView: View {
             // page once it has drawn.
             ZStack {
                 if store.showsWash {
-                    SpaceWash(color: washColor)
+                    SpaceWash(color: washColor, holdsStill: Self.washHoldsStill)
                         .transition(.asymmetric(insertion: .identity, removal: .opacity))
                 }
                 // Also while tabs load, and at launch until the tab it opens on has drawn, so the launch
@@ -348,6 +348,15 @@ struct BrowserView: View {
 
     private var alertIsUp: Bool {
         store.loadFailure != nil || storageWarningPresented.wrappedValue
+    }
+
+    /// Under UI tests the wash holds still (`SpaceWash`).
+    private static var washHoldsStill: Bool {
+        #if DEBUG
+        CormorantApp.isUITesting
+        #else
+        false
+        #endif
     }
 
     /// The launch screen's color until the tabs, and so the Space, are loaded; then the Space's.

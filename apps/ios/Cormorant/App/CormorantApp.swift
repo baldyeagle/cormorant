@@ -63,7 +63,7 @@ struct CormorantApp: App {
     }
 
     #if DEBUG
-    private static let isUITesting = ProcessInfo.processInfo.arguments.contains("-uiTesting")
+    static let isUITesting = ProcessInfo.processInfo.arguments.contains("-uiTesting")
 
     /// The app is the host of the in-process tests (CormorantTests): XCTest sets these for the app it
     /// injects a test bundle into (which one depends on the Xcode), never for one a UI test launches.
@@ -111,8 +111,9 @@ struct CormorantApp: App {
         // summary are the run's own, no filter lists are downloaded, compiled or installed, downloads
         // go to the run's own folder, the default-browser status never asks the system (it answers
         // only a few times a year), search engines aren't asked for suggestions unless
-        // `-uiTestingSearchSuggestions` says to, and pages aren't checked with Safe Browsing (a slow
-        // service holds a load back, and a download until it answers: `IOSBrowserPlatform`).
+        // `-uiTestingSearchSuggestions` says to, pages aren't checked with Safe Browsing (a slow
+        // service holds a load back, and a download until it answers: `IOSBrowserPlatform`), and the
+        // wash holds still (`SpaceWash`).
         // Each launch starts with no tabs, no icons and default settings, unless
         // `CORMORANT_UI_TESTING_SESSION=<name>` in the environment names files to reuse (relaunch tests).
         if isUITesting {

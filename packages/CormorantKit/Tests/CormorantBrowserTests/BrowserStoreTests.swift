@@ -204,6 +204,24 @@ struct BrowserStoreTests {
         withExtendedLifetime(server) {}
     }
 
+    /// A page that changes its own address while the app is in the background has its history written
+    /// then: no debounced save is coming for it, as one does while the app is active.
+    @Test func anAddressChangedInTheBackgroundLeavesNothingUnsaved() async throws {
+        let server = try FixtureServer(html: "<!doctype html><title>Fixture page</title><p>Hello")
+        let (store, _, files) = try Self.makeStore()
+        defer { Self.end(store, files: files) }
+        await store.launch()
+        let session = try await Self.open(server.url.appending(path: "page"), in: store)
+        store.didEnterBackground()
+        try await Self.until("the page's saves to land") { !store.hasUnsavedWork }
+
+        _ = try await session.webView.evaluateJavaScript("history.pushState({}, '', '/moved')")
+        try await Self.until("the tab to take the new address") { store.activeTab?.url?.path() == "/moved" }
+
+        try await Self.until("the moved page's history to be written") { !store.hasUnsavedWork }
+        withExtendedLifetime(server) {}
+    }
+
     /// The store's own files: a defaults suite and a temporary directory, removed by `end`.
     private struct Files {
         let suite: String

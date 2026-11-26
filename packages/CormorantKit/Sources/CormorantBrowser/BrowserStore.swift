@@ -1,5 +1,6 @@
 import CormorantBlocking
 import CormorantCore
+import CormorantSync
 import Observation
 import OSLog
 import WebKit
@@ -151,6 +152,18 @@ public final class BrowserStore {
     @ObservationIgnored var profileErasure: Task<Void, Never>?
     /// Erasing was asked for again while it ran: its next pass starts once this one (or its wait) ends.
     @ObservationIgnored var erasesProfilesAgain = false
+    /// Sync with the user's other devices; nil in a build or a run that has no cloud (tests, the
+    /// simulator, signing off). On only while Settings says so (BrowserStore+Sync.swift).
+    public private(set) var sync: SyncEngine?
+    /// The state's shared part as sync last saw it, to tell it what each change removed.
+    @ObservationIgnored var sharedSeenBySync = BrowserState.Shared()
+    /// The tab on screen whose page another device changed while it was being looked at, and the page
+    /// it stayed on: it goes to the new page once it's out of sight, unless it has gone somewhere
+    /// itself by then.
+    @ObservationIgnored var tabKeptOnItsPage: (tabID: UUID, url: URL?)?
+    /// The app is off screen (not just behind Control Center or the app switcher, where its page
+    /// still shows).
+    @ObservationIgnored private(set) var isInBackground = false
     #if DEBUG
     /// Set by `terminateForTesting()`.
     @ObservationIgnored private var isTerminated = false
@@ -168,6 +181,9 @@ public final class BrowserStore {
         inbox: SharedInbox? = SharedInbox(appGroup: AppGroup.identifier),
         spacesSummary: SpacesSummaryFile? = SpacesSummaryFile(appGroup: AppGroup.identifier),
         downloads: DownloadCenter = DownloadCenter(),
+        syncCloud: (any SyncCloud)? = nil,
+        syncKeyStore: any SyncKeyStore = KeychainSyncKeyStore(),
+        syncFileURL: URL? = nil,
         platform: any BrowserPlatform
     ) {
         var usesFallbackStorage = false
@@ -208,6 +224,12 @@ public final class BrowserStore {
             guard let self, state.profiles.contains(where: { $0.id == profileID }) else { return nil }
             return WKWebView(frame: .zero, configuration: TabSession.makeConfiguration(profileID: profileID, platform: platform).0)
         }
+        if let syncCloud {
+            sync = SyncEngine(cloud: syncCloud, keyStore: syncKeyStore, fileURL: syncFileURL,
+                              stateSaved: { [weak self] in _ = await self?.savedState() },
+                              local: { [weak self] in self.flatMap { $0.canSave ? $0.state.shared : nil } },
+                              apply: { [weak self] in self?.applyFromSync($0) })
+        }
     }
 
     /// Tabs in the active Space, most recently viewed first.
@@ -244,6 +266,8 @@ public final class BrowserStore {
         state = Self.uiTestingLaunchState(state, isFirstLaunch: isFirstUITestingLaunch)
         #endif
         isLoaded = true
+        // Before anything below changes the state (archiving idle tabs): sync sees every change.
+        startSyncIfOn()
         #if DEBUG
         removeUITestingDataStores()
         #endif
@@ -258,6 +282,8 @@ public final class BrowserStore {
         loadFailure = nil
         saveNow()
         saveHistories(onlyNavigated: true)
+        // The state is new: this device joins sync as a new one, and takes nothing away from the others.
+        startSyncIfOn(fresh: true)
         eraseDeletedProfiles()
     }
 
@@ -269,6 +295,7 @@ public final class BrowserStore {
     /// Archives idle tabs, then opens anything handed to us while we were away.
     public func didBecomeActive() {
         sceneIsActive = true
+        isInBackground = false
         focusFilter.refresh()
         // Files added or removed in the Files app while we were away.
         downloads.reload()
@@ -276,7 +303,9 @@ public final class BrowserStore {
         // A history whose write failed while the app was away is tried again.
         saveHistories(onlyNavigated: true)
         stampActiveTab()
-        state.runArchive()
+        // With sync on, idle tabs archive once the other devices' news is in (`syncThenArchive`): a
+        // tab used on the Mac all day looks idle here until then, and archiving it would close it there.
+        if sync?.isOn != true { state.runArchive() }
         openInboxAndPending()
         // Not a pin: one closed as the Space's last tab stays closed, the search panel up with its tile.
         if state.activeTabID == nil, let first = state.activeSpaceTabs.first(where: { !$0.isPinned }) {
@@ -285,6 +314,8 @@ public final class BrowserStore {
         stateDidChange()
         // Deleted profiles whose data couldn't go last time (a web view still held it).
         eraseDeletedProfiles()
+        // What the other devices did while we were away.
+        syncThenArchive()
     }
 
     /// The scene can be killed from here without a background transition; flush now.
@@ -292,14 +323,18 @@ public final class BrowserStore {
         sceneIsActive = false
         saveNow()
         saveHistories()
+        finishSync()
     }
 
     public func didEnterBackground() {
         sceneIsActive = false
+        isInBackground = true
         stampActiveTab()
         if let activeSession { snapshot(activeSession) }
+        if tabKeptOnItsPage != nil { stateDidChange() }
         saveNow()
         saveHistories()
+        finishSync()
     }
 
     /// `cormorant://open` drains the inbox (optionally with an http(s) `?url=`, and the `&space=` ID the
@@ -923,6 +958,7 @@ public final class BrowserStore {
     }
 
     private func stateDidChange() {
+        followSyncOutOfSight()
         releaseSessionsOnOtherProfiles()
         syncActiveSession()
         pruneSessions()
@@ -1159,6 +1195,12 @@ public final class BrowserStore {
 
     private func pageDidChange(tabID: UUID, url: URL?, title: String) {
         guard let index = state.tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        if let kept = tabKeptOnItsPage, kept.tabID == tabID {
+            // Still on the page it was kept on (its title changed, say): the state stays on the page
+            // the other device went to. Gone anywhere else, this device's page is the tab's again.
+            guard let url, url != kept.url else { return }
+            tabKeptOnItsPage = nil
+        }
         let navigated = url.map { $0 != state.tabs[index].url } ?? false
         if navigated { navigatedTabIDs.insert(tabID) }
         state.update(tabID: tabID, url: url ?? state.tabs[index].url, title: title)
@@ -1273,6 +1315,7 @@ public final class BrowserStore {
 
     /// Debounced while the scene is active; immediate otherwise, since the process may not get another chance.
     func scheduleSave() {
+        tellSyncWhatChanged()
         guard needsSave else { return }
         guard sceneIsActive else {
             saveNow()
@@ -1302,6 +1345,7 @@ public final class BrowserStore {
     }
 
     private func saveNow() {
+        tellSyncWhatChanged()
         guard canSave else { return }
         debouncedSave?.cancel()
         debouncedSave = nil
@@ -1366,6 +1410,49 @@ public final class BrowserStore {
         historySaveChain = save
         if !sceneIsActive { keepRunning(until: save, named: "Save tab history") }
     }
+
+    /// The state now holds what another device made of these tabs: each one's web view goes, with its
+    /// back/forward history (saved one too), so the tab loads the state's page when next shown. Call
+    /// `stateDidChange()` after.
+    func loadFromState(_ tabIDs: Set<UUID>) {
+        guard !tabIDs.isEmpty else { return }
+        // The one on screen too: `stateDidChange()` builds it again.
+        releaseSessions { _, tab in tabIDs.contains(tab.id) }
+        for tabID in tabIDs {
+            interactionStates[tabID] = nil
+            navigatedTabIDs.remove(tabID)
+            savedHistories[tabID] = nil
+        }
+        guard canSave else { return }
+        let live = Set(state.tabs.map(\.id)).subtracting(tabIDs)
+        let previous = historySaveChain
+        writesInFlight += 1
+        let save = Task { [historyStore] in
+            defer { writesInFlight -= 1 }
+            await previous?.value
+            _ = await historyStore.save([:], live: live)
+        }
+        historySaveChain = save
+    }
+
+    /// For BrowserStore+Sync.swift, which can't set `state`: replaces the shared part.
+    func setSharedState(_ shared: BrowserState.Shared) {
+        state.setShared(shared)
+    }
+
+    /// Whether the tab has a web view, or a history to build one from.
+    func hasPage(_ tabID: UUID) -> Bool { sessions[tabID] != nil || interactionStates[tabID] != nil }
+
+    /// Idle tabs go to the archive, as `didBecomeActive` does without sync.
+    func archiveIdleTabs() {
+        guard isLoaded else { return }
+        state.runArchive()
+        stateDidChange()
+    }
+
+    func refreshAfterSync() { stateDidChange() }
+
+    func keepRunningForSync(until task: Task<Void, Never>) { keepRunning(until: task, named: "Sync") }
 
     /// Appends a write of the current state to the save chain.
     @discardableResult

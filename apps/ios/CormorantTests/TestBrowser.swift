@@ -1,4 +1,6 @@
 import CormorantCore
+import CormorantSync
+import CormorantTestSupport
 import Foundation
 import Testing
 import UIKit
@@ -31,20 +33,30 @@ final class TestBrowser {
     private let defaultsSuite: String
     private let searchSuggestions: Bool
     private let stateFile: URL
+    /// The cloud and keychain this browser syncs with, sync turned on; nil: no sync, as the app's tests run.
+    private let sync: (cloud: FakeSyncCloud, keys: FakeSyncKeyStore)?
     private let window: UIWindow
     private let host = PageHost()
 
     /// - Parameter state: what the browser finds saved at launch; none is a first launch.
     /// - Parameter searchEngine: a query template (`http://127.0.0.1:port/search?q=%s`) to use instead
     ///   of the default engine.
-    init(state: BrowserState? = nil, searchEngine: String? = nil, searchSuggestions: Bool = false) async throws {
+    /// - Parameter savedFile: the state file's bytes as found at launch, in place of `state` (an
+    ///   unreadable file, say).
+    /// - Parameter sync: a cloud and a keychain to sync with (browsers given the same ones are one
+    ///   person's devices), with Settings' switch on.
+    init(state: BrowserState? = nil, savedFile: Data? = nil, searchEngine: String? = nil, searchSuggestions: Bool = false,
+         sync: (cloud: FakeSyncCloud, keys: FakeSyncKeyStore)? = nil) async throws {
         directory = URL.temporaryDirectory.appending(path: "cormorant-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         stateFile = directory.appending(path: "state.json")
         inbox = SharedInbox(fileURL: directory.appending(path: "inbox.json"))
         defaultsSuite = "dev.baldyeagle.cormorant.tests.\(UUID().uuidString)"
         self.searchSuggestions = searchSuggestions
+        self.sync = sync
         if let state { try await JSONBrowserStateStore(fileURL: stateFile).save(state) }
+        if let savedFile { try savedFile.write(to: stateFile) }
+        if sync != nil { AppSettings(defaults: UserDefaults(suiteName: defaultsSuite)!).syncsWithICloud = true }
         if let searchEngine {
             AppSettings(defaults: UserDefaults(suiteName: defaultsSuite)!).searchEngine =
                 SearchEngine(id: AppSettings.customEngineID, name: "Fixture", queryTemplate: searchEngine)
@@ -53,7 +65,7 @@ final class TestBrowser {
         window.rootViewController = host
         window.makeKeyAndVisible()
         store = Self.makeStore(directory: directory, stateFile: stateFile, inbox: inbox,
-                               defaultsSuite: defaultsSuite, searchSuggestions: searchSuggestions)
+                               defaultsSuite: defaultsSuite, searchSuggestions: searchSuggestions, sync: sync)
         await store.launch()
         host.show(store.activeSession?.webView)
     }
@@ -105,6 +117,11 @@ final class TestBrowser {
         }
     }
 
+    /// A round of sync, done: what this device changed is in the cloud, and what the cloud had is here.
+    func syncNow() async {
+        await store.syncAndWait()
+    }
+
     /// Waits until everything the browser writes while browsing is on disk.
     func waitForSaves(sourceLocation: SourceLocation = #_sourceLocation) async throws {
         try await until("the browser's saves to land", sourceLocation: sourceLocation) { !store.hasUnsavedWork }
@@ -140,12 +157,18 @@ final class TestBrowser {
 
     /// The app is killed once everything is on disk, and opened again, after `idleFor` (every tab last
     /// looked at that much earlier, as if the app had been away that long).
-    func relaunch(idleFor idle: TimeInterval? = nil, sourceLocation: SourceLocation = #_sourceLocation) async throws {
-        store.didEnterBackground()
-        try await waitForSaves(sourceLocation: sourceLocation)
-        // Browsing history too: visits and titles queued on its write chain, which saves don't count.
-        _ = await store.afterBrowsingHistoryWrites { _ in }
-        store.terminateForTesting()
+    /// `skippingSave`: the store was already shut off (`terminateForTesting`), its files as the test left them.
+    func relaunch(idleFor idle: TimeInterval? = nil, skippingSave: Bool = false,
+                  sourceLocation: SourceLocation = #_sourceLocation) async throws {
+        if !skippingSave {
+            store.didEnterBackground()
+            try await waitForSaves(sourceLocation: sourceLocation)
+            // Browsing history too: visits and titles queued on its write chain, which saves don't count.
+            _ = await store.afterBrowsingHistoryWrites { _ in }
+            // And what sync decided: its session is written after the state it goes with.
+            await store.sync?.finish()
+            store.terminateForTesting()
+        }
         host.show(nil)
         if let idle {
             let file = JSONBrowserStateStore(fileURL: stateFile)
@@ -154,7 +177,7 @@ final class TestBrowser {
             try await file.save(saved)
         }
         store = Self.makeStore(directory: directory, stateFile: stateFile, inbox: inbox,
-                               defaultsSuite: defaultsSuite, searchSuggestions: searchSuggestions)
+                               defaultsSuite: defaultsSuite, searchSuggestions: searchSuggestions, sync: sync)
         await store.launch()
         host.show(store.activeSession?.webView)
     }
@@ -162,7 +185,7 @@ final class TestBrowser {
     // MARK: Building
 
     private static func makeStore(directory: URL, stateFile: URL, inbox: SharedInbox, defaultsSuite: String,
-                                  searchSuggestions: Bool) -> BrowserStore {
+                                  searchSuggestions: Bool, sync: (cloud: FakeSyncCloud, keys: FakeSyncKeyStore)?) -> BrowserStore {
         let defaults = UserDefaults(suiteName: defaultsSuite)!
         return BrowserStore(
             stateStore: JSONBrowserStateStore(fileURL: stateFile),
@@ -176,6 +199,9 @@ final class TestBrowser {
             inbox: inbox,
             spacesSummary: SpacesSummaryFile(fileURL: directory.appending(path: "spaces-summary.json")),
             downloads: DownloadCenter(directory: directory.appending(path: "Downloads", directoryHint: .isDirectory)),
+            syncCloud: sync?.cloud,
+            syncKeyStore: sync?.keys ?? FakeSyncKeyStore(),
+            syncFileURL: directory.appending(path: "sync-state.json"),
             // No Safe Browsing: a slow service holds a load back, and a download until it answers.
             platform: IOSBrowserPlatform(checksSafeBrowsing: false)
         )

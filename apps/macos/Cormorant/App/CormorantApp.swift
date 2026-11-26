@@ -1,6 +1,7 @@
 import AppKit
 import CormorantBrowser
 import CormorantCore
+import CormorantSync
 import SwiftUI
 
 @main
@@ -16,6 +17,8 @@ struct CormorantApp: App {
         .defaultSize(width: 1280, height: 820)
         .windowStyle(.hiddenTitleBar)
         .commands { BrowserCommands(store: delegate.store, commands: delegate.commands) }
+
+        Settings { SettingsWindow(store: delegate.store) }
     }
 }
 
@@ -28,12 +31,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         DevBridge.startIfAsked(app: self)
         #endif
+        // CloudKit's silent pushes, for sync: no prompt, nothing shown.
+        if store.canSync { NSApp.registerForRemoteNotifications() }
     }
 
     /// The store isn't told when the app goes inactive: a Mac app keeps running behind others, and
     /// the store saves on its own until it quits.
     func applicationDidBecomeActive(_ notification: Notification) {
         store.didBecomeActive()
+    }
+
+    func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
+        store.syncNow()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -62,6 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             spacesSummary: nil,
             // Passes, calendar files and models open from Finder like any download.
             downloads: DownloadCenter(handoffs: []),
+            // Nil in a build with signing off (no iCloud entitlement): sync isn't offered there.
+            syncCloud: CloudKitSyncCloud.isAvailable ? CloudKitSyncCloud() : nil,
+            syncFileURL: .applicationSupportDirectory.appending(path: "Sync/sync-state.json"),
             platform: platform
         )
     }

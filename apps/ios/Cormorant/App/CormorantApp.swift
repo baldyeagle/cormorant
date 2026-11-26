@@ -1,9 +1,11 @@
 import CormorantBrowser
 import CormorantCore
+import CormorantSync
 import SwiftUI
 
 @main
 struct CormorantApp: App {
+    @UIApplicationDelegateAdaptor private var delegate: AppDelegate
     @State private var store = Self.makeStore()
     @State private var defaultBrowser = Self.makeDefaultBrowser()
 
@@ -52,7 +54,13 @@ struct CormorantApp: App {
             #endif
             .environment(store)
             .environment(defaultBrowser)
-            .task { await store.launch() }
+            .task {
+                await store.launch()
+                // CloudKit's silent pushes, for sync: no prompt, nothing shown.
+                guard store.canSync else { return }
+                delegate.syncFromPush = { [store] in await store.syncAndWait() }
+                UIApplication.shared.registerForRemoteNotifications()
+            }
             .onOpenURL { url in
                 if ["http", "https"].contains(url.scheme?.lowercased()) { defaultBrowser.didReceiveWebURL() }
                 store.handle(openURL: url)
@@ -147,7 +155,13 @@ struct CormorantApp: App {
         #endif
         // Shares the app didn't live to finish, and files whose copies were good for the last launch only.
         PageFileShare.cache.pruneAtLaunch()
-        return BrowserStore(focusFilter: .shared, platform: IOSBrowserPlatform())
+        return BrowserStore(
+            focusFilter: .shared,
+            // Nil in the simulator and under tests (no iCloud entitlement): sync isn't offered there.
+            syncCloud: CloudKitSyncCloud.isAvailable ? CloudKitSyncCloud() : nil,
+            syncFileURL: .applicationSupportDirectory.appending(path: "Sync/sync-state.json"),
+            platform: IOSBrowserPlatform()
+        )
     }
 
     private static func makeDefaultBrowser() -> DefaultBrowserStatus {

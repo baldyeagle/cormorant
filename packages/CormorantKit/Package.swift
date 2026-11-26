@@ -26,7 +26,7 @@ let package = Package(
         // features, so code moves between an app and here unchanged.
         .target(
             name: "CormorantBrowser",
-            dependencies: ["CormorantCore", "CormorantBlocking"],
+            dependencies: ["CormorantCore", "CormorantBlocking", "CormorantSync"],
             swiftSettings: [
                 .defaultIsolation(MainActor.self),
                 .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
@@ -34,12 +34,12 @@ let package = Package(
                 .enableUpcomingFeature("MemberImportVisibility"),
             ]
         ),
-        .target(name: "CormorantTestSupport"),
+        .target(name: "CormorantTestSupport", dependencies: ["CormorantSync"]),
 
         .testTarget(name: "CormorantCoreTests", dependencies: ["CormorantCore"]),
         .testTarget(name: "CormorantBlockingTests", dependencies: ["CormorantBlocking"], resources: [.copy("Resources")]),
         .testTarget(name: "CormorantAITests", dependencies: ["CormorantAI"]),
-        .testTarget(name: "CormorantSyncTests", dependencies: ["CormorantSync"]),
+        .testTarget(name: "CormorantSyncTests", dependencies: ["CormorantSync", "CormorantTestSupport"]),
         .testTarget(name: "CormorantBrowserTests", dependencies: ["CormorantBrowser", "CormorantTestSupport"]),
         .testTarget(name: "CormorantTestSupportTests", dependencies: ["CormorantTestSupport"]),
     ],

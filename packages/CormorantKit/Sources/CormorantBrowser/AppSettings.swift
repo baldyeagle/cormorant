@@ -12,6 +12,7 @@ public final class AppSettings {
         static let pageUnderStatusBar = "pageUnderStatusBar"
         static let searchSuggestions = "searchSuggestions"
         static let incognitoIcon = "incognitoIcon"
+        static let syncsWithICloud = "syncsWithICloud"
     }
 
     public static let customEngineID = "custom"
@@ -42,6 +43,13 @@ public final class AppSettings {
         didSet { AppGroupStorage.save(incognitoIcon, key: Key.incognitoIcon, to: defaults) }
     }
 
+    /// Spaces, tabs and the tab archive are kept the same on every device signed into the same iCloud
+    /// account, end to end encrypted. Off by default. Change it through `BrowserStore.setSync(on:)`,
+    /// which also starts and stops it.
+    public var syncsWithICloud: Bool {
+        didSet { AppGroupStorage.save(syncsWithICloud, key: Key.syncsWithICloud, to: defaults) }
+    }
+
     @ObservationIgnored private let defaults: UserDefaults
 
     public init(defaults: UserDefaults = AppGroupStorage.defaults) {
@@ -51,5 +59,6 @@ public final class AppSettings {
         pageUnderStatusBar = AppGroupStorage.load(Bool.self, key: Key.pageUnderStatusBar, from: defaults) ?? true
         searchSuggestions = AppGroupStorage.load(Bool.self, key: Key.searchSuggestions, from: defaults) ?? true
         incognitoIcon = AppGroupStorage.load(IncognitoIcon.self, key: Key.incognitoIcon, from: defaults) ?? .default
+        syncsWithICloud = AppGroupStorage.load(Bool.self, key: Key.syncsWithICloud, from: defaults) ?? false
     }
 }

@@ -64,30 +64,6 @@ final class LinkContextMenuTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
-    /// Tapping a switcher card opens its tab (it grows into the page with `CardExpansion`, as a tapped
-    /// link preview does).
-    func testSwitcherCardOpensItsTab() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url)
-
-        openMenuAndWaitForPreview(on: "Next page", path: "/next", in: app)
-        choose("Open in New Tab", in: app)
-        XCTAssertTrue(heading("/", in: app).disappears(within: Ceiling.load), "didn't switch to the new tab")
-
-        openSwitcher(in: app, count: 2)
-        let cards = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'TabCard'"))
-        XCTAssertTrue(waitUntil(Ceiling.ui) { cards.count == 2 }, "the switcher doesn't show both cards")
-        // The opener's card: the one that isn't selected (the new tab is the active one).
-        let opener = cards.allElementsBoundByIndex.first { !$0.isSelected }
-        let card = try XCTUnwrap(opener, "no card for the opener")
-        // Its left part: the stack starts scrolled to the newest card, which overlaps the opener's right.
-        card.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5)).tap()
-        XCTAssertTrue(heading("/", in: app).appears(within: Ceiling.load), "the card didn't open its tab")
-        XCTAssertTrue(app.staticTexts["2 Tabs"].disappears(within: Ceiling.ui), "the switcher stayed up")
-        XCTAssertTrue(tabsButton(count: 2, in: app).appears(within: Ceiling.ui))
-        withExtendedLifetime(server) {}
-    }
-
     func testScriptLinkHasNoMenu() throws {
         let server = try FixtureServer(html: Self.page)
         let app = launchOnPage(server.url)

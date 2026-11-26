@@ -64,12 +64,14 @@ extension CormorantCore.Tab {
 }
 
 /// A pin's long-press menu: Back to Pinned Page (once it has left it), Rename, Move to Space (with
-/// somewhere to go), Unpin, and Close, which leaves it pinned.
+/// somewhere to go), Add to Folder, Remove from Folder (in one), Unpin, and Close, which leaves it pinned.
 struct PinMenu: View {
     @Environment(BrowserStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let tab: CormorantCore.Tab
     let onRename: () -> Void
     let onMove: (UUID) -> Void
+    let onFolderPrompt: (FolderPrompt) -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -79,6 +81,14 @@ struct PinMenu: View {
         Button("Rename…", systemImage: "pencil", action: onRename)
         if !store.moveDestinations(for: tab.id).isEmpty {
             MoveToSpaceMenu(tabID: tab.id, onMove: onMove)
+        }
+        AddToFolderMenu(tabID: tab.id, onPrompt: onFolderPrompt)
+        if tab.folderID != nil {
+            Button("Remove from Folder", systemImage: "folder.badge.minus") {
+                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.25)) {
+                    store.removeFromFolder(tab.id)
+                }
+            }
         }
         Section {
             Button("Unpin", systemImage: "pin.slash") { store.unpin(tab.id) }
@@ -116,23 +126,32 @@ struct RenamePinAlert: ViewModifier {
     }
 }
 
-/// The switcher's row of the Space's pinned tabs, above its cards: tap one to open it, long-press for
-/// its menu, drag one onto another to take its place.
+/// The switcher's row of the Space's pins (`BrowserStore.pinRow`), above its cards: the tiles, then
+/// the pinned list's pins as tiles and its folders as folder tiles. Tap a pin to open it, a folder to
+/// open its panel; long-press either for its menu; drag a pin onto another to take its place.
 struct PinnedRow: View {
     @Environment(BrowserStore.self) private var store
-    let pins: [CormorantCore.Tab]
+    let items: [SidebarItem]
     let accent: Color
     /// The tile's frame on screen, for the card that grows from it.
     let onOpen: (CormorantCore.Tab, CGRect) -> Void
+    /// The folder tile's frame on screen, for the panel that grows from it.
+    let onOpenFolder: (Folder, CGRect) -> Void
     let onMove: (CormorantCore.Tab, UUID) -> Void
     let onClose: (CormorantCore.Tab) -> Void
+    let onFolderPrompt: (FolderPrompt) -> Void
     @State private var frames: [UUID: CGRect] = [:]
     @State private var renaming: UUID?
 
     var body: some View {
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 14) {
-                ForEach(pins) { tile($0) }
+                ForEach(items) { item in
+                    switch item {
+                    case .tab(let tab): tile(tab)
+                    case .folder(let folder, let tabs): folderTile(folder, tabs: tabs)
+                    }
+                }
             }
             .padding(.horizontal, 20)
             // Room for the ring and the slash badge.
@@ -145,6 +164,11 @@ struct PinnedRow: View {
         .accessibilityIdentifier("PinnedRow")
     }
 
+    /// The row's pins, as they show: not those in folders.
+    private var pins: [CormorantCore.Tab] {
+        items.compactMap { if case .tab(let tab) = $0 { tab } else { nil } }
+    }
+
     private func tile(_ tab: CormorantCore.Tab) -> some View {
         let isActive = tab.id == store.state.activeTabID
         return Button {
@@ -155,7 +179,8 @@ struct PinnedRow: View {
         .buttonStyle(.plain)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frames[tab.id] = $0 }
         .contextMenu {
-            PinMenu(tab: tab, onRename: { renaming = tab.id }, onMove: { onMove(tab, $0) }, onClose: { onClose(tab) })
+            PinMenu(tab: tab, onRename: { renaming = tab.id }, onMove: { onMove(tab, $0) },
+                    onFolderPrompt: onFolderPrompt, onClose: { onClose(tab) })
         }
         .draggable(Self.dragPrefix + tab.id.uuidString) {
             PinTile(tab: tab, favicons: store.favicons, isActive: false, accent: accent)
@@ -164,7 +189,7 @@ struct PinnedRow: View {
         .dropDestination(for: String.self) { items, _ in
             guard let item = items.first, item.hasPrefix(Self.dragPrefix),
                   let id = UUID(uuidString: String(item.dropFirst(Self.dragPrefix.count))) else { return false }
-            return withAnimation(.snappy(duration: 0.25)) { store.movePin(id, onto: tab.id) }
+            return withAnimation(.snappy(duration: 0.25)) { move(id, onto: tab) }
         }
         .accessibilityLabel(tab.pinName)
         .accessibilityValue(tab.pinAccessibilityValue(isActive: isActive))
@@ -175,13 +200,48 @@ struct PinnedRow: View {
                 Button("Back to Pinned Page") { store.backToPinnedPage(tab.id) }
             }
             if let index = pins.firstIndex(where: { $0.id == tab.id }) {
-                if index > 0 { Button("Move Left") { store.movePin(tab.id, before: pins[index - 1].id) } }
-                if index < pins.count - 1 { Button("Move Right") { store.movePin(tab.id, onto: pins[index + 1].id) } }
+                if index > 0 { Button("Move Left") { move(tab.id, onto: pins[index - 1]) } }
+                if index < pins.count - 1 { Button("Move Right") { move(tab.id, onto: pins[index + 1]) } }
             }
             Button("Rename") { renaming = tab.id }
+            Button("New Folder") { onFolderPrompt(.newFolder(tabID: tab.id)) }
+            ForEach(store.folders(for: tab.id)) { folder in
+                Button("Add to \(folder.name)") { store.addToFolder(tab.id, folder.id) }
+            }
             Button("Unpin") { store.unpin(tab.id) }
             Button("Close") { onClose(tab) }
         }
+    }
+
+    private func folderTile(_ folder: Folder, tabs: [CormorantCore.Tab]) -> some View {
+        let isActive = tabs.contains { $0.id == store.state.activeTabID }
+        return Button {
+            onOpenFolder(folder, frames[folder.id] ?? .zero)
+        } label: {
+            FolderTile(folder: folder, isActive: isActive, accent: accent)
+        }
+        .buttonStyle(.plain)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frames[folder.id] = $0 }
+        .contextMenu {
+            FolderMenu(folder: folder, isPinned: true, onPrompt: onFolderPrompt)
+        }
+        .accessibilityLabel(folder.name)
+        .accessibilityValue("Pinned folder, \(FolderCard.count(tabs.count))")
+        .accessibilityHint("Opens this folder")
+        .accessibilityIdentifier("PinnedFolder")
+        .accessibilityActions {
+            Button("Rename") { onFolderPrompt(.rename(folderID: folder.id)) }
+            Button("Icon") { onFolderPrompt(.icon(folderID: folder.id)) }
+            Button("Unpin Folder") { store.moveFolder(folder.id, toPinned: false) }
+            Button("Ungroup") { store.ungroupFolder(folder.id) }
+            Button("Close Folder") { store.closeFolder(folder.id) }
+        }
+    }
+
+    /// A pin dropped on another takes its place, joining the tiles or the pinned list as that one is.
+    @discardableResult
+    private func move(_ id: UUID, onto target: CormorantCore.Tab) -> Bool {
+        store.movePin(id, onto: target.id)
     }
 
     /// What a dragged pin carries: its tab's ID behind a marker, so a drop knows a pin from other text.

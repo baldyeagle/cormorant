@@ -23,13 +23,15 @@ extension BrowserState {
     }
 
     /// The tabs in `spaceID` that `policy` (the Space's own when nil) would archive at `now`, as
-    /// `runArchive` decides: never the active tab, and none in an archived or unknown Space. Blank tabs
+    /// `runArchive` decides (a folder's tabs when it would archive whole): never the active tab, and none
+    /// in an archived or unknown Space. Blank tabs
     /// are included, as there (the archiver drops them). Edit Space uses it to say what a shorter
     /// archive time will take at the next foreground.
     public func tabsDue(inSpace spaceID: UUID, policy: ArchivePolicy? = nil, now: Date = .now) -> [Tab] {
         guard let space = space(spaceID), !space.isArchived else { return [] }
-        return (policy ?? space.archivePolicy)
-            .tabsDue(in: tabs.filter { $0.spaceID == spaceID }, activeTabID: activeTabID, now: now)
+        let policy = policy ?? space.archivePolicy
+        return policy.tabsDue(in: tabs.filter { $0.spaceID == spaceID }, activeTabID: activeTabID, now: now)
+            + foldersDue(inSpace: spaceID, policy: policy, now: now).flatMap { tabs(inFolder: $0.id) }
     }
 }
 

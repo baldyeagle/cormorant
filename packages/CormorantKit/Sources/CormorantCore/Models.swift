@@ -65,8 +65,15 @@ public struct Tab: Identifiable, Hashable, Codable, Sendable {
     public var pinnedURL: URL?
     /// The title of a pinned tab's page, kept up to date while the tab is on it. Nil unless pinned.
     public var pinnedTitle: String?
-    /// The name Rename gave a pinned tab, shown in place of `pinnedTitle`. Nil unless renamed.
+    /// The name Rename gave the tab, shown in place of its page's title (a pin's `pinnedTitle`). Nil
+    /// unless renamed.
     public var customTitle: String?
+    /// Where a pinned tab shows: a tile, or a row of the pinned list (see `Folders.swift`). Kept as
+    /// `.tile` for other tabs.
+    public var pinPlace: PinPlace
+    /// The folder the tab is in, of its own Space and of its kind (a pinned folder holds list pins). Nil
+    /// when in none.
+    public var folderID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -78,7 +85,9 @@ public struct Tab: Identifiable, Hashable, Codable, Sendable {
         lastViewedAt: Date? = nil,
         pinnedURL: URL? = nil,
         pinnedTitle: String? = nil,
-        customTitle: String? = nil
+        customTitle: String? = nil,
+        pinPlace: PinPlace = .tile,
+        folderID: UUID? = nil
     ) {
         self.id = id
         self.spaceID = spaceID
@@ -90,10 +99,14 @@ public struct Tab: Identifiable, Hashable, Codable, Sendable {
         self.pinnedURL = pinnedURL
         self.pinnedTitle = pinnedTitle
         self.customTitle = customTitle
+        self.pinPlace = pinPlace
+        self.folderID = folderID
     }
 
-    /// Title to show in lists: the page title, else the host, else a placeholder.
+    /// Title to show in lists: the name Rename gave it, else the page title, else the host, else a
+    /// placeholder.
     public var displayTitle: String {
+        if let customTitle, !customTitle.isEmpty { return customTitle }
         if !title.isEmpty { return title }
         if let host = url?.host() { return host }
         return "New Tab"
@@ -108,15 +121,19 @@ public struct ArchivedTab: Identifiable, Hashable, Codable, Sendable {
     public var title: String
     public let archivedAt: Date
     public let originalCreatedAt: Date
+    /// The folder it was archived with, when the whole folder went at once: restoring any of its tabs
+    /// brings the folder back with all of them (`restore(archivedID:)`).
+    public var folder: ArchivedFolder?
 
     public init(id: UUID = UUID(), spaceID: UUID = Space.defaultID, url: URL, title: String,
-                archivedAt: Date = .now, originalCreatedAt: Date) {
+                archivedAt: Date = .now, originalCreatedAt: Date, folder: ArchivedFolder? = nil) {
         self.id = id
         self.spaceID = spaceID
         self.url = url
         self.title = title
         self.archivedAt = archivedAt
         self.originalCreatedAt = originalCreatedAt
+        self.folder = folder
     }
 
     /// Archive entry for `tab`, or nil for a blank (URL-less) tab, which is dropped instead of archived.
@@ -167,7 +184,9 @@ extension Tab {
             lastViewedAt: try container.decodeIfPresent(Date.self, forKey: .lastViewedAt) ?? createdAt,
             pinnedURL: try container.decodeIfPresent(URL.self, forKey: .pinnedURL),
             pinnedTitle: try container.decodeIfPresent(String.self, forKey: .pinnedTitle),
-            customTitle: try container.decodeIfPresent(String.self, forKey: .customTitle)
+            customTitle: try container.decodeIfPresent(String.self, forKey: .customTitle),
+            pinPlace: (try? container.decodeIfPresent(PinPlace.self, forKey: .pinPlace)) ?? .tile,
+            folderID: try? container.decodeIfPresent(UUID.self, forKey: .folderID)
         )
     }
 }
@@ -182,7 +201,8 @@ extension ArchivedTab {
             url: try container.decode(URL.self, forKey: .url),
             title: try container.decodeIfPresent(String.self, forKey: .title) ?? "",
             archivedAt: archivedAt,
-            originalCreatedAt: try container.decodeIfPresent(Date.self, forKey: .originalCreatedAt) ?? archivedAt
+            originalCreatedAt: try container.decodeIfPresent(Date.self, forKey: .originalCreatedAt) ?? archivedAt,
+            folder: try? container.decodeIfPresent(ArchivedFolder.self, forKey: .folder)
         )
     }
 }

@@ -159,7 +159,8 @@ import Testing
         let unpinResult = state.unpin(tabID: b.id, now: t0 + 40 * 24 * hour)
         let undo = try #require(unpinResult)
         let unpinned = try #require(state.tab(b.id))
-        #expect(!unpinned.isPinned && unpinned.pinnedURL == nil && unpinned.customTitle == nil)
+        #expect(!unpinned.isPinned && unpinned.pinnedURL == nil)
+        #expect(unpinned.customTitle == "Bee", "a renamed tab keeps its name")
         #expect(unpinned.url == url("https://b.example/away"), "unpinning moved the page")
         // Counted as viewed: not archived at once for the weeks it was pinned.
         let due = state.runArchive(now: t0 + 40 * 24 * hour)
@@ -212,7 +213,7 @@ import Testing
         let old = try CoreJSON.decoder().decode(BrowserState.self, from: Data(json.utf8))
         #expect(old.tabs.map(\.isPinned) == [true, false, false])
         #expect(old.tabs[0].pinnedURL == url("https://old.example"))
-        #expect(old.tabs[2].pinnedURL == nil && old.tabs[2].customTitle == nil)
+        #expect(old.tabs[2].pinnedURL == nil && old.tabs[2].customTitle == "X")
     }
 
     @Test func aNavigationStartingDoesntNameThePinAfterThePageItLeft() {

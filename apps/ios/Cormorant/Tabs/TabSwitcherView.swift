@@ -3,8 +3,9 @@ import CormorantCore
 import OSLog
 import SwiftUI
 
-/// Full-screen card stack of the active Space's tabs, under a row of its pinned tabs (`PinnedRow`).
-/// The most recently viewed card sits on top.
+/// Full-screen card stack of the active Space's tabs and folders, under a row of its pins (`PinnedRow`).
+/// The most recently viewed card sits on top. A folder's card shows its tabs' cards on their own; a
+/// pinned folder's tile opens its panel over the switcher.
 struct TabSwitcherView: View {
     @Environment(BrowserStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -25,18 +26,34 @@ struct TabSwitcherView: View {
     /// the chosen tab is the browser's from then on (see `onFinished` below).
     @State private var opening: Opening?
     @State private var presence = Presence()
+    /// The folder whose cards show on their own, from its card.
+    @State private var openFolderID: UUID?
+    /// The pinned folder whose panel is up, from its tile.
+    @State private var panel: PanelRequest?
+    @State private var folderPrompt: FolderPrompt?
+    /// Cards being closed, which fly up as they go; a card leaving otherwise (into a folder) fades.
+    @State private var closing: Set<UUID> = []
 
     var body: some View {
+        let pinRow = store.pinRow
         NavigationStack {
           VStack(spacing: 0) {
-            if !store.pinnedTabs.isEmpty {
-                PinnedRow(pins: store.pinnedTabs, accent: store.shownSpace?.color.color ?? .accentColor,
+            if !pinRow.isEmpty {
+                PinnedRow(items: pinRow, accent: accent,
                           onOpen: { tab, frame in open(tab, from: frame, tilt: 0) },
+                          onOpenFolder: { folder, frame in openPanel(folder, from: frame) },
                           onMove: { tab, spaceID in move(tab, to: spaceID) },
-                          onClose: { close($0) })
+                          onClose: { close($0) },
+                          onFolderPrompt: { folderPrompt = $0 })
                     // Another Space's pins replace these whole, as its cards do.
                     .id(store.state.activeSpaceID)
                     .transition(.opacity)
+            }
+            if let shown = shownFolder {
+                FolderBackPill(folder: shown.folder, accent: accent, onBack: showAllTabs)
+                    .padding(.top, pinRow.isEmpty ? 8 : 0)
+                    .padding(.horizontal, 20)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
             GeometryReader { geometry in
                 let cardSize = Self.cardSize(in: geometry.size)
@@ -46,27 +63,56 @@ struct TabSwitcherView: View {
                 let stack = self.stack
                 ScrollView(.horizontal) {
                     HStack(spacing: -cardSize.width * Self.overlap) {
-                        ForEach(stack) { tab in
-                            TabCard(
-                                tab: tab,
-                                snapshot: store.snapshots[tab.id]?.content,
-                                favicons: store.favicons,
-                                isActive: tab.id == store.state.activeTabID,
-                                accent: store.shownSpace?.color.color ?? .accentColor,
-                                size: cardSize,
-                                labelWidth: tab.id == stack.last?.id ? cardSize.width : max(0, step - 10),
-                                onOpen: { frame in
-                                    // The fan's scale and tilt for where the card sits (see visualEffect below).
-                                    let offset = fans ? (frame.midX - geometry.frame(in: .global).midX) / step : 0
-                                    let scale = 1 - Self.shrinkPerStep * min(abs(offset), 3)
-                                    let start = frame.insetBy(dx: frame.width * (1 - scale) / 2,
-                                                              dy: frame.height * (1 - scale) / 2)
-                                    open(tab, from: start, tilt: Self.tiltPerStep * offset)
-                                },
-                                onClose: { close(tab) }
-                            )
-                            // Before the fan's tilt, so the menu's preview is the card as it is.
-                            .modifier(CardMenu(tab: tab, onMove: { move(tab, to: $0) }, onClose: { close(tab) }))
+                        ForEach(stack) { item in
+                            let labelWidth = item.id == stack.last?.id ? cardSize.width : max(0, step - 10)
+                            Group {
+                                switch item {
+                                case .tab(let tab):
+                                    TabCard(
+                                        tab: tab,
+                                        snapshot: store.snapshots[tab.id]?.content,
+                                        favicons: store.favicons,
+                                        isActive: tab.id == store.state.activeTabID,
+                                        accent: accent,
+                                        size: cardSize,
+                                        labelWidth: labelWidth,
+                                        onOpen: { frame in
+                                            // The fan's scale and tilt for where the card sits (see visualEffect below).
+                                            let offset = fans ? (frame.midX - geometry.frame(in: .global).midX) / step : 0
+                                            let scale = 1 - Self.shrinkPerStep * min(abs(offset), 3)
+                                            let start = frame.insetBy(dx: frame.width * (1 - scale) / 2,
+                                                                      dy: frame.height * (1 - scale) / 2)
+                                            open(tab, from: start, tilt: Self.tiltPerStep * offset)
+                                        },
+                                        onClose: { close(tab) }
+                                    )
+                                    // Before the fan's tilt, so the menu's preview is the card as it is.
+                                    .modifier(CardMenu(tab: tab, onMove: { move(tab, to: $0) },
+                                                       onFolderPrompt: { folderPrompt = $0 }, onClose: { close(tab) }))
+                                case .folder(let folder, let tabs):
+                                    FolderCard(
+                                        folder: folder,
+                                        tabs: tabs,
+                                        snapshot: tabs.first.flatMap { store.snapshots[$0.id]?.content },
+                                        favicons: store.favicons,
+                                        isActive: tabs.contains { $0.id == store.state.activeTabID },
+                                        accent: accent,
+                                        size: cardSize,
+                                        labelWidth: labelWidth,
+                                        onOpen: { showFolder(folder.id) }
+                                    )
+                                    .contextMenu {
+                                        FolderMenu(folder: folder, isPinned: false, onPrompt: { folderPrompt = $0 })
+                                    }
+                                    .accessibilityActions {
+                                        Button("Rename") { folderPrompt = .rename(folderID: folder.id) }
+                                        Button("Icon") { folderPrompt = .icon(folderID: folder.id) }
+                                        Button("Pin Folder") { store.moveFolder(folder.id, toPinned: true) }
+                                        Button("Ungroup") { store.ungroupFolder(folder.id) }
+                                        Button("Close Folder") { store.closeFolder(folder.id) }
+                                    }
+                                }
+                            }
                             .visualEffect { content, proxy in
                                 // Steps from the center, fractional while scrolling.
                                 let offset = fans ? (proxy.frame(in: .scrollView).midX - viewportMidX) / step : 0
@@ -78,7 +124,8 @@ struct TabSwitcherView: View {
                             }
                             .transition(.asymmetric(
                                 insertion: .identity,
-                                removal: reduceMotion ? .opacity : .offset(y: -cardSize.height * 0.6).combined(with: .opacity)
+                                removal: reduceMotion || !closing.contains(item.id)
+                                    ? .opacity : .offset(y: -cardSize.height * 0.6).combined(with: .opacity)
                             ))
                         }
                     }
@@ -87,9 +134,9 @@ struct TabSwitcherView: View {
                 }
                 .scrollIndicators(.hidden)
                 .defaultScrollAnchor(.trailing)
-                // Another Space's cards replace these whole, scrolled to its newest, rather than
-                // leaving one by one as closed cards do.
-                .id(store.state.activeSpaceID)
+                // Another Space's cards, or a folder's, replace these whole, scrolled to the newest,
+                // rather than leaving one by one as closed cards do.
+                .id([store.state.activeSpaceID, shownFolder?.folder.id])
                 .transition(.opacity)
             }
           }
@@ -127,6 +174,7 @@ struct TabSwitcherView: View {
             // Incognito's cards sit on black, in light mode too, as its tabs' bar does.
             .environment(\.colorScheme, isIncognito ? .dark : colorScheme)
             .toolbarColorScheme(isIncognito ? .dark : nil, for: .navigationBar)
+            .modifier(FolderPrompts(prompt: $folderPrompt))
         }
         // A toast's Move… while the switcher is up: the browser can't present over it.
         .sheet(item: Binding(get: { store.moveRequest }, set: { store.moveRequest = $0 })) { request in
@@ -135,6 +183,14 @@ struct TabSwitcherView: View {
         .onAppear { presence.isPresented = true }
         .onDisappear { presence.isPresented = false }
         .background(PresenceAnchor(presence: presence))
+        .overlay { folderPanel }
+        .onChange(of: store.state.activeSpaceID) {
+            openFolderID = nil
+            panel = nil
+        }
+        // A folder that goes (closed, ungrouped, emptied, pinned or unpinned) takes its view with it.
+        .onChange(of: shownFolder?.folder.id) { _, id in if id == nil { openFolderID = nil } }
+        .onChange(of: panelFolder?.folder.id) { _, id in if id == nil { panel = nil } }
         // Once a card is chosen nothing in the switcher takes a touch or a VoiceOver action, the
         // toolbar included.
         .allowsHitTesting(opening == nil)
@@ -186,25 +242,110 @@ struct TabSwitcherView: View {
         }
     }
 
-    /// The Space's tabs but its pinned ones, oldest first so the newest is last: frontmost and scrolled
-    /// into view. Held in place while a card opens, since activating it makes it the newest.
-    private var stack: [CormorantCore.Tab] {
-        let tabs = Array(store.unpinnedTabs.reversed())
-        guard let order = opening?.order else { return tabs }
-        return tabs.sorted { (order[$0.id] ?? .max) < (order[$1.id] ?? .max) }
+    /// The Space's tabs and folders but its pinned ones (or the open folder's tabs), oldest first so the
+    /// newest is last: frontmost and scrolled into view. Held in place while a card opens, since
+    /// activating it makes it the newest.
+    private var stack: [SidebarItem] {
+        let items: [SidebarItem] = shownFolder.map { $0.tabs.reversed().map(SidebarItem.tab) }
+            ?? store.unpinnedItems.reversed()
+        guard let order = opening?.order else { return items }
+        return items.sorted { (order[$0.id] ?? .max) < (order[$1.id] ?? .max) }
+    }
+
+    private var accent: Color { store.shownSpace?.color.color ?? .accentColor }
+
+    /// The folder whose cards show on their own, while it's among the Space's other tabs.
+    private var shownFolder: (folder: Folder, tabs: [CormorantCore.Tab])? {
+        guard let openFolderID else { return nil }
+        for case .folder(let folder, let tabs) in store.unpinnedItems where folder.id == openFolderID {
+            return (folder, tabs)
+        }
+        return nil
+    }
+
+    /// The pinned folder whose panel is up, while it's pinned.
+    private var panelFolder: (folder: Folder, tabs: [CormorantCore.Tab])? {
+        guard let panel else { return nil }
+        for case .folder(let folder, let tabs) in store.pinRow where folder.id == panel.folderID {
+            return (folder, tabs)
+        }
+        return nil
+    }
+
+    private var folderAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.3)
+    }
+
+    private func showFolder(_ folderID: UUID) {
+        guard opening == nil else { return }
+        withAnimation(folderAnimation) { openFolderID = folderID }
+    }
+
+    private func showAllTabs() {
+        withAnimation(folderAnimation) { openFolderID = nil }
+    }
+
+    private func openPanel(_ folder: Folder, from frame: CGRect) {
+        guard opening == nil else { return }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.35, bounce: 0.15)) {
+            panel = PanelRequest(folderID: folder.id, tile: frame)
+        }
+    }
+
+    private func closePanel() {
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.28)) { panel = nil }
+    }
+
+    /// A pinned folder's panel over the blurred switcher, growing from its tile and going back into it.
+    private var folderPanel: some View {
+        GeometryReader { geometry in
+            let bounds = geometry.frame(in: .global)
+            ZStack {
+                if let request = panel, let shown = panelFolder {
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .ignoresSafeArea()
+                        .onTapGesture(perform: closePanel)
+                        .accessibilityHidden(true)
+                        .transition(.opacity)
+                    let zoom = FolderPanelZoom(
+                        offset: request.tile == .zero ? .zero
+                            : CGSize(width: request.tile.midX - bounds.midX, height: request.tile.midY - bounds.midY),
+                        scale: reduceMotion ? 1 : 0.2, opacity: 0)
+                    FolderPanel(folder: shown.folder, tabs: shown.tabs, accent: accent,
+                                onOpen: { tab, frame in open(tab, from: frame, tilt: 0) },
+                                onClose: { close($0) },
+                                onPrompt: { folderPrompt = $0 },
+                                onDismiss: closePanel)
+                        .frame(width: min(geometry.size.width - 48, 380))
+                        .frame(maxHeight: geometry.size.height * 0.72)
+                        .transition(.modifier(active: zoom, identity: FolderPanelZoom(offset: .zero, scale: 1, opacity: 1)))
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
     }
 
     private func close(_ tab: CormorantCore.Tab) {
-        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Self.closeAnimation) {
-            store.close(tab.id)
+        closing.insert(tab.id)
+        // A turn later, so the card leaves with the transition `closing` gives it.
+        DispatchQueue.main.async {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Self.closeAnimation) {
+                store.close(tab.id)
+            }
+            closing.remove(tab.id)
         }
     }
 
     /// The switcher goes with the card to its new Space, where it's on top; the toast says where it went.
     private func move(_ tab: CormorantCore.Tab, to spaceID: UUID) {
         guard opening == nil else { return }
-        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Self.closeAnimation) {
-            store.moveTab(tab.id, toSpace: spaceID)
+        closing.insert(tab.id)
+        DispatchQueue.main.async {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Self.closeAnimation) {
+                store.moveTab(tab.id, toSpace: spaceID)
+            }
+            closing.remove(tab.id)
         }
     }
 
@@ -377,12 +518,15 @@ private struct BarButton: View {
     }
 }
 
-/// A card's long-press menu: Pin Tab (not in Incognito), Move to Space (with more than one Space),
-/// and Close Tab. VoiceOver gets Pin and each move as actions of their own.
+/// A card's long-press menu: Pin Tab (not in Incognito), Add to Folder (not in Incognito), Remove from
+/// Folder (in one), Move to Space (with more than one Space), and Close Tab. VoiceOver gets Pin, the
+/// folder choices and each move as actions of their own.
 private struct CardMenu: ViewModifier {
     @Environment(BrowserStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let tab: CormorantCore.Tab
     let onMove: (UUID) -> Void
+    let onFolderPrompt: (FolderPrompt) -> Void
     let onClose: () -> Void
 
     func body(content: Content) -> some View {
@@ -390,6 +534,12 @@ private struct CardMenu: ViewModifier {
             .contextMenu {
                 if store.canPin(tab.id) {
                     Button("Pin Tab", systemImage: "pin") { store.pin(tab.id) }
+                }
+                if !tab.isIncognito {
+                    AddToFolderMenu(tabID: tab.id, onPrompt: onFolderPrompt)
+                }
+                if tab.folderID != nil {
+                    Button("Remove from Folder", systemImage: "folder.badge.minus", action: removeFromFolder)
                 }
                 // Not for an Incognito tab, or with only Home and Incognito.
                 if !store.moveDestinations(for: tab.id).isEmpty {
@@ -401,10 +551,25 @@ private struct CardMenu: ViewModifier {
                 if store.canPin(tab.id) {
                     Button("Pin Tab") { store.pin(tab.id) }
                 }
+                if !tab.isIncognito {
+                    Button("New Folder") { onFolderPrompt(.newFolder(tabID: tab.id)) }
+                    ForEach(store.folders(for: tab.id)) { folder in
+                        Button("Add to \(folder.name)") { store.addToFolder(tab.id, folder.id) }
+                    }
+                }
+                if tab.folderID != nil {
+                    Button("Remove from Folder", action: removeFromFolder)
+                }
                 ForEach(store.moveDestinations(for: tab.id).filter { !$0.isCurrent }) { destination in
                     Button("Move to \(destination.space.name)") { onMove(destination.space.id) }
                 }
             }
+    }
+
+    private func removeFromFolder() {
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.25)) {
+            store.removeFromFolder(tab.id)
+        }
     }
 }
 
@@ -451,6 +616,12 @@ private struct PresenceAnchor: UIViewRepresentable {
     }
 
     func updateUIView(_ view: UIView, context: Context) {}
+}
+
+private struct PanelRequest {
+    let folderID: UUID
+    /// The folder's tile on screen.
+    let tile: CGRect
 }
 
 private struct Opening {

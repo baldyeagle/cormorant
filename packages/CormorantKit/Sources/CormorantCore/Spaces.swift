@@ -165,6 +165,7 @@ extension BrowserState {
             tabs[index].spaceID = Space.defaultID
         }
         normalizePins()
+        normalizeFolders()
         if let activeTabID, !tabs.contains(where: { $0.id == activeTabID }) {
             self.activeTabID = nil
         }
@@ -283,6 +284,7 @@ extension BrowserState {
         }
         let doomed = tabs.filter { $0.spaceID == spaceID }
         tabs.removeAll { $0.spaceID == spaceID }
+        folders.removeAll { $0.spaceID == spaceID }
         archived.append(contentsOf: doomed.compactMap { ArchivedTab(archiving: $0, at: now) })
         trimArchive()
         spaces.remove(at: index)
@@ -307,8 +309,10 @@ extension BrowserState {
         if activeTabID == tabID { activeTabID = tabAfterArchiving(tabID) }
         tabs[index].spaceID = spaceID
         tabs[index].lastViewedAt = now
+        tabs[index].folderID = nil
         // A pinned tab goes last among the destination's pins (pin order is `tabs` order).
         if tabs[index].isPinned { tabs.append(tabs.remove(at: index)) }
+        pruneFolders()
         if spaceID == activeSpaceID, activeTabID == nil { activeTabID = tabID }
         return profile(forSpace: from).id != profile(forSpace: spaceID).id
     }

@@ -8,7 +8,8 @@ public struct BrowserState: Codable, Sendable, Equatable {
     /// 3: the archive time a Space gets back when Archive Idle Tabs is turned on (`archivePolicyBeforeOff`).
     /// 4: deleted profiles whose website data is still to be erased (`profilesToErase`).
     /// 5: pinned tabs' page and names (`Tab.pinnedURL`, `pinnedTitle`, `customTitle`).
-    public static let currentSchemaVersion = 5
+    /// 6: folders (`folders`, `Tab.folderID`, `ArchivedTab.folder`) and the pinned list (`Tab.pinPlace`).
+    public static let currentSchemaVersion = 6
 
     /// Schema version this value was decoded from (or `currentSchemaVersion` for new values), for
     /// migrations. Encoding always writes `currentSchemaVersion`.
@@ -21,6 +22,8 @@ public struct BrowserState: Codable, Sendable, Equatable {
     /// Change through the tab methods (`openTab`, `activate`, `moveTab`, ...), which keep every tab in
     /// an existing Space.
     public internal(set) var tabs: [Tab]
+    /// Change through the folder methods (`newFolder`, `addToFolder`, ...); see `Folders.swift`.
+    public internal(set) var folders: [Folder]
     public internal(set) var archived: [ArchivedTab]
     /// Never an archived Space. Change with `switchToSpace` (or `activate`, `restore`). Incognito
     /// (`Space.incognitoID`) only while it has tabs.
@@ -42,12 +45,13 @@ public struct BrowserState: Codable, Sendable, Equatable {
 
     /// Missing Home or default profile are added (see `normalize()`).
     public init(spaces: [Space] = [.default], profiles: [Profile] = [.default], tabs: [Tab] = [],
-                archived: [ArchivedTab] = [], activeSpaceID: UUID = Space.defaultID, activeTabID: UUID? = nil,
-                profilesToErase: [UUID] = []) {
+                folders: [Folder] = [], archived: [ArchivedTab] = [], activeSpaceID: UUID = Space.defaultID,
+                activeTabID: UUID? = nil, profilesToErase: [UUID] = []) {
         self.schemaVersion = Self.currentSchemaVersion
         self.spaces = spaces
         self.profiles = profiles
         self.tabs = tabs
+        self.folders = folders
         self.archived = archived
         self.activeSpaceID = activeSpaceID
         self.activeTabID = activeTabID
@@ -56,7 +60,7 @@ public struct BrowserState: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, spaces, profiles, tabs, archived, activeSpaceID, activeTabID, profilesToErase
+        case schemaVersion, spaces, profiles, tabs, folders, archived, activeSpaceID, activeTabID, profilesToErase
     }
 
     /// Missing fields take defaults (files from before `schemaVersion` existed are version 1), then
@@ -67,6 +71,8 @@ public struct BrowserState: Codable, Sendable, Equatable {
         spaces = try container.decodeIfPresent([Space].self, forKey: .spaces) ?? []
         profiles = try container.decodeIfPresent([Profile].self, forKey: .profiles) ?? []
         tabs = try container.decodeIfPresent([Tab].self, forKey: .tabs) ?? []
+        // A folder this build can't read costs the folders, not the file: their tabs stay, out of them.
+        folders = (try? container.decodeIfPresent([Folder].self, forKey: .folders)) ?? []
         archived = try container.decodeIfPresent([ArchivedTab].self, forKey: .archived) ?? []
         activeSpaceID = try container.decodeIfPresent(UUID.self, forKey: .activeSpaceID) ?? Space.defaultID
         activeTabID = try container.decodeIfPresent(UUID.self, forKey: .activeTabID)
@@ -85,6 +91,7 @@ public struct BrowserState: Codable, Sendable, Equatable {
         try container.encode(state.spaces, forKey: .spaces)
         try container.encode(state.profiles, forKey: .profiles)
         try container.encode(state.tabs, forKey: .tabs)
+        if !state.folders.isEmpty { try container.encode(state.folders, forKey: .folders) }
         try container.encode(state.archived, forKey: .archived)
         try container.encode(state.activeSpaceID, forKey: .activeSpaceID)
         try container.encodeIfPresent(state.activeTabID, forKey: .activeTabID)
@@ -247,13 +254,15 @@ public struct ArchivePolicy: Sendable, Hashable, Codable {
         try container.encode(interval, forKey: .interval)
     }
 
-    /// Tabs idle at least `interval`, excluding `activeTabID` and any tab whose `kind` keeps it open.
+    /// Tabs idle at least `interval`, excluding `activeTabID`, any tab whose `kind` keeps it open and
+    /// any in a folder (a folder archives whole: `BrowserState.tabsDue(inSpace:policy:now:)`).
     ///
     /// Blank (URL-less) tabs are returned too, so the archiver drops them.
     public func tabsDue(in tabs: [Tab], activeTabID: UUID?, now: Date = .now) -> [Tab] {
         guard let interval else { return [] }
         return tabs.filter { tab in
             tab.kind == .today
+                && tab.folderID == nil
                 && tab.id != activeTabID
                 && now.timeIntervalSince(tab.lastViewedAt) >= interval
         }
@@ -319,6 +328,7 @@ extension BrowserState {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
         if activeTabID == tabID { activeTabID = tabAfterArchiving(tabID) }
         let tab = tabs.remove(at: index)
+        if tab.folderID != nil { pruneFolders() }
         if tab.isIncognito {
             leaveIncognitoIfEmpty()
         } else if let entry = ArchivedTab(archiving: tab, at: now) {
@@ -333,21 +343,27 @@ extension BrowserState {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
         if activeTabID == tabID { activeTabID = tabAfterArchiving(tabID) }
         tabs.remove(at: index)
+        pruneFolders()
     }
 
-    /// Archives every tab its Space's `archivePolicy` says is due. Archived Spaces keep their tabs.
+    /// Archives every tab its Space's `archivePolicy` says is due, and every folder whose tabs all are
+    /// (whole, so it comes back whole). Archived Spaces keep their tabs.
     @discardableResult
     public mutating func runArchive(now: Date = .now) -> [ArchivedTab] {
-        let due = switchableSpaces.flatMap { space in
+        let spaces = switchableSpaces
+        let due = spaces.flatMap { space in
             space.archivePolicy.tabsDue(in: tabs.filter { $0.spaceID == space.id }, activeTabID: activeTabID, now: now)
         }
-        guard !due.isEmpty else { return [] }
-        var result: [ArchivedTab] = []
-        for tab in due {
-            if let entry = ArchivedTab(archiving: tab, at: now) { result.append(entry) }
-            archive(tabID: tab.id, now: now)
+        let dueFolders = spaces.flatMap { foldersDue(inSpace: $0.id, policy: $0.archivePolicy, now: now) }
+        guard !due.isEmpty || !dueFolders.isEmpty else { return [] }
+        var ids = Set(due.map(\.id))
+        for tab in due { archive(tabID: tab.id, now: now) }
+        for folder in dueFolders {
+            let members = tabs(inFolder: folder.id).map(\.id)
+            ids.formUnion(members)
+            archiveTogether(members, folder: folder, now: now)
         }
-        return result
+        return archived.filter { ids.contains($0.id) }
     }
 
     /// Reopens an archived tab as a Today tab and makes it active.
@@ -355,9 +371,11 @@ extension BrowserState {
     /// The tab returns to its original Space if that Space still exists and isn't archived (switching
     /// to it), otherwise it opens in the active Space (in Incognito, the Space Incognito goes back to:
     /// an archived tab is never restored into it).
+    /// A tab archived with its folder brings the folder back with all its tabs (`restoreFolder`).
     @discardableResult
     public mutating func restore(archivedID: UUID, now: Date = .now) -> Tab? {
         guard let index = archived.firstIndex(where: { $0.id == archivedID }) else { return nil }
+        if archived[index].folder != nil { return restoreFolder(of: archived[index], now: now) }
         let entry = archived.remove(at: index)
         let spaceID = entry.spaceID != Space.incognitoID && space(entry.spaceID)?.isArchived == false
             ? entry.spaceID : spaceOutsideIncognito
@@ -390,6 +408,7 @@ extension BrowserState {
     /// Drops every URL-less tab, clearing the active tab if it was one.
     public mutating func removeBlankTabs() {
         tabs.removeAll { $0.url == nil }
+        pruneFolders()
         if let activeTabID, !tabs.contains(where: { $0.id == activeTabID }) { self.activeTabID = nil }
     }
 

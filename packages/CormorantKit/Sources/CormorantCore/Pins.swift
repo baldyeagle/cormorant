@@ -24,8 +24,12 @@ extension Tab {
         return Self.pageKey(pinnedURL) != Self.pageKey(url)
     }
 
-    /// The title search matches the tab by: a pinned tab's name as well as its page's.
-    public var searchTitle: String { isPinned && pinName != displayTitle ? "\(pinName) \(displayTitle)" : displayTitle }
+    /// The title search matches the tab by: its own name (a pin's, or Rename's) as well as its page's.
+    public var searchTitle: String {
+        let name = isPinned ? pinName : (customTitle ?? "")
+        let page = title.isEmpty ? (url?.host() ?? displayTitle) : title
+        return name.isEmpty || name == page ? page : "\(name) \(page)"
+    }
 
     /// `url` as `isAwayFromPin` compares it.
     static func pageKey(_ url: URL?) -> String? {
@@ -44,6 +48,9 @@ public struct UnpinnedTab: Sendable, Equatable {
     let pinnedURL: URL?
     let pinnedTitle: String?
     let customTitle: String?
+    let pinPlace: PinPlace
+    /// Its folder, kept whole in case unpinning it emptied the folder.
+    let folder: Folder?
     let lastViewedAt: Date
     /// The pin it was before in its Space; nil when it was last.
     let before: UUID?
@@ -83,37 +90,53 @@ extension BrowserState {
         return pins[index + 1].id
     }
 
-    /// Pins the tab on the page it's on, last among its Space's pins, if `canPin` says it can. Returns
-    /// whether it pinned.
+    /// Pins the tab on the page it's on, last among its Space's pins in `place`, if `canPin` says it
+    /// can. It leaves any folder it was in, and keeps any name Rename gave it. Returns whether it pinned.
     @discardableResult
-    public mutating func pin(tabID: UUID) -> Bool {
+    public mutating func pin(tabID: UUID, place: PinPlace = .tile) -> Bool {
         guard canPin(tabID), let index = tabs.firstIndex(where: { $0.id == tabID }),
               let url = tabs[index].url else { return false }
         var tab = tabs.remove(at: index)
         tab.kind = .pinned
         tab.pinnedURL = url
         tab.pinnedTitle = tab.title.isEmpty ? nil : tab.title
-        tab.customTitle = nil
+        tab.pinPlace = place
+        tab.folderID = nil
         tabs.append(tab)
+        pruneFolders()
         return true
     }
 
+    /// Moves a pin between the tiles and the pinned list, last there. A list pin leaves its folder.
+    public mutating func movePin(_ tabID: UUID, to place: PinPlace) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }), tabs[index].isPinned,
+              tabs[index].pinPlace != place || tabs[index].folderID != nil else { return }
+        var tab = tabs.remove(at: index)
+        tab.pinPlace = place
+        tab.folderID = nil
+        tabs.append(tab)
+        pruneFolders()
+    }
+
     /// Unpins the tab: one of the Space's other tabs again, listed first, on the page it's on, counted as viewed now
-    /// (so it doesn't archive at once for the time it sat pinned). Returns what `undoUnpin` needs, or
-    /// nil for an unknown or unpinned tab.
+    /// (so it doesn't archive at once for the time it sat pinned), out of any folder, keeping any name
+    /// Rename gave it. Returns what `undoUnpin` needs, or nil for an unknown or unpinned tab.
     @discardableResult
     public mutating func unpin(tabID: UUID, now: Date = .now) -> UnpinnedTab? {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }), tabs[index].isPinned else { return nil }
         let tab = tabs[index]
         let undo = UnpinnedTab(tabID: tabID, pinnedURL: tab.pinnedURL, pinnedTitle: tab.pinnedTitle,
-                               customTitle: tab.customTitle, lastViewedAt: tab.lastViewedAt, before: pinAfter(tabID))
+                               customTitle: tab.customTitle, pinPlace: tab.pinPlace, folder: tab.folderID.flatMap(folder),
+                               lastViewedAt: tab.lastViewedAt, before: pinAfter(tabID))
         tabs[index].kind = .today
         tabs[index].pinnedURL = nil
         tabs[index].pinnedTitle = nil
-        tabs[index].customTitle = nil
+        tabs[index].pinPlace = .tile
+        tabs[index].folderID = nil
         tabs[index].lastViewedAt = max(tab.lastViewedAt, now)
         // Listed first (`listedTabs`), not wherever it sat among the pins.
         tabs.append(tabs.remove(at: index))
+        pruneFolders()
         return undo
     }
 
@@ -126,15 +149,30 @@ extension BrowserState {
         tabs[index].pinnedURL = undo.pinnedURL ?? tabs[index].url
         tabs[index].pinnedTitle = undo.pinnedTitle
         tabs[index].customTitle = undo.customTitle
+        tabs[index].pinPlace = undo.pinPlace
         tabs[index].lastViewedAt = undo.lastViewedAt
+        tabs[index].folderID = nil
+        if let folder = undo.folder, folder.spaceID == tabs[index].spaceID {
+            if self.folder(folder.id) == nil { folders.append(folder) }
+            if isPinnedFolder(folder.id) || !tabs.contains(where: { $0.folderID == folder.id }) {
+                tabs[index].folderID = folder.id
+            }
+        }
         movePin(undo.tabID, before: undo.before)
+        normalizeFolders()
     }
 
-    /// Gives a pinned tab a name of its own; an empty name (or only spaces) goes back to its page's title.
-    public mutating func renamePin(_ tabID: UUID, to name: String) {
-        guard let index = tabs.firstIndex(where: { $0.id == tabID }), tabs[index].isPinned else { return }
+    /// Gives the tab a name of its own; an empty name (or only spaces) goes back to its page's title.
+    public mutating func rename(_ tabID: UUID, to name: String) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         tabs[index].customTitle = name.isEmpty ? nil : name
+    }
+
+    /// `rename`, for a pinned tab only.
+    public mutating func renamePin(_ tabID: UUID, to name: String) {
+        guard tab(tabID)?.isPinned == true else { return }
+        rename(tabID, to: name)
     }
 
     /// Moves a pin to just before `before`, a pin in the same Space, or last with nil (or a tab that
@@ -150,11 +188,25 @@ extension BrowserState {
     }
 
     /// A pin dragged onto another of its Space's pins takes its place: just before it when coming from
-    /// its right, just after it when coming from its left. Returns whether it moved.
+    /// its right, just after it when coming from its left, as the iPhone's row shows them (the tiles,
+    /// then the pinned list). Dropped on a pin of the other place (not one in a folder), it joins that
+    /// place, out of any folder. Returns whether it moved.
     @discardableResult
     public mutating func movePin(_ tabID: UUID, onto target: UUID) -> Bool {
-        guard tabID != target, let tab = tab(tabID), tab.isPinned else { return false }
-        let pins = pinnedTabs(inSpace: tab.spaceID)
+        guard tabID != target, let tab = tab(tabID), tab.isPinned,
+              let targetTab = self.tab(target), targetTab.isPinned, targetTab.spaceID == tab.spaceID else { return false }
+        if targetTab.pinPlace != tab.pinPlace || tab.folderID != targetTab.folderID {
+            guard targetTab.folderID == nil, let from = tabs.firstIndex(where: { $0.id == tabID }) else { return false }
+            var moving = tabs.remove(at: from)
+            moving.pinPlace = targetTab.pinPlace
+            moving.folderID = nil
+            guard let to = tabs.firstIndex(where: { $0.id == target }) else { return false }
+            // A tile joining the list comes from the target's left; a list pin joining the tiles, from its right.
+            tabs.insert(moving, at: tab.pinPlace == .tile && targetTab.pinPlace == .list ? to + 1 : to)
+            pruneFolders()
+            return true
+        }
+        let pins = pinnedTabs(inSpace: tab.spaceID).filter { $0.pinPlace == tab.pinPlace }
         guard let from = pins.firstIndex(where: { $0.id == tabID }),
               let to = pins.firstIndex(where: { $0.id == target }) else { return false }
         movePin(tabID, before: from < to ? (to + 1 < pins.count ? pins[to + 1].id : nil) : target)
@@ -170,7 +222,8 @@ extension BrowserState {
         let old = tabs[index]
         let fresh = Tab(spaceID: old.spaceID, url: old.pinnedURL ?? old.url, title: old.pinnedTitle ?? "",
                         kind: .pinned, createdAt: old.createdAt, lastViewedAt: old.lastViewedAt,
-                        pinnedURL: old.pinnedURL ?? old.url, pinnedTitle: old.pinnedTitle, customTitle: old.customTitle)
+                        pinnedURL: old.pinnedURL ?? old.url, pinnedTitle: old.pinnedTitle, customTitle: old.customTitle,
+                        pinPlace: old.pinPlace, folderID: old.folderID)
         tabs[index] = fresh
         if activeTabID == tabID { activeTabID = fresh.id }
         return fresh
@@ -189,7 +242,8 @@ extension BrowserState {
     }
 
     /// For `normalize()`: an Incognito tab or one with no page is never pinned, and a pinned tab always
-    /// has a pinned page (a file from a build that didn't keep one: the page it's on).
+    /// has a pinned page (a file from a build that didn't keep one: the page it's on). Other tabs have
+    /// no pinned page or title and count as tiles (`pinPlace`), which pinning sets.
     mutating func normalizePins() {
         for index in tabs.indices {
             if tabs[index].isPinned, tabs[index].isIncognito || tabs[index].url == nil {
@@ -200,7 +254,7 @@ extension BrowserState {
             } else {
                 tabs[index].pinnedURL = nil
                 tabs[index].pinnedTitle = nil
-                tabs[index].customTitle = nil
+                tabs[index].pinPlace = .tile
             }
         }
     }

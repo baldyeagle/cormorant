@@ -214,6 +214,14 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("r")
             Button("Reload Ignoring Cache") { shownSession?.reload(fromOrigin: true) }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
+            Divider()
+            let tab = store.activeTab
+            Button(tab?.isPinned == true ? "Unpin Tab" : "Pin Tab") {
+                guard let tab else { return }
+                if tab.isPinned { store.unpin(tab.id) } else { store.pin(tab.id, place: .list) }
+            }
+            .keyboardShortcut("d")
+            .disabled(store.isComposingNewTab || (tab.map { !$0.isPinned && !store.canPin($0.id) } ?? true))
         }
         CommandMenu("Spaces") {
             ForEach(Array(store.state.shownSpaces.enumerated()), id: \.element.id) { index, space in

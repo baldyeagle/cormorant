@@ -344,6 +344,10 @@ final class LinkPreviewController: UIViewController, WKNavigationDelegate {
         // The page keeps the tab's layout; the card shows the top of it, shrunk to the card's width,
         // from below the status bar the page runs under (above the card's top, which clips it).
         let s = scale
+        // Sized unscaled: WebKit takes the page's `svh` and `lvh` from the frame, scale included, and
+        // keeps what it got until the size or the insets change, so a page sized by them would reflow
+        // as a tab takes it.
+        webView.transform = .identity
         webView.bounds = CGRect(origin: .zero, size: pageSize)
         webView.transform = CGAffineTransform(scaleX: s, y: s)
         webView.center = CGPoint(x: pageSize.width * s / 2, y: (pageSize.height / 2 - statusBandHeight) * s)

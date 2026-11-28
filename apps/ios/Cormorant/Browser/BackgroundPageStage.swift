@@ -24,7 +24,7 @@ struct PageLayout {
     func apply(to webView: WKWebView) {
         webView.transform = .identity
         webView.frame = CGRect(origin: .zero, size: size)
-        webView.obscuredContentInsets = obscuredInsets
+        WebViewContainer.cover(webView, with: obscuredInsets)
         WebViewContainer.keepSafeAreaScrollInsets(of: webView.scrollView)
         webView.scrollView.contentInset.bottom = scrollInsetBottom
         webView.scrollView.verticalScrollIndicatorInsets.bottom = scrollInsetBottom

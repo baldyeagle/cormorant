@@ -249,13 +249,19 @@ final class SpacesTests: UITestCase {
         XCTAssertTrue(name.appears(within: Ceiling.ui), "New Space didn't open")
         XCTAssertTrue(waitUntil(Ceiling.ui) { name.value(forKey: "hasKeyboardFocus") as? Bool == true },
                       "the name field didn't take focus")
+        let add = app.buttons["Add"]
+        XCTAssertFalse(add.isEnabled, "Add is enabled with no name")
         name.typeText("Work")
-        app.buttons["Add"].tapWhenSettled()
+        add.tapWhenSettled()
         XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
         let field = app.textFields["Search or enter address"]
         XCTAssertTrue(field.appears(within: Ceiling.ui), "no search panel in the new Space")
         XCTAssertTrue(waitUntil(Ceiling.ui) { field.value(forKey: "hasKeyboardFocus") as? Bool == true },
                       "the search field has no focus")
+        XCTAssertTrue(heading("/home", in: app).disappears(within: Ceiling.ui), "Home's page is still showing")
+        app.buttons["Close search"].firstMatch.tapWhenSettled()
+        XCTAssertTrue(field.disappears(within: Ceiling.ui), "the search panel didn't close")
+        XCTAssertTrue(app.buttons["Tabs, 0 open"].appears(within: Ceiling.ui), "the new Space isn't empty")
         withExtendedLifetime(server) {}
     }
 

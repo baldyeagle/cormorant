@@ -2,7 +2,8 @@ import CormorantTestSupport
 import XCTest
 
 /// The caret sheet's handoffs: the host opens the search panel, and Settings stacks on the sheet
-/// rather than replacing it.
+/// rather than replacing it. Settings shows whether Cormorant is the default browser and offers a way
+/// to Default Apps.
 @MainActor
 final class CaretSheetTests: UITestCase {
     private static let page = """
@@ -29,17 +30,6 @@ final class CaretSheetTests: UITestCase {
         withExtendedLifetime(server) {}
     }
 
-    func testSettingsDoneReturnsToCaretSheet() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launchOnPage(server.url)
-
-        openCaretSheet(in: app)
-        openSettingsAndClose(in: app)
-
-        XCTAssertTrue(app.buttons["Find on Page"].appears(within: Ceiling.ui), "caret sheet went away with Settings")
-        withExtendedLifetime(server) {}
-    }
-
     /// With no page, a search field must come back once nothing else is up (default-browser rule).
     func testEmptyStateSettingsThenCaretSheetCloseBringsSearchBack() {
         let app = XCUIApplication()
@@ -52,7 +42,12 @@ final class CaretSheetTests: UITestCase {
         XCTAssertTrue(field.disappears(within: Ceiling.ui), "search panel didn't close")
 
         openCaretSheet(in: app)
-        openSettingsAndClose(in: app)
+        openSettingsAndClose(in: app) {
+            // `-uiTesting` never asks the system, so the status is never "Default Browser": the text is
+            // the section header, and the button is the not-default one.
+            XCTAssertTrue(app.staticTexts["Default Browser"].appears(within: Ceiling.ui), "no Default Browser section")
+            XCTAssertTrue(app.buttons["Make Default Browser…"].exists, "no button to Default Apps")
+        }
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.appears(within: Ceiling.ui), "caret sheet went away with Settings")
 
@@ -101,10 +96,11 @@ final class CaretSheetTests: UITestCase {
         return host
     }
 
-    private func openSettingsAndClose(in app: XCUIApplication) {
+    private func openSettingsAndClose(in app: XCUIApplication, whileOpen check: () -> Void = {}) {
         app.buttons["Settings"].tapWhenSettled()
         let done = app.navigationBars["Settings"].buttons["Done"]
         XCTAssertTrue(done.appears(within: Ceiling.ui), "Settings didn't open")
+        check()
         done.tapWhenSettled()
         XCTAssertTrue(done.disappears(within: Ceiling.ui), "Settings didn't close")
     }

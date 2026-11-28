@@ -1,9 +1,10 @@
 import CormorantTestSupport
 import XCTest
 
-/// Manage Spaces, reached from Settings: adding a Space lands in it, empty, with the search panel up;
-/// Edit Space changes a Space's icon; Home's offers no Archive or Delete; the Space you're in is
-/// checked; an archived Space deletes from the list; deleting the Space you're in leaves Settings up.
+/// Manage Spaces, reached from Settings: Edit Space changes a Space's icon; Home's offers no Archive or
+/// Delete; a new Space is listed after Home, and the Space you're in is checked; an archived Space
+/// deletes from the list; deleting the Space you're in leaves Settings up. That adding a Space lands in
+/// it, empty, with the search panel up is SpacesTests' `testOneSpaceShowsOnlyTheSpacesButton`.
 /// What archiving, restoring, renaming and deleting do to the Spaces and their tabs is CormorantTests'
 /// ManageSpacesTests.
 @MainActor
@@ -19,40 +20,6 @@ final class ManageSpacesTests: UITestCase {
           document.title = 'Tab ' + location.pathname;
         </script>
         """
-
-    func testNewSpaceOpensEmptyWithTheSearchPanel() throws {
-        let server = try FixtureServer(html: Self.page)
-        let app = launch()
-        open(server.url.appending(path: "home"), path: "/home", in: app)
-
-        openSpaces(in: app)
-        app.buttons["New Space"].tapWhenSettled()
-        let add = app.buttons["Add"]
-        XCTAssertTrue(add.appears(within: Ceiling.ui), "New Space didn't open")
-        XCTAssertFalse(add.isEnabled, "Add is enabled with no name")
-        let name = app.textFields["Name"]
-        XCTAssertTrue(waitUntil(Ceiling.ui) { name.value(forKey: "hasKeyboardFocus") as? Bool == true },
-                      "the name field didn't take focus")
-        name.typeText("Work")
-        add.tapWhenSettled()
-
-        // Straight into Work: Manage Spaces gone, Home's page with it, and the search panel up.
-        XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
-        let field = searchField(in: app)
-        XCTAssertTrue(field.appears(within: Ceiling.ui), "no search panel in the new Space")
-        XCTAssertTrue(waitUntil(Ceiling.ui) { field.value(forKey: "hasKeyboardFocus") as? Bool == true },
-                      "the search field has no focus")
-        XCTAssertTrue(heading("/home", in: app).disappears(within: Ceiling.ui), "Home's page is still showing")
-        closeSearch(in: app)
-        XCTAssertTrue(app.buttons["Tabs, 0 open"].appears(within: Ceiling.ui), "the new Space isn't empty")
-
-        // Listed after Home, which keeps its tab.
-        openSpaces(in: app)
-        XCTAssertEqual(row("Home", in: app).value as? String, "House icon, Teal, 1 tab")
-        XCTAssertEqual(row("Work", in: app).value as? String, "Briefcase icon, Indigo, 0 tabs")
-        XCTAssertLessThan(row("Home", in: app).frame.minY, row("Work", in: app).frame.minY)
-        withExtendedLifetime(server) {}
-    }
 
     func testHomeHasNoArchiveOrDelete() {
         let app = launch()
@@ -97,6 +64,9 @@ final class ManageSpacesTests: UITestCase {
         openSpaces(in: app)
         XCTAssertTrue(row("Work", in: app).isSelected, "Work, the Space you're in, isn't checked")
         XCTAssertFalse(row("Home", in: app).isSelected, "Home is checked though you're in Work")
+        XCTAssertEqual(row("Home", in: app).value as? String, "House icon, Teal, 0 tabs")
+        XCTAssertEqual(row("Work", in: app).value as? String, "Briefcase icon, Indigo, 0 tabs")
+        XCTAssertLessThan(row("Home", in: app).frame.minY, row("Work", in: app).frame.minY, "Work isn't listed after Home")
 
         row("Work", in: app).tapWhenSettled()
         XCTAssertTrue(app.buttons["Save"].appears(within: Ceiling.ui), "Edit Space didn't open")
@@ -242,6 +212,10 @@ final class ManageSpacesTests: UITestCase {
         field.typeText(name)
         app.buttons["Add"].tapWhenSettled()
         XCTAssertTrue(app.navigationBars["Spaces"].disappears(within: Ceiling.ui), "Manage Spaces didn't close")
-        XCTAssertTrue(searchField(in: app).appears(within: Ceiling.ui), "no search panel in \(name)")
+        let search = searchField(in: app)
+        XCTAssertTrue(search.appears(within: Ceiling.ui), "no search panel in \(name)")
+        // Settings and the caret sheet close under it: neither takes the keyboard from it.
+        XCTAssertTrue(waitUntil(Ceiling.ui) { search.value(forKey: "hasKeyboardFocus") as? Bool == true },
+                      "the search field has no focus")
     }
 }

@@ -62,7 +62,9 @@ struct TabSwitcherView: View {
                 let fans = !reduceMotion
                 let stack = self.stack
                 ScrollView(.horizontal) {
-                    HStack(spacing: -cardSize.width * Self.overlap) {
+                    // Lazy: only the cards in view are built. With every card built, closing one rebuilt
+                    // them all, a stall that grew with the Space's tabs (130 ms at 74 on an iPhone 16 Pro).
+                    LazyHStack(spacing: -cardSize.width * Self.overlap) {
                         ForEach(stack) { item in
                             let labelWidth = item.id == stack.last?.id ? cardSize.width : max(0, step - 10)
                             Group {

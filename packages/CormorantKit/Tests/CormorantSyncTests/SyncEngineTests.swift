@@ -13,6 +13,30 @@ private final class Device {
     let keys: FakeSyncKeyStore
     private(set) var engine: SyncEngine!
     let fileURL: URL?
+    /// How many times the engine has read the state.
+    private(set) var reads = 0
+    private var editsAtRead: [Int: (inout BrowserState) -> Void] = [:]
+    /// Whether every edit asked for with `change(atRead:)` has been made.
+    var madeEveryEdit: Bool { editsAtRead.isEmpty }
+
+    /// Makes `edit` just before the engine reads the state for the `count`th time from now: a change
+    /// landing at that point of a round.
+    func change(atRead count: Int, _ edit: @escaping (inout BrowserState) -> Void) {
+        editsAtRead[reads + count] = edit
+    }
+
+    /// The state's file takes its time to be written: the session's file waits for it.
+    var holdsSaves = false
+    private var heldSaves: [CheckedContinuation<Void, Never>] = []
+
+    func releaseSaves() {
+        holdsSaves = false
+        for held in heldSaves { held.resume() }
+        heldSaves = []
+    }
+
+    /// A state something keeps changing: an edit before every read.
+    var changesAtEveryRead: ((inout BrowserState) -> Void)?
 
     init(cloud: FakeSyncCloud, keys: FakeSyncKeyStore = FakeSyncKeyStore(), fileURL: URL? = nil) {
         self.keys = keys
@@ -22,7 +46,15 @@ private final class Device {
 
     func makeEngine(cloud: FakeSyncCloud) -> SyncEngine {
         SyncEngine(cloud: cloud, keyStore: keys, fileURL: fileURL, debounce: .seconds(3600),
-                   local: { [unowned self] in canSync ? state.shared : nil },
+                   stateSaved: { [unowned self] in
+                       if holdsSaves { await withCheckedContinuation { heldSaves.append($0) } }
+                   },
+                   local: { [unowned self] in
+                       reads += 1
+                       if let edit = changesAtEveryRead { change(edit) }
+                       if let edit = editsAtRead.removeValue(forKey: reads) { change(edit) }
+                       return canSync ? state.shared : nil
+                   },
                    apply: { [unowned self] in state.setShared($0) })
     }
 
@@ -210,7 +242,9 @@ private func temporaryFile() -> URL {
 
     @Test func twoDevicesThatEachMadeAKeyAgreeOnTheFirst() async {
         let phone = Device(cloud: cloud), mac = Device(cloud: cloud)
+        // The phone is first to name its key.
         phone.engine.start()
+        await phone.sync()
         mac.engine.start()
         // Both have something to send before either's key has reached the other.
         await cloud.holdSends()
@@ -348,13 +382,13 @@ private func temporaryFile() -> URL {
     @Test func titlesAndViewsAloneAreMinorChanges() async {
         let (phone, _) = pair()
         phone.change { _ = $0.openTab(url: url("a"), title: "A") }
-        #expect(!phone.engine.pendingIsMinor(phone.state.shared))
+        #expect(await !phone.engine.pendingIsMinor(phone.state.shared))
         await phone.sync()
         phone.change { $0.update(tabID: $0.tabs[0].id, url: url("a"), title: "(1) A") }
         phone.change { $0.markViewed(tabID: $0.tabs[0].id) }
-        #expect(phone.engine.pendingIsMinor(phone.state.shared))
+        #expect(await phone.engine.pendingIsMinor(phone.state.shared))
         phone.change { $0.update(tabID: $0.tabs[0].id, url: url("b"), title: "B") }
-        #expect(!phone.engine.pendingIsMinor(phone.state.shared))
+        #expect(await !phone.engine.pendingIsMinor(phone.state.shared))
     }
 
     @Test func changesMadeDuringASendGoOutInTheNextRound() async {
@@ -369,6 +403,138 @@ private func temporaryFile() -> URL {
         await phone.sync()
         await mac.sync()
         #expect(Set(mac.state.tabs.map(\.title)) == ["A", "B"])
+    }
+
+    // MARK: Changes made while a round is out
+
+    private func closing(_ path: String) -> (inout BrowserState) -> Void {
+        { state in
+            if let tab = state.tabs.first(where: { $0.url == url(path) }) { state.drop(tabID: tab.id) }
+        }
+    }
+
+    /// Two devices with "stays" and "closes" open, the Mac's news waiting for the phone (a tab
+    /// renamed, another opened), and a tab of the phone's own to send.
+    private func pairWithNewsBothWays() async -> (Device, Device) {
+        let (phone, mac) = pair()
+        phone.change { state in
+            _ = state.openTab(url: url("stays"), title: "Stays")
+            _ = state.openTab(url: url("closes"), title: "Closes")
+        }
+        await phone.sync()
+        await mac.sync()
+        mac.change { state in
+            state.update(tabID: state.tabs.first { $0.url == url("stays") }!.id, url: url("stays"), title: "Renamed")
+            _ = state.openTab(url: url("new"), title: "New")
+        }
+        await mac.sync()
+        phone.change { _ = $0.openTab(url: url("mine"), title: "Mine") }
+        return (phone, mac)
+    }
+
+    private func expectClosedAndNothingElseLost(_ phone: Device, _ mac: Device) async {
+        #expect(Set(phone.state.tabs.map(\.title)) == ["Renamed", "New", "Mine"])
+        for _ in 0..<2 {
+            await phone.sync()
+            await mac.sync()
+        }
+        #expect(Set(phone.state.tabs.map(\.title)) == ["Renamed", "New", "Mine"])
+        #expect(mac.state.shared == phone.state.shared)
+        // Home, the default profile, two lists, three tabs.
+        #expect(await cloud.stored.count == 7)
+    }
+
+    /// The engine reads the state several times a round, and the work between two reads is done off
+    /// the main thread: the user can change something at any of them. A round that merges and sends
+    /// without a retry reads it ten times.
+    @Test(arguments: 1...10)
+    func aTabClosedAtAnyPointOfARoundStaysClosedAndNothingElseIsLost(read: Int) async {
+        let (phone, mac) = await pairWithNewsBothWays()
+        phone.change(atRead: read, closing("closes"))
+        await phone.sync()
+        #expect(phone.madeEveryEdit)
+        await expectClosedAndNothingElseLost(phone, mac)
+    }
+
+    @Test func aTabClosedBetweenAMergeBeingAppliedAndTheSessionTakingItStaysClosed() async {
+        let (phone, mac) = await pairWithNewsBothWays()
+        await phone.engine.worker.setAfterApplyForTesting { @MainActor [self] in
+            guard phone.state.tabs.contains(where: { $0.url == url("new") }) else { return }
+            phone.change(closing("closes"))
+            // Noted before the session takes the merge.
+            _ = await phone.engine.pendingIsMinor(phone.state.shared)
+        }
+        await phone.sync()
+        await phone.engine.worker.setAfterApplyForTesting(nil)
+        #expect(!phone.state.tabs.contains { $0.url == url("closes") })
+        await expectClosedAndNothingElseLost(phone, mac)
+    }
+
+    /// Three merges in a row find the state changed (a page that keeps changing its title): the next
+    /// is made where nothing can change meanwhile.
+    @Test func aStateThatKeepsChangingForAWhileStillSyncsInOneRound() async {
+        let (phone, mac) = await pairWithNewsBothWays()
+        // The reads at which each of the first three merges is applied.
+        for (index, read) in [3, 5, 7].enumerated() {
+            phone.change(atRead: read) { state in
+                let tab = state.tabs.first { $0.url == url("mine") }!
+                state.update(tabID: tab.id, url: url("mine"), title: "Mine \(index)")
+            }
+        }
+        // And one more as that one starts: it's told of a change the session hasn't noted, and waits.
+        phone.change(atRead: 9, closing("closes"))
+        await phone.sync()
+        #expect(phone.madeEveryEdit)
+        #expect(phone.engine.state == .idle)
+        #expect(Set(phone.state.tabs.map(\.title)) == ["Renamed", "New", "Mine 2"])
+        await mac.sync()
+        #expect(mac.state.shared == phone.state.shared)
+    }
+
+    /// 0: closed in the same turn sync was started in. 1 to 3: at each read of the first round, which
+    /// is where what the state lost is restored from the session.
+    @Test(arguments: 0...3)
+    func aTabClosedRightAfterLaunchIsNotBroughtBackFromTheSession(read: Int) async {
+        let file = temporaryFile()
+        let phone = Device(cloud: cloud, keys: keychain, fileURL: file), mac = Device(cloud: cloud, keys: keychain)
+        phone.engine.start()
+        mac.engine.start()
+        phone.change { _ = $0.openTab(url: url("a")) }
+        await phone.sync()
+        await mac.sync()
+
+        // Offline, so only the session can bring it back.
+        await cloud.fail(with: .failed("offline"))
+        await phone.relaunch(cloud: cloud)
+        if read == 0 {
+            phone.change(closing("a"))
+        } else {
+            phone.change(atRead: read, closing("a"))
+        }
+        await phone.sync()
+        #expect(phone.madeEveryEdit)
+        #expect(phone.state.tabs.isEmpty)
+        await cloud.fail(with: nil)
+        await phone.sync()
+        await mac.sync()
+        #expect(phone.state.tabs.isEmpty)
+        #expect(mac.state.tabs.isEmpty)
+    }
+
+    @Test func aStateThatNeverStopsChangingFailsTheRoundAndLosesNothing() async {
+        let (phone, mac) = pair()
+        mac.change { _ = $0.openTab(url: url("theirs")) }
+        await mac.sync()
+        phone.changesAtEveryRead = { state in _ = state.openTab(url: url("mine-\(state.tabs.count)")) }
+        await phone.sync()
+        #expect(phone.engine.state == .failed("Couldn't finish syncing. It will try again."))
+        phone.changesAtEveryRead = nil
+        let mine = phone.state.tabs.compactMap(\.url).filter { $0 != url("theirs") }
+        #expect(!mine.isEmpty)
+        await phone.sync()
+        await mac.sync()
+        #expect(Set(phone.state.tabs.compactMap(\.url)) == Set(mine + [url("theirs")]))
+        #expect(mac.state.shared == phone.state.shared)
     }
 
     // MARK: Folders
@@ -568,14 +734,47 @@ private func temporaryFile() -> URL {
         #expect(phone.state.folders.map(\.name) == ["Big"])
     }
 
-    @Test func turningSyncOffMidRoundLeavesNoStatusBehind() async {
-        let (phone, _) = pair()
+    @Test func turningSyncOffMidRoundLeavesNoStatusAndNoSessionBehind() async {
+        let file = temporaryFile()
+        let phone = Device(cloud: cloud, keys: keychain, fileURL: file)
+        phone.engine.start()
         await phone.sync()
-        await cloud.fail(with: .failed("No connection to iCloud."))
         phone.change { _ = $0.openTab(url: url("a")) }
+        await cloud.holdSends()
         async let round: Void = phone.sync()
+        while await cloud.sendCount == 1 { await Task.yield() }
         phone.engine.stop()
+        await cloud.release()
         await round
+        await phone.engine.finish()
         #expect(phone.engine.state == .disabled)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func turnedOffAndStraightBackOnItJoinsAsANewDevice() async {
+        let file = temporaryFile()
+        let phone = Device(cloud: cloud, keys: keychain, fileURL: file)
+        phone.engine.start()
+        phone.change { state in
+            _ = state.openTab(url: url("a"))
+            _ = state.openTab(url: url("b"))
+        }
+        await phone.sync()
+        await phone.engine.finish()
+        await cloud.empty()
+
+        // A write of the session is still waiting when sync goes off, so its file is still there
+        // when sync comes back on: read back, it would restore both tabs.
+        phone.holdsSaves = true
+        phone.change(closing("b"))
+        _ = await phone.engine.pendingIsMinor(phone.state.shared)
+        phone.engine.stop()
+        phone.change(closing("a"))
+        phone.engine.start()
+        for _ in 0..<200 { await Task.yield() }
+        phone.releaseSaves()
+        await phone.sync()
+        #expect(phone.state.tabs.isEmpty)
+        #expect(await cloud.stored.count == 4)
     }
 }

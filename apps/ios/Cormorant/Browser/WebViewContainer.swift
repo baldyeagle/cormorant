@@ -36,6 +36,29 @@ struct WebViewContainer: UIViewRepresentable {
         scrollView.contentInsetAdjustmentBehavior = .always
     }
 
+    /// Tells WebKit that `covered` of `webView` is under the browser's own chrome (the status bar where
+    /// the page runs under it, the bottom bar and the home indicator), in both the ways it asks:
+    /// - `obscuredContentInsets` shrinks the layout viewport to the uncovered area, so `position: fixed`
+    ///   elements, `innerHeight` and `dvh` stop at the bar.
+    /// - the viewport insets are what `svh` and `lvh` leave out; with none, those are the whole web
+    ///   view, and an app-like page sized to `100svh` (a chat with its composer at the bottom) puts its
+    ///   last inch under the bar, out of reach. The bar doesn't retract off the page (the collapsed bar
+    ///   keeps the expanded one's insets), so smallest and largest are the same: both are the uncovered
+    ///   area, as `dvh` is. Plain `vh` stays the whole web view whatever these say: no public API
+    ///   reaches it.
+    ///
+    /// WebKit throws if the viewport insets don't fit in the web view's frame (with insets at the sides
+    /// too; a fresh web view's frame is zero), so they wait for a frame they fit in: every caller comes
+    /// back here once the web view is sized.
+    static func cover(_ webView: WKWebView, with covered: UIEdgeInsets) {
+        if webView.obscuredContentInsets != covered { webView.obscuredContentInsets = covered }
+        let size = webView.frame.size
+        let fits = covered.top + covered.bottom < size.height && covered.left + covered.right < size.width
+        if fits, webView.minimumViewportInset != covered || webView.maximumViewportInset != covered {
+            webView.setMinimumViewportInset(covered, maximumViewportInset: covered)
+        }
+    }
+
     func makeUIView(context: Context) -> ContainerView {
         ContainerView()
     }
@@ -143,18 +166,19 @@ struct WebViewContainer: UIViewRepresentable {
             return webView.scrollView
         }
 
-        /// Two insets, because they do different jobs:
-        /// - `obscuredContentInsets` shrinks WebKit's layout viewport to the uncovered area, so
-        ///   `position: fixed` elements are laid out above the bar and below the status bar. Where the
-        ///   page runs under the status bar (the top safe area), WebKit also carries a fixed header's
-        ///   color up behind it, and the soft edge effect keeps the clock legible over content.
+        /// Two kinds of inset, because they do different jobs:
+        /// - WebKit's (`cover(_:with:)`) shrink the page's viewport to the uncovered area, so
+        ///   `position: fixed` elements and the viewport units but `vh` stop above the bar and below
+        ///   the status bar.
+        ///   Where the page runs under the status bar (the top safe area), WebKit also carries a fixed
+        ///   header's color up behind it, and the soft edge effect keeps the clock legible over content.
         /// - the scroll view's content inset extends the scroll range so the end of the page can
         ///   scroll clear of the bar (UIKit adds the home-indicator safe area on top of it).
         /// The keyboard is left to WebKit.
         private func updateBarInsets() {
             guard let webView else { return }
             let covered = UIEdgeInsets(top: safeAreaInsets.top, left: 0, bottom: barHeight + safeAreaInsets.bottom, right: 0)
-            if webView.obscuredContentInsets != covered { webView.obscuredContentInsets = covered }
+            WebViewContainer.cover(webView, with: covered)
             let scrollView = webView.scrollView
             WebViewContainer.keepSafeAreaScrollInsets(of: scrollView)
             let edge: UIScrollEdgeEffect.Style = covered.top > 0 ? .soft : .automatic
